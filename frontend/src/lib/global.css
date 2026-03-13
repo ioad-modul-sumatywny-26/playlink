@@ -17,15 +17,17 @@
 :root {
     --font-main: 'Exocet';
 
-
+    --font-color: black;
+    --link-color: purple;
 }
 
 body {
     font-family: var(--font-main), sans-serif;
+    color: var(--font-color);
 }
 
 a {
-    color: inherit;
+    color: var(--link-color);
     text-decoration: none;
 }
 
@@ -50,5 +52,3 @@ p, h1, h2, h3, h4, h5, h6, span, li, td, th, label {
 input[type="text"], input[type="email"], input[type="password"], textarea {
     cursor: url('/cursor/write.cur'), text;
 }
-
-
