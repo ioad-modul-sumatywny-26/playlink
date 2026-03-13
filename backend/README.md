@@ -4,7 +4,7 @@ FastAPI-based backend for the Playlink project.
 
 ## Requirements
 
-- **Python 3.13+**
+- **Python 3.14+**
 - **pip**
 - Windows, macOS, or Linux
 
@@ -46,3 +46,10 @@ Once the server is running, you can access:
 - `GET /items/{item_id}` - Get item by ID with optional query parameter
 
 ## Project Structure
+
+```
+backend/
+├── main.py           # FastAPI application entry point
+├── requirements.txt  # Python dependencies
+└── README.md         # This file
+```
