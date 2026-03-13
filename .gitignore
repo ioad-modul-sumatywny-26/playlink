@@ -1,6 +1,9 @@
 # Created by https://www.toptal.com/developers/gitignore/api/linux,windows,python,svelte
 # Edit at https://www.toptal.com/developers/gitignore?templates=linux,windows,python,svelte
 
+### idea
+.idea
+
 ### Linux ###
 *~
 
