@@ -31,7 +31,7 @@ Managed with `uv`.
 
 ### Frontend (SvelteKit)
 
-Managed with `pnpm`.
+Managed with `bun`.
 - **Location**: `/frontend`
 - **Port**: 3000
 
