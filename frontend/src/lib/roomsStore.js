@@ -15,7 +15,20 @@ function createRoomsStore() {
     };
 
     ws.onmessage = (event) => {
-      set(JSON.parse(event.data));
+      let data;
+      try {
+        data = JSON.parse(event.data);
+      } catch (error) {
+        console.error("Failed to parse rooms WebSocket message", error, event.data);
+        return;
+      }
+
+      if (!Array.isArray(data)) {
+        console.error("Unexpected rooms WebSocket payload, expected an array", data);
+        return;
+      }
+
+      set(data);
     };
 
     ws.onclose = () => {
