@@ -1,5 +1,6 @@
 import { writable } from "svelte/store";
 import { browser } from "$app/environment";
+import { PUBLIC_WS_URL } from "$env/static/public";
 
 function createRoomsStore() {
   const { subscribe, set } = writable([]);
@@ -12,11 +13,7 @@ function createRoomsStore() {
   let isTornDown = false;
 
   function connect() {
-    if (isTornDown) {
-      return;
-    }
-
-    ws = new WebSocket("ws://localhost:8000/ws/rooms"); // path tymczasowy, jak cos to sie zmieni
+    ws = new WebSocket(`${PUBLIC_WS_URL}/ws/rooms`);
 
     ws.onopen = () => {
       console.log("WebSocket connected");
