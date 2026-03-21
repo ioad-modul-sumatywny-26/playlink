@@ -10,10 +10,9 @@ dependencies = [
 ]
 
 [tool.ruff]
-# Target version (Python 3.12+ for 3.14+).
-target-version = "py312"
+# Target version (Python 3.14+).
+target-version = "py314"
 line-length = 88
-
 [tool.ruff.lint]
 # Enable rules.
 select = ["E", "F", "I", "UP", "N", "B", "C4", "PT", "ARG", "PTH", "RET", "SIM", "TID"]
