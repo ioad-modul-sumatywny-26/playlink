@@ -1,25 +1,30 @@
-FROM node:22-slim AS base
-ENV PNPM_HOME="/pnpm"
-ENV PATH="$PNPM_HOME:$PATH"
-RUN corepack enable
+FROM oven/bun:1-slim AS base
+WORKDIR /usr/src/app
 
 FROM base AS build
-COPY . /usr/src/app
-WORKDIR /usr/src/app
-RUN --mount=type=cache,id=pnpm,target=/pnpm/store pnpm install --frozen-lockfile
-RUN pnpm run build
+# Copy configuration and dependency files
+COPY package.json bun.lock ./
+RUN bun install --frozen-lockfile
+
+# Copy source and env files
+COPY . .
+# SvelteKit static env variables must be available at build time.
+# We use .env.example as a fallback if .env is missing.
+RUN cp .env.example .env || true
+RUN bun run build
 
 FROM base AS runtime
-COPY --from=build /usr/src/app/package.json /usr/src/app/pnpm-lock.yaml /usr/src/app/
-COPY --from=build /usr/src/app/build /usr/src/app/build
-# Copy the static folder so fonts and cursors are available in production
-COPY --from=build /usr/src/app/static /usr/src/app/static
-WORKDIR /usr/src/app
-RUN --mount=type=cache,id=pnpm,target=/pnpm/store pnpm install --prod --frozen-lockfile
+# Only copy production dependencies and the built application
+COPY --from=build /usr/src/app/package.json /usr/src/app/bun.lock ./
+RUN bun install --production --frozen-lockfile
+
+COPY --from=build /usr/src/app/build ./build
+COPY --from=build /usr/src/app/static ./static
 
 ENV NODE_ENV=production
 ENV HOST=0.0.0.0
 ENV PORT=3000
 EXPOSE 3000
 
-CMD ["node", "build"]
+# The adapter-node output is in build/index.js
+CMD ["bun", "run", "build/index.js"]
