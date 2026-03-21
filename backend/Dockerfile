@@ -33,5 +33,5 @@ RUN groupadd --system --gid 999 nonroot \
     && useradd --system --gid 999 --uid 999 --create-home nonroot
 USER nonroot
 
-# Run the application using uvicorn directly
-CMD ["uv", "run", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Run the application using uvicorn directly (avoiding uv run at runtime)
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
