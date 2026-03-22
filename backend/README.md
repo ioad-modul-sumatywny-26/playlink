@@ -1,66 +1,58 @@
-# Backend — FastAPI
+# Playlink Backend (FastAPI)
 
-FastAPI-based backend for the Playlink project.
+FastAPI application handling identity authentication and room/session management.
 
-## Requirements
+## Tech Stack
+- **Framework:** FastAPI
+- **ORM:** SQLModel (SQLAlchemy + Pydantic)
+- **Database:** PostgreSQL (Production/Docker) / SQLite (Testing)
+- **Auth:** Identity Address (BIP39-compatible signatures) + JWT
+- **Package Manager:** `uv`
 
-- **Python 3.14+**
-- **uv** (Package manager)
-- **Docker** (Optional, for containerized deployment)
-- Windows, macOS, or Linux
+## Core Authentication Flow
+The backend implements a challenge-response authentication mechanism:
+1. **Request Challenge:** Client sends their `identity_address` to `/auth/request-nonce`.
+2. **Local Signing:** Client signs a message containing the nonce using their private key.
+3. **Verification:** Client sends the signature back to `/auth/verify`.
+4. **JWT Issuance:** If valid, the backend issues a JWT for secure sessions.
 
-## Technologies Used
+## Project Structure
+- `main.py`: API endpoints and application lifecycle.
+- `models.py`: SQLModel database schemas.
+- `database.py`: Database engine and session management.
+- `tests/`: Pytest suite.
 
-- **FastAPI** `0.135.1`
-- **Uvicorn** `0.41.0`
-- **uv** `0.10.x`
+## Development Setup
 
-## Getting Started
+### 1. Prerequisites
+- Install `uv`: `curl -LsSf https://astral.sh/uv/install.sh | sh`
+- Python 3.14+
 
-### 1. Installation
+### 2. Environment Configuration
+Create a `.env` file in the project root:
+```env
+DATABASE_URL=postgresql+psycopg://postgres:postgres@localhost:5432/playlink
+JWT_SECRET=your-secure-secret-here
+```
 
-Using `uv`:
-
+### 3. Install Dependencies
 ```bash
 uv sync
 ```
 
-### 2. Running the Server
-
-#### Using `uv` directly:
-
+### 4. Running the API
 ```bash
-uv run uvicorn main:app --reload
+uv run uvicorn backend.main:app --reload
 ```
 
-#### Using Docker:
-
+## Running Tests
+Tests use an in-memory SQLite database and do not require PostgreSQL to be running.
 ```bash
-docker build -t backend-playlink .
-docker run -p 8000:8000 backend-playlink
+uv run pytest
 ```
 
-The API will be available at `http://127.0.0.1:8000`
-
-### 3. API Documentation
-
-Once the server is running, you can access:
-
-- **Interactive API docs (Swagger UI)**: http://127.0.0.1:8000/docs
-- **Alternative API docs (ReDoc)**: http://127.0.0.1:8000/redoc
-
-## Available Endpoints
-
-- `GET /` - Hello World endpoint
-- `GET /items/{item_id}` - Get item by ID with optional query parameter
-
-## Project Structure
-
-```
-backend/
-├── main.py           # FastAPI application entry point
-├── pyproject.toml    # uv project configuration and dependencies
-├── uv.lock           # uv lockfile for deterministic builds
-├── Dockerfile        # Container configuration
-└── README.md         # This file
+## Docker
+The backend is designed to run via Docker Compose in the project root:
+```bash
+docker compose up --build backend
 ```

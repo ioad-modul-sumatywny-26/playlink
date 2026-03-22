@@ -11,6 +11,7 @@
 </svelte:head>
 
 <nav>
+	<a href="/auth">IDENTITY</a>
 	<a href="/rooms">ROOMS</a>
 	<a href="/about">ABOUT</a>
 	<a href="/test">TEST</a>

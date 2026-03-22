@@ -26,5 +26,10 @@
 	},
 	"overrides": {
 		"cookie": ">=0.7.0"
+	},
+	"dependencies": {
+		"ethers": "^6.16.0",
+		"jwt-decode": "^4.0.0",
+		"viem": "^2.47.6"
 	}
 }

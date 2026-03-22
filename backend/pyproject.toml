@@ -5,7 +5,12 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
+    "eth-account>=0.13.7",
     "fastapi[standard]==0.135.1",
+    "psycopg[binary]>=3.3.3",
+    "pyjwt>=2.12.1",
+    "python-dotenv>=1.2.2",
+    "sqlmodel>=0.0.37",
     "uvicorn[standard]==0.41.0",
 ]
 
@@ -26,5 +31,16 @@ line-ending = "auto"
 
 [dependency-groups]
 dev = [
+    "httpx>=0.28.1",
+    "pytest>=9.0.2",
+    "pytest-env>=1.6.0",
     "ruff>=0.15.7",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+env = [
+    "DATABASE_URL=sqlite://",
+    "JWT_SECRET=this-is-a-very-secure-test-secret-at-least-32-chars",
 ]

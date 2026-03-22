@@ -1,10 +1,31 @@
 services:
+  db:
+    image: postgres:18-alpine
+    env_file:
+      - .env
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - app-network
+
   backend:
     build:
       context: ./backend
       dockerfile: Dockerfile
     ports:
       - "8000:8000"
+    env_file:
+      - .env
+    depends_on:
+      db:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/')"]
       interval: 10s
@@ -31,3 +52,6 @@ services:
 networks:
   app-network:
     driver: bridge
+
+volumes:
+  postgres_data:
