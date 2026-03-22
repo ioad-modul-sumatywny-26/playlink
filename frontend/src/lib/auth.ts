@@ -55,12 +55,17 @@ export async function authenticate(mnemonicPhrase: string) {
 	const signature = await signMessage(identity, messageText);
 
 	// Phase 3: Verification
-	const verifyUrl = new URL(`${PUBLIC_BACKEND_URL}/auth/verify`);
-	verifyUrl.searchParams.append('address', publicAddress);
-	verifyUrl.searchParams.append('nonce', nonce);
-	verifyUrl.searchParams.append('signature', signature);
-
-	const verifyRes = await fetch(verifyUrl, { method: 'POST' });
+	const verifyRes = await fetch(`${PUBLIC_BACKEND_URL}/auth/verify`, {
+		method: 'POST',
+		headers: {
+			'Content-Type': 'application/json'
+		},
+		body: JSON.stringify({
+			address: publicAddress,
+			nonce: nonce,
+			signature: signature
+		})
+	});
 
 	if (!verifyRes.ok) {
 		const error = await verifyRes.json();

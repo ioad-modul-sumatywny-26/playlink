@@ -13,6 +13,8 @@ from eth_account.messages import encode_defunct
 from eth_utils.address import to_checksum_address
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.security import OAuth2PasswordBearer
+from pydantic import BaseModel
 from sqlmodel import Session, select
 
 from database import create_db_and_tables, get_session
@@ -37,12 +39,35 @@ NONCE_EXPIRATION_MINUTES = int(os.getenv("NONCE_EXPIRATION_MINUTES", "5"))
 JWT_EXPIRATION_MINUTES = int(os.getenv("JWT_EXPIRATION_MINUTES", "60"))
 
 
+# --- Schemas ---
+class VerifyRequest(BaseModel):
+    address: str
+    nonce: str
+    signature: str
+
+
 # --- Helpers ---
 def hash_nonce(nonce_value: str) -> str:
     return hashlib.sha256(nonce_value.encode()).hexdigest()
 
 
 SessionDep = Annotated[Session, Depends(get_session)]
+
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/verify", auto_error=False)
+
+
+async def get_current_user_address(
+    token: Annotated[str | None, Depends(oauth2_scheme)],
+) -> str:
+    if not token:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    try:
+        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+        return payload["sub"]
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="Token expired") from None
+    except jwt.InvalidTokenError, KeyError:
+        raise HTTPException(status_code=401, detail="Invalid token") from None
 
 
 @asynccontextmanager
@@ -129,10 +154,14 @@ def request_nonce(address: str, session: SessionDep):
 
 
 @app.post("/auth/verify")
-def verify_signature(address: str, nonce: str, signature: str, session: SessionDep):
+def verify_signature(body: VerifyRequest, session: SessionDep):
     """
     Verify signature against a nonce and issue a JWT.
     """
+    address = body.address
+    nonce = body.nonce
+    signature = body.signature
+
     try:
         checksum_address = to_checksum_address(address)
     except ValueError:
@@ -194,7 +223,10 @@ def verify_signature(address: str, nonce: str, signature: str, session: SessionD
 
 
 @app.get("/users/me", response_model=User)
-def get_me(address: str, session: SessionDep):
+def get_me(
+    session: SessionDep,
+    address: Annotated[str, Depends(get_current_user_address)],
+):
     user = session.exec(select(User).where(User.identity_address == address)).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")

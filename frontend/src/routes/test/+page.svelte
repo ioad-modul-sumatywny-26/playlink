@@ -1,5 +1,6 @@
 <script>
 	import { onMount } from 'svelte';
+	import { PUBLIC_BACKEND_URL } from '$env/static/public';
 
 	let data = $state(null);
 	let error = $state(null);
@@ -8,7 +9,7 @@
 	onMount(async () => {
 		try {
 			// Using the direct address as it's client-side fetch from the browser
-			const response = await fetch('http://localhost:8000/');
+			const response = await fetch(`${PUBLIC_BACKEND_URL}/`);
 			if (!response.ok) {
 				throw new Error(`Error: ${response.status}`);
 			}

@@ -42,12 +42,13 @@ def test_verify_signature_success(client: TestClient, session: Session):
     # 3. Verify signature
     response = client.post(
         "/auth/verify",
-        params={"address": address, "nonce": nonce, "signature": signature},
+        json={"address": address, "nonce": nonce, "signature": signature},
     )
 
     assert response.status_code == 200
     data = response.json()
     assert "token" in data
+    token = data["token"]
 
     # Check if nonce is marked as used
     # Note: We need to use the session to check the DB
@@ -55,6 +56,19 @@ def test_verify_signature_success(client: TestClient, session: Session):
     db_user = session.exec(select(User).where(User.identity_address == address)).first()
     assert db_user is not None
     assert db_user.last_login is not None
+
+    # 4. Test /users/me with the token
+    response = client.get(
+        "/users/me",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200
+    assert response.json()["identity_address"] == address
+
+
+def test_get_me_unauthenticated(client: TestClient):
+    response = client.get("/users/me")
+    assert response.status_code == 401
 
 
 def test_verify_signature_invalid_nonce(client: TestClient):
@@ -69,7 +83,7 @@ def test_verify_signature_invalid_nonce(client: TestClient):
 
     response = client.post(
         "/auth/verify",
-        params={"address": address, "nonce": nonce, "signature": signature},
+        json={"address": address, "nonce": nonce, "signature": signature},
     )
     assert response.status_code == 401
     assert response.json()["detail"] == "Invalid or expired challenge"
@@ -91,7 +105,7 @@ def test_verify_signature_wrong_signer(client: TestClient):
     # 3. Verify
     response = client.post(
         "/auth/verify",
-        params={"address": acct1.address, "nonce": nonce, "signature": signature},
+        json={"address": acct1.address, "nonce": nonce, "signature": signature},
     )
     assert response.status_code == 401
     assert response.json()["detail"] == "Identity verification failed"
@@ -115,7 +129,7 @@ def test_nonce_invalidation(client: TestClient):
 
     response1 = client.post(
         "/auth/verify",
-        params={"address": address, "nonce": nonce1, "signature": signature1},
+        json={"address": address, "nonce": nonce1, "signature": signature1},
     )
     assert response1.status_code == 401
 
@@ -125,6 +139,6 @@ def test_nonce_invalidation(client: TestClient):
 
     response2 = client.post(
         "/auth/verify",
-        params={"address": address, "nonce": nonce2, "signature": signature2},
+        json={"address": address, "nonce": nonce2, "signature": signature2},
     )
     assert response2.status_code == 200

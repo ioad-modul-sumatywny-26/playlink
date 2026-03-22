@@ -8,11 +8,17 @@ export async function handle({ event, resolve }) {
 		try {
 			// Decode the JWT to get user info (sub is the identity address)
 			const decoded = jwtDecode(session);
+
+			// Check if token is expired (exp is in seconds)
+			if (decoded.exp && decoded.exp * 1000 < Date.now()) {
+				throw new Error('Token expired');
+			}
+
 			event.locals.user = {
 				address: decoded.sub
 			};
 		} catch (e) {
-			// Invalid token
+			// Invalid or expired token
 			event.cookies.delete('session', { path: '/' });
 		}
 	}
