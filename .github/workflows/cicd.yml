@@ -90,11 +90,12 @@ jobs:
               env:
                   POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
                   JWT_SECRET: ${{ secrets.JWT_SECRET }}
+                  SERVER_HOST: ${{ secrets.SERVER_HOST }}
               with:
                   host: ${{ secrets.SERVER_HOST }}
                   username: ${{ secrets.SERVER_USER }}
                   key: ${{ secrets.SERVER_SSH_KEY }}
-                  envs: POSTGRES_PASSWORD,JWT_SECRET
+                  envs: POSTGRES_PASSWORD,JWT_SECRET,SERVER_HOST
                   script: |
                       cd ~/playlink
 
@@ -112,8 +113,8 @@ jobs:
                       EOF
 
                       cat > frontend/.env << EOF
-                      PUBLIC_WS_URL=ws://${{ secrets.SERVER_HOST }}:8000
-                      PUBLIC_BACKEND_URL=http://${{ secrets.SERVER_HOST }}:8000
+                      PUBLIC_WS_URL=ws://$SERVER_HOST:8000
+                      PUBLIC_BACKEND_URL=http://$SERVER_HOST:8000
                       EOF
 
                       git pull origin main
