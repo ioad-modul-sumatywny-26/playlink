@@ -12,7 +12,7 @@
 
 	let words = $state<string[]>(Array(12).fill(''));
 	let focusedIndex = $state(-1);
-	let inputs = $state<(HTMLInputElement | undefined)[]>([]);
+	let inputs = $state<(HTMLInputElement | null)[]>([]);
 
 	// WATCHER: Sync Parent -> Child (e.g. when "Generate Phrase" is clicked)
 	$effect(() => {
