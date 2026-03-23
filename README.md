@@ -17,7 +17,10 @@ Playlink is a full-stack application providing secure, non-custodial identity ma
    cp .env.example .env
    ```
 2. Define a secure `JWT_SECRET` in the `.env` file (minimum 32 characters).
-3. For local frontend development outside Docker, also create `frontend/.env` from `frontend/.env.example`.
+3. Optionally, create `frontend/.env` from `frontend/.env.example` to override frontend environment variables (required for local frontend development outside Docker; optional for Docker Compose, which uses the defaults from `frontend/.env.example`):
+   ```bash
+   cp frontend/.env.example frontend/.env
+   ```
 
 ### Containerized Deployment
 
