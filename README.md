@@ -15,9 +15,9 @@ Playlink is a full-stack application providing secure, non-custodial identity ma
 1. Initialize the environment configuration:
    ```bash
    cp .env.example .env
+   cp frontend/.env.example frontend/.env
    ```
 2. Define a secure `JWT_SECRET` in the `.env` file (minimum 32 characters).
-3. For local frontend development outside Docker, also create `frontend/.env` from `frontend/.env.example`.
 
 ### Containerized Deployment
 
@@ -34,14 +34,14 @@ docker compose up --build
 
 ## Technical Architecture
 
-| Component | Technology | Management |
-|-----------|------------|------------|
-| Frontend | SvelteKit (TypeScript) | Bun |
-| Backend | FastAPI (Python) | uv |
-| Database | PostgreSQL 18 | Docker |
-| ORM | SQLModel | — |
-| Authentication | BIP39 Identity / ECDSA | ethers.js |
-| Git Hooks | prek | uv |
+| Component      | Technology             | Management |
+| -------------- | ---------------------- | ---------- |
+| Frontend       | SvelteKit (TypeScript) | Bun        |
+| Backend        | FastAPI (Python)       | uv         |
+| Database       | PostgreSQL 18          | Docker     |
+| ORM            | SQLModel               | —          |
+| Authentication | BIP39 Identity / ECDSA | ethers.js  |
+| Git Hooks      | prek                   | uv         |
 
 ### Identity Authentication Flow
 
@@ -59,13 +59,17 @@ Detailed specifications are available in `backend/docs/auth-flow.md`.
 For optimal development speed and debugging capabilities, a hybrid workflow is recommended:
 
 ### 1. Database Service
+
 Run the persistent storage layer in the background:
+
 ```bash
 docker compose up -d db
 ```
 
 ### 2. Backend Service
+
 Run the FastAPI application with hot-reloading:
+
 ```bash
 cd backend
 uv sync
@@ -73,7 +77,9 @@ uv run uvicorn main:app --reload
 ```
 
 ### 3. Frontend Service
+
 Run the SvelteKit application in development mode:
+
 ```bash
 cd frontend
 bun install
@@ -81,18 +87,22 @@ bun dev
 ```
 
 ### 4. Testing
+
 Execute the backend test suite:
+
 ```bash
 cd backend
 uv run pytest
 ```
 
 Run all code quality hooks manually:
+
 ```bash
 prek run --all-files
 ```
 
 ## Project Organization
+
 - `backend/`: API services, database models, and authentication logic.
 - `frontend/`: SvelteKit application and identity management UI.
 - `prezentacje/`: Project documentation and presentation materials.
