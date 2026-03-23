@@ -1,12 +1,15 @@
-import svelte from 'eslint-plugin-svelte';
 import globals from 'globals';
 import prettier from 'eslint-config-prettier';
+import svelte from 'eslint-plugin-svelte';
+import svelteConfig from './svelte.config.js';
+import ts from 'typescript-eslint';
 
-/** @type {import('eslint').Linter.Config[]} */
-export default [
+export default ts.config(
 	{
 		ignores: ['.svelte-kit/', 'dist/', 'build/']
 	},
+	...ts.configs.recommended,
+	...svelte.configs['flat/recommended'],
 	{
 		languageOptions: {
 			globals: {
@@ -17,7 +20,17 @@ export default [
 			sourceType: 'module'
 		}
 	},
-	...svelte.configs['flat/recommended'],
+	{
+		files: ['**/*.svelte', '**/*.svelte.ts', '**/*.svelte.js'],
+		languageOptions: {
+			parserOptions: {
+				projectService: true,
+				extraFileExtensions: ['.svelte'],
+				parser: ts.parser,
+				svelteConfig
+			}
+		}
+	},
 	prettier,
 	{
 		rules: {
@@ -25,4 +38,4 @@ export default [
 			'svelte/no-navigation-without-resolve': 'off'
 		}
 	}
-];
+);

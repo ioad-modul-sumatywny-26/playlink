@@ -1,11 +1,11 @@
-<script>
+<script lang="ts">
 	import { generateMnemonic, authenticate } from '$lib/auth';
 	import MnemonicInput from '$lib/components/MnemonicInput.svelte';
 	import { deserialize } from '$app/forms';
 	import { invalidateAll } from '$app/navigation';
+	import type { PageProps } from './$types';
 
-	/** @type {{ data: any }} */
-	let { data } = $props();
+	let { data }: PageProps = $props();
 
 	let mnemonic = $state('');
 	let loading = $state(false);
@@ -41,7 +41,7 @@
 				await invalidateAll();
 			}
 		} catch (e) {
-			error = e.message;
+			error = e instanceof Error ? e.message : 'Authentication failed';
 		} finally {
 			loading = false;
 		}

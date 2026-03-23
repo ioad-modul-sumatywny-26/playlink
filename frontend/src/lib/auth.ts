@@ -1,5 +1,5 @@
 import { ethers, Mnemonic, HDNodeWallet } from 'ethers';
-import { PUBLIC_BACKEND_URL } from '$env/static/public';
+import { env } from '$env/dynamic/public';
 
 /**
  * Derives a cryptographic identity (private/public key pair) from a 12-word mnemonic.
@@ -32,13 +32,18 @@ export async function signMessage(identity: HDNodeWallet, message: string): Prom
  * Full authentication flow.
  */
 export async function authenticate(mnemonicPhrase: string) {
+	const backendUrl = env.PUBLIC_BACKEND_URL;
+	if (!backendUrl) {
+		throw new Error('Missing PUBLIC_BACKEND_URL');
+	}
+
 	const identity = getIdentityFromMnemonic(mnemonicPhrase);
 	const publicAddress = identity.address;
 
 	// Phase 1: Request Challenge
 	// Note: We'll keep using searchParams as established in the backend previously,
 	// or adjust based on your specific backend implementation.
-	const url = new URL(`${PUBLIC_BACKEND_URL}/auth/request-nonce`);
+	const url = new URL(`${backendUrl}/auth/request-nonce`);
 	url.searchParams.append('address', publicAddress);
 
 	const nonceRes = await fetch(url, { method: 'POST' });
@@ -55,7 +60,7 @@ export async function authenticate(mnemonicPhrase: string) {
 	const signature = await signMessage(identity, messageText);
 
 	// Phase 3: Verification
-	const verifyRes = await fetch(`${PUBLIC_BACKEND_URL}/auth/verify`, {
+	const verifyRes = await fetch(`${backendUrl}/auth/verify`, {
 		method: 'POST',
 		headers: {
 			'Content-Type': 'application/json'
