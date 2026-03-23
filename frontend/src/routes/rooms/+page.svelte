@@ -1,4 +1,4 @@
-<script>
+<script lang="ts">
 	import { roomsStore } from '$lib/roomsStore';
 </script>
 

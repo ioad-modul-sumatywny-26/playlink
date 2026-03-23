@@ -1,16 +1,18 @@
-<script>
+<script lang="ts">
 	import { wordlists } from 'ethers';
 	import { untrack } from 'svelte';
 
 	const wordlist = wordlists.en;
 
-	/** @type {{ value: string }} */
-	let { value = $bindable() } = $props();
+	interface Props {
+		value?: string;
+	}
 
-	// The local state of the 12 words
-	let words = $state(Array(12).fill(''));
+	let { value = $bindable() }: Props = $props();
+
+	let words = $state<string[]>(Array(12).fill(''));
 	let focusedIndex = $state(-1);
-	let inputs = $state([]);
+	let inputs = $state<(HTMLInputElement | null)[]>([]);
 
 	// WATCHER: Sync Parent -> Child (e.g. when "Generate Phrase" is clicked)
 	$effect(() => {
@@ -38,11 +40,11 @@
 		}
 	});
 
-	function handleInput(index, rawVal, data) {
+	function handleInput(index: number, rawVal: string) {
 		const cleanVal = rawVal.toLowerCase().replace(/[^a-z]/g, '');
 		words[index] = cleanVal;
 
-		if (data === ' ') {
+		if (rawVal.includes(' ')) {
 			words[index] = cleanVal.trim();
 			if (words[index].length > 0) {
 				focusNext(index);
@@ -50,7 +52,7 @@
 		}
 	}
 
-	function handleKeyDown(index, e) {
+	function handleKeyDown(index: number, e: KeyboardEvent) {
 		if (e.key === 'Backspace' && words[index] === '' && index > 0) {
 			e.preventDefault();
 			focusPrev(index);
@@ -62,9 +64,9 @@
 		}
 	}
 
-	function handlePaste(e) {
+	function handlePaste(e: ClipboardEvent) {
 		e.preventDefault();
-		const pasteData = e.clipboardData.getData('text');
+		const pasteData = e.clipboardData?.getData('text') ?? '';
 		const pastedWords = pasteData.trim().split(/\s+/).slice(0, 12);
 
 		const newWords = [...words];
@@ -76,22 +78,22 @@
 		words = newWords;
 	}
 
-	function focusNext(index) {
+	function focusNext(index: number) {
 		if (index < 11) {
 			inputs[index + 1]?.focus();
 		}
 	}
 
-	function focusPrev(index) {
+	function focusPrev(index: number) {
 		if (index > 0) {
 			inputs[index - 1]?.focus();
 		}
 	}
 
-	function isValidWord(word) {
+	function isValidWord(word: string) {
 		if (!word) return true;
 		try {
-			return wordlist.getIndex(word.toLowerCase()) !== -1;
+			return wordlist.getWordIndex(word.toLowerCase()) !== -1;
 		} catch {
 			return false;
 		}
@@ -99,18 +101,18 @@
 </script>
 
 <div class="mnemonic-grid" onpaste={handlePaste} role="none">
-	{#each words as _, i (i)}
+	{#each words as word, i (i)}
 		<div
 			class="word-slot"
 			class:focused={focusedIndex === i}
-			class:invalid={words[i] && !isValidWord(words[i])}
+			class:invalid={word && !isValidWord(word)}
 		>
 			<span class="number">{i + 1}</span>
 			<input
 				type="text"
 				bind:this={inputs[i]}
 				bind:value={words[i]}
-				oninput={(e) => handleInput(i, e.target.value, e.data)}
+				oninput={(e) => handleInput(i, e.currentTarget.value)}
 				onkeydown={(e) => handleKeyDown(i, e)}
 				onfocus={() => (focusedIndex = i)}
 				onblur={() => (focusedIndex = -1)}

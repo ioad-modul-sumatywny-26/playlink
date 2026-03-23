@@ -6,11 +6,9 @@ FROM base AS build
 COPY package.json bun.lock ./
 RUN bun install --frozen-lockfile
 
-# Copy source and env files
+# Copy source files. Public runtime env vars are injected by the server process,
+# so we don't need to bake a local .env file into the image.
 COPY . .
-# SvelteKit static env variables must be available at build time.
-# We use .env.example as a fallback if .env is missing.
-RUN cp .env.example .env || true
 RUN bun run build
 
 FROM base AS runtime

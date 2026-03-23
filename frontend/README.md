@@ -39,6 +39,14 @@ bun dev -- --open
 
 The app will be available at `http://localhost:5173/`
 
+Before starting the frontend locally, create `frontend/.env` from `frontend/.env.example`.
+The public variables used by the app are:
+
+```bash
+PUBLIC_BACKEND_URL=http://localhost:8000
+PUBLIC_WS_URL=ws://localhost:8000
+```
+
 ### 3. Building for Production
 
 ```bash

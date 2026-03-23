@@ -1,21 +1,25 @@
-<script>
+<script lang="ts">
 	import { onMount } from 'svelte';
-	import { PUBLIC_BACKEND_URL } from '$env/static/public';
+	import { env } from '$env/dynamic/public';
 
-	let data = $state(null);
-	let error = $state(null);
+	let data = $state<unknown>(null);
+	let error = $state<string | null>(null);
 	let loading = $state(true);
 
 	onMount(async () => {
 		try {
-			// Using the direct address as it's client-side fetch from the browser
-			const response = await fetch(`${PUBLIC_BACKEND_URL}/`);
+			const backendUrl = env.PUBLIC_BACKEND_URL;
+			if (!backendUrl) {
+				throw new Error('Missing PUBLIC_BACKEND_URL');
+			}
+
+			const response = await fetch(`${backendUrl}/`);
 			if (!response.ok) {
 				throw new Error(`Error: ${response.status}`);
 			}
 			data = await response.json();
 		} catch (e) {
-			error = e.message;
+			error = e instanceof Error ? e.message : 'Unknown error';
 		} finally {
 			loading = false;
 		}
