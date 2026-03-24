@@ -2,35 +2,17 @@
 
 Playlink is a full-stack application providing secure, non-custodial identity management. The system is built with a FastAPI backend, a SvelteKit frontend, and a PostgreSQL database, orchestrated via Docker Compose.
 
-## Getting Started
+**Project Kanban:** [GitHub Project Board](https://github.com/orgs/ioad-modul-sumatywny-26/projects/2)
 
-### Prerequisites
+## Access
 
-- Docker and Docker Compose
-- Python 3.14+ (for local development)
-- Bun 1.1+ (for local development)
+Frontend and backend are available at:  
+[frontend](https://playlink.bartek.monster/)
+[backend documentation](https://playlink-backend.bartek.monster/docs)
 
-### Configuration
+## Deployment
 
-1. Initialize the environment configuration:
-   ```bash
-   cp .env.example .env
-   cp frontend/.env.example frontend/.env
-   ```
-2. Define a secure `JWT_SECRET` in the `.env` file (minimum 32 characters).
-
-### Containerized Deployment
-
-To build and deploy the entire stack using Docker Compose:
-
-```bash
-docker compose up --build
-```
-
-- **Frontend:** http://localhost:3000
-- **Backend API:** http://localhost:8000
-- **API Documentation:** http://localhost:8000/docs
-- **Project Kanban:** [GitHub Project Board](https://github.com/orgs/ioad-modul-sumatywny-26/projects/2)
+Changes merged into the `main` branch are automatically deployed. The deployment process typically takes between 30 seconds and 5 minutes to complete, depending on the scope and complexity of the changes..
 
 ## Technical Architecture
 
@@ -53,53 +35,6 @@ The application utilizes a non-custodial challenge-response mechanism based on B
 4. **Session Verification:** The backend verifies the signature against the nonce and issues a JSON Web Token (JWT).
 
 Detailed specifications are available in `backend/docs/auth-flow.md`.
-
-## Local Development Workflow
-
-For optimal development speed and debugging capabilities, a hybrid workflow is recommended:
-
-### 1. Database Service
-
-Run the persistent storage layer in the background:
-
-```bash
-docker compose up -d db
-```
-
-### 2. Backend Service
-
-Run the FastAPI application with hot-reloading:
-
-```bash
-cd backend
-uv sync
-uv run uvicorn main:app --reload
-```
-
-### 3. Frontend Service
-
-Run the SvelteKit application in development mode:
-
-```bash
-cd frontend
-bun install
-bun dev
-```
-
-### 4. Testing
-
-Execute the backend test suite:
-
-```bash
-cd backend
-uv run pytest
-```
-
-Run all code quality hooks manually:
-
-```bash
-prek run --all-files
-```
 
 ## Project Organization
 
