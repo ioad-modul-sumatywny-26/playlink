@@ -4,6 +4,16 @@ from datetime import UTC, datetime
 from sqlmodel import Field, Relationship, SQLModel
 
 
+class Room(SQLModel, table=True):
+    id: int | None = Field(default=None, primary_key=True)
+    name: str = Field(index=True, unique=True)
+    game: str
+    players_max: int
+    players_active: int = Field(default=0)
+    created_by: str = Field(index=True)  # identity_address of creator
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
 class User(SQLModel, table=True):
     id: int | None = Field(default=None, primary_key=True)
     identity_address: str = Field(index=True, unique=True)

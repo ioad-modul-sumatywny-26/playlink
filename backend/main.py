@@ -1,4 +1,5 @@
 import hashlib
+import json
 import os
 import uuid
 from contextlib import asynccontextmanager
@@ -11,14 +12,14 @@ from dotenv import load_dotenv
 from eth_account import Account
 from eth_account.messages import encode_defunct
 from eth_utils.address import to_checksum_address
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordBearer
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
-from database import create_db_and_tables, get_session
-from models import Nonce, User
+from database import get_session
+from models import Nonce, Room, User
 
 # Load .env from project root if it exists
 env_path = Path(__file__).parent.parent / ".env"
@@ -46,9 +47,48 @@ class VerifyRequest(BaseModel):
     signature: str
 
 
+class CreateRoomRequest(BaseModel):
+    name: str
+    game: str
+    players_max: int
+
+
+# --- WebSocket connection manager ---
+class ConnectionManager:
+    def __init__(self):
+        self.active_connections: list[WebSocket] = []
+
+    async def connect(self, websocket: WebSocket):
+        await websocket.accept()
+        self.active_connections.append(websocket)
+
+    def disconnect(self, websocket: WebSocket):
+        self.active_connections.remove(websocket)
+
+    async def broadcast(self, data: str):
+        for connection in self.active_connections:
+            await connection.send_text(data)
+
+
+manager = ConnectionManager()
+
+
 # --- Helpers ---
 def hash_nonce(nonce_value: str) -> str:
     return hashlib.sha256(nonce_value.encode()).hexdigest()
+
+
+def get_rooms_payload(session: Session) -> str:
+    return json.dumps(
+        [
+            {
+                "name": r.name,
+                "players_active": r.players_active,
+                "players_max": r.players_max,
+            }
+            for r in session.exec(select(Room)).all()
+        ]
+    )
 
 
 SessionDep = Annotated[Session, Depends(get_session)]
@@ -72,7 +112,6 @@ async def get_current_user_address(
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
-    create_db_and_tables()
     yield
 
 
@@ -232,3 +271,43 @@ def get_me(
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     return user
+
+
+@app.get("/rooms")
+def list_rooms(session: SessionDep):
+    return session.exec(select(Room)).all()
+
+
+@app.post("/rooms", status_code=201)
+async def create_room(
+    body: CreateRoomRequest,
+    session: SessionDep,
+    address: Annotated[str, Depends(get_current_user_address)],
+):
+    existing = session.exec(select(Room).where(Room.name == body.name)).first()
+    if existing:
+        raise HTTPException(status_code=409, detail="Room name already taken")
+
+    room = Room(
+        name=body.name,
+        game=body.game,
+        players_max=body.players_max,
+        created_by=address,
+    )
+    session.add(room)
+    session.commit()
+    session.refresh(room)
+
+    await manager.broadcast(get_rooms_payload(session))
+    return room
+
+
+@app.websocket("/ws/rooms")
+async def websocket_rooms(websocket: WebSocket, session: SessionDep):
+    await manager.connect(websocket)
+    try:
+        await websocket.send_text(get_rooms_payload(session))
+        while True:
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        manager.disconnect(websocket)

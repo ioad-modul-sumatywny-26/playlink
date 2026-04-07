@@ -28,10 +28,12 @@ ENV PATH="/app/.venv/bin:$PATH"
 # Reset the entrypoint, don't invoke `uv`
 ENTRYPOINT []
 
+RUN chmod +x /app/entrypoint.sh
+
 # Setup a non-root user
 RUN groupadd --system --gid 999 nonroot \
     && useradd --system --gid 999 --uid 999 --create-home nonroot
 USER nonroot
 
-# Run the application using uvicorn directly (avoiding uv run at runtime)
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Run migrations then start the app
+CMD ["/app/entrypoint.sh"]
