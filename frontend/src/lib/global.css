@@ -17,13 +17,17 @@
 :root {
 	--font-main: 'Exocet';
 
-	--font-color: black;
-	--link-color: purple;
+	--font-color: #e4d8b8;
+	--bg-color: #0d0d0d;
+	--link-color: #e3bc74;
 }
 
 body {
 	font-family: var(--font-main), sans-serif;
 	color: var(--font-color);
+	background-color: var(--bg-color);
+	margin: 0;
+	padding: 0;
 }
 
 a {
