@@ -65,14 +65,14 @@ export const actions: Actions = {
 		}
 
 		console.log('creating room', name, game, players_max);
-		
+
 		try {
 			const baseUrl = env.PUBLIC_BACKEND_URL || 'http://localhost:8000';
 			const res = await fetch(`${baseUrl}/rooms`, {
 				method: 'POST',
 				headers: {
 					'Content-Type': 'application/json',
-					'Authorization': `Bearer ${session}`
+					Authorization: `Bearer ${session}`
 				},
 				body: JSON.stringify({
 					name: name.toString(),
@@ -86,7 +86,7 @@ export const actions: Actions = {
 				return fail(res.status, { error: result.detail || 'Failed to create room' });
 			}
 			return { success: true, message: `Successfully created room: ${name}` };
-		} catch (err) {
+		} catch {
 			return fail(500, { error: 'Server error' });
 		}
 	},
@@ -104,7 +104,7 @@ export const actions: Actions = {
 			const baseUrl = env.PUBLIC_BACKEND_URL || 'http://localhost:8000';
 			const res = await fetch(`${baseUrl}/rooms/${encodeURIComponent(room_name.toString())}/join`, {
 				method: 'POST',
-				headers: { 'Authorization': `Bearer ${session}` }
+				headers: { Authorization: `Bearer ${session}` }
 			});
 
 			if (!res.ok) {
@@ -112,7 +112,7 @@ export const actions: Actions = {
 				return fail(res.status, { error: result.detail || 'Failed to join room' });
 			}
 			return { success: true, message: `Successfully joined room: ${room_name}` };
-		} catch (err) {
+		} catch {
 			return fail(500, { error: 'Server error' });
 		}
 	},
@@ -130,7 +130,7 @@ export const actions: Actions = {
 			const baseUrl = env.PUBLIC_BACKEND_URL || 'http://localhost:8000';
 			const res = await fetch(`${baseUrl}/rooms/${encodeURIComponent(room_name.toString())}/leave`, {
 				method: 'POST',
-				headers: { 'Authorization': `Bearer ${session}` }
+				headers: { Authorization: `Bearer ${session}` }
 			});
 
 			if (!res.ok) {
@@ -138,7 +138,7 @@ export const actions: Actions = {
 				return fail(res.status, { error: result.detail || 'Failed to leave room' });
 			}
 			return { success: true, message: `Successfully left room: ${room_name}` };
-		} catch (err) {
+		} catch {
 			return fail(500, { error: 'Server error' });
 		}
 	}

@@ -99,7 +99,8 @@
 </div>
 
 <style>
-	h1, h3 {
+	h1,
+	h3 {
 		font-family: 'Exocet', serif;
 		color: #f1e9cd;
 		text-transform: uppercase;
@@ -113,7 +114,9 @@
 		background: #111111;
 		border: 1px solid #23201a;
 		border-radius: 12px;
-		box-shadow: inset 0 0 40px rgba(0,0,0,0.5), 0 10px 40px rgba(0,0,0,0.8);
+		box-shadow:
+			inset 0 0 40px rgba(0, 0, 0, 0.5),
+			0 10px 40px rgba(0, 0, 0, 0.8);
 		color: #8c877a;
 	}
 
@@ -178,7 +181,8 @@
 		cursor: not-allowed;
 	}
 
-	.auth-btn, .logout-btn {
+	.auth-btn,
+	.logout-btn {
 		background: #e3bc74;
 		color: #1a1405;
 		border: none;
@@ -188,7 +192,8 @@
 		width: 100%;
 	}
 
-	.auth-btn:hover:not(:disabled), .logout-btn:hover {
+	.auth-btn:hover:not(:disabled),
+	.logout-btn:hover {
 		background: #f1cf8f;
 		box-shadow: 0 0 25px rgba(227, 188, 116, 0.5);
 		border-color: #f1cf8f;

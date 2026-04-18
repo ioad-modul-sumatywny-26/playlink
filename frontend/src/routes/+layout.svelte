@@ -26,11 +26,9 @@
 
 	nav {
 		font-size: 2.5rem;
-
 		display: flex;
 		gap: 2rem;
 		padding: 1rem;
-
 		justify-content: center;
 		align-items: center;
 	}

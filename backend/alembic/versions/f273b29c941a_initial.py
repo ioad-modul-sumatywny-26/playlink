@@ -5,19 +5,18 @@ Revises:
 Create Date: 2026-04-18 18:26:32.089605
 
 """
-from typing import Sequence, Union
+from collections.abc import Sequence
 
-from alembic import op
 import sqlalchemy as sa
 import sqlmodel
-import sqlmodel
+from alembic import op
 
 
 # revision identifiers, used by Alembic.
 revision: str = 'f273b29c941a'
-down_revision: Union[str, None] = None
-branch_labels: Union[str, Sequence[str], None] = None
-depends_on: Union[str, Sequence[str], None] = None
+down_revision: str | None = None
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
@@ -64,7 +63,9 @@ def upgrade() -> None:
     sa.Column('last_login', sa.DateTime(), nullable=True),
     sa.PrimaryKeyConstraint('id')
     )
-    op.create_index(op.f('ix_user_identity_address'), 'user', ['identity_address'], unique=True)
+    op.create_index(
+        op.f('ix_user_identity_address'), 'user', ['identity_address'], unique=True
+    )
     op.create_index(op.f('ix_user_username'), 'user', ['username'], unique=True)
     op.create_table('nonce',
     sa.Column('id', sa.Integer(), nullable=False),
@@ -77,7 +78,9 @@ def upgrade() -> None:
     sa.PrimaryKeyConstraint('id'),
     sa.UniqueConstraint('value')
     )
-    op.create_index(op.f('ix_nonce_identity_address'), 'nonce', ['identity_address'], unique=False)
+    op.create_index(
+        op.f('ix_nonce_identity_address'), 'nonce', ['identity_address'], unique=False
+    )
     op.create_table('roommember',
     sa.Column('room_id', sa.Integer(), nullable=False),
     sa.Column('user_id', sa.Integer(), nullable=False),

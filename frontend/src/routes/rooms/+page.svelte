@@ -2,7 +2,7 @@
 	import { roomsStore } from '$lib/roomsStore';
 	import { env } from '$env/dynamic/public';
 	import { enhance } from '$app/forms';
-	import type { ActionData, PageProps } from './$types';
+	import type { PageProps } from './$types';
 
 	let { data, form }: PageProps = $props();
 
@@ -37,7 +37,7 @@
 			await fetch(`${baseUrl}/`);
 			const end = performance.now();
 			currentPing = Math.round(end - start);
-		} catch (e) {
+		} catch {
 			currentPing = 'ERR';
 		}
 	}
@@ -68,8 +68,6 @@
 		const seconds = Math.floor((diff % 60000) / 1000);
 		return `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
 	}
-
-	let currentTimeState = $derived(currentTime);
 </script>
 
 <svelte:head>
@@ -77,152 +75,163 @@
 </svelte:head>
 
 <div class="rooms-page-container">
-<div class="rooms-page">
-	<header class="header">
-		<div class="logo-section">
-			<h1 class="logo">PLAYLINK</h1>
-			<p class="description">
-				Find players for forgotten servers, overhaul mods, and retro netplay
-				nights without account walls. This concept focuses on instant browsing,
-				strong atmosphere, and a clear path to a later backend.
-			</p>
+	<div class="rooms-page">
+		<header class="header">
+			<div class="logo-section">
+				<h1 class="logo">PLAYLINK</h1>
+				<p class="description">
+					Find players for forgotten servers, overhaul mods, and retro netplay nights without account walls.
+					This concept focuses on instant browsing, strong atmosphere, and a clear path to a later backend.
+				</p>
 
-			{#if data.isAuthenticated}
-				<div class="actions">
-					<button class="btn btn-primary" onclick={() => isCreating = !isCreating}>
-						{isCreating ? 'CANCEL' : 'CREATE ROOM'}
-					</button>
+				{#if data.isAuthenticated}
+					<div class="actions">
+						<button class="btn btn-primary" onclick={() => (isCreating = !isCreating)}>
+							{isCreating ? 'CANCEL' : 'CREATE ROOM'}
+						</button>
+					</div>
+				{:else}
+					<p class="description" style="color: #ff6b6b; font-size: 0.85rem;">
+						» Please sign in to create or join rooms.
+					</p>
+				{/if}
+			</div>
+
+			<div class="stats-grid">
+				<div class="stat-card">
+					<h3 class="stat-title">OPEN ROOMS</h3>
+					<div class="stat-value">{activeRooms.length}</div>
+					<p class="stat-desc">Lobbies currently broadcasting</p>
+				</div>
+				<div class="stat-card">
+					<h3 class="stat-title">AVERAGE PING</h3>
+					<div class="stat-value">
+						{#if typeof currentPing === 'number'}
+							{currentPing} MS
+						{:else}
+							{currentPing}
+						{/if}
+					</div>
+					<p class="stat-desc">Healthy enough for browse mode</p>
+				</div>
+			</div>
+		</header>
+
+		<section class="board-section">
+			{#if isCreating}
+				<div class="create-room-panel">
+					<h3 class="panel-title">CONFIGURE SIGNAL</h3>
+
+					{#if form?.error}
+						<p class="error-msg">{form.error}</p>
+					{/if}
+
+					<form
+						method="POST"
+						action="?/create"
+						use:enhance={() => {
+							return async ({ update }) => {
+								await update();
+								if (!form?.error) isCreating = false;
+							};
+						}}
+					>
+						<div class="form-group">
+							<label for="name">Identifier (Lobby Name)</label>
+							<input type="text" id="name" name="name" required placeholder="e.g. My Retro Match" />
+						</div>
+
+						<div class="form-group">
+							<label for="game">Target Program (Game)</label>
+							<select id="game" name="game" required disabled={!data.games.length}>
+								{#if data.games.length > 0}
+									{#each data.games as game (game)}
+										<option value={game}>{game}</option>
+									{/each}
+								{:else}
+									<option value="" disabled selected>No games available</option>
+								{/if}
+							</select>
+						</div>
+
+						<div class="form-group">
+							<label for="players_max">Max Connections (Slots)</label>
+							<input type="number" id="players_max" name="players_max" min="2" max="64" value="4" required />
+						</div>
+
+						<button type="submit" class="btn btn-primary" style="margin-top: 1rem;">BROADCAST</button>
+					</form>
+				</div>
+			{/if}
+
+			<div class="section-header" style={isCreating ? 'margin-top: 3rem;' : ''}>
+				<h2 class="section-title">— ACTIVE ROOMS</h2>
+			</div>
+
+			{#if activeRooms.length === 0}
+				<div class="empty-state">
+					<p>Awaiting signals...</p>
 				</div>
 			{:else}
-				<p class="description" style="color: #ff6b6b; font-size: 0.85rem;">
-					» Please sign in to create or join rooms.
-				</p>
-			{/if}
-		</div>
-
-		<div class="stats-grid">
-			<div class="stat-card">
-				<h3 class="stat-title">OPEN ROOMS</h3>
-				<div class="stat-value">{activeRooms.length}</div>
-				<p class="stat-desc">Lobbies currently broadcasting</p>
-			</div>
-			<div class="stat-card">
-				<h3 class="stat-title">AVERAGE PING</h3>
-				<div class="stat-value">
-					{#if typeof currentPing === 'number'}
-						{currentPing} MS
-					{:else}
-						{currentPing}
-					{/if}
-				</div>
-				<p class="stat-desc">Healthy enough for browse mode</p>
-			</div>
-		</div>
-	</header>
-
-	<section class="board-section">
-		{#if isCreating}
-			<div class="create-room-panel">
-				<h3 class="panel-title">CONFIGURE SIGNAL</h3>
-				
-				{#if form?.error}
-					<p class="error-msg">{form.error}</p>
-				{/if}
-
-				<form method="POST" action="?/create" use:enhance={() => {
-					return async ({ update }) => {
-						await update();
-						if (!form?.error) isCreating = false;
-					};
-				}}>
-					<div class="form-group">
-						<label for="name">Identifier (Lobby Name)</label>
-						<input type="text" id="name" name="name" required placeholder="e.g. My Retro Match" />
-					</div>
-
-					<div class="form-group">
-						<label for="game">Target Program (Game)</label>
-									<select id="game" name="game" required disabled={!data.games.length}>
-										{#if data.games.length > 0}
-											{#each data.games as game}
-												<option value={game}>{game}</option>
-											{/each}
-										{:else}
-											<option value="" disabled selected>No games available</option>
-										{/if}
-						</select>
-					</div>
-
-					<div class="form-group">
-						<label for="players_max">Max Connections (Slots)</label>
-						<input type="number" id="players_max" name="players_max" min="2" max="64" value="4" required />
-					</div>
-
-					<button type="submit" class="btn btn-primary" style="margin-top: 1rem;">BROADCAST</button>
-				</form>
-			</div>
-		{/if}
-
-		<div class="section-header" style={isCreating ? 'margin-top: 3rem;' : ''}>
-			<h2 class="section-title">— ACTIVE ROOMS</h2>
-		</div>
-
-		{#if activeRooms.length === 0}
-			<div class="empty-state">
-				<p>Awaiting signals...</p>
-			</div>
-		{:else}
-			<div class="signals-grid">
-				{#each activeRooms as room (room.name)}
-					<div class="signal-card">
-						<div class="signal-header">
-							<span class="signal-badge">LOBBY</span>
-							<span class="signal-slots" style="color: #ff6b6b; margin-right: auto; padding-left: 0.5rem; font-family: ui-monospace, sans-serif;">
-								{getRemainingTime(room.expires_at)}
-							</span>
-							<span class="signal-slots">{room.players_active} / {room.players_max} SLOTS</span>
-						</div>
-						<div class="signal-name">{room.name}</div>
-						<div class="signal-game">Playing: {room.game}</div>
-						<div class="signal-footer">
-							<div class="progress-bar">
-								<div class="progress-fill" style="width: {(room.players_active / room.players_max) * 100}%"></div>
+				<div class="signals-grid">
+					{#each activeRooms as room (room.id ?? room.name)}
+						<div class="signal-card">
+							<div class="signal-header">
+								<span class="signal-badge">LOBBY</span>
+								<span
+									class="signal-slots"
+									style="color: #ff6b6b; margin-right: auto; padding-left: 0.5rem; font-family: ui-monospace, sans-serif;"
+								>
+									{getRemainingTime(room.expires_at)}
+								</span>
+								<span class="signal-slots">{room.players_active} / {room.players_max} SLOTS</span>
 							</div>
-							
-							{#if data.isAuthenticated && data.user}
-								{@const isMember = room.member_addresses.includes(data.user.address)}
-								{@const isFull = room.players_active >= room.players_max}
-								<div class="card-actions">
-									<form method="POST" action="?/join" use:enhance>
-										<input type="hidden" name="room_name" value={room.name} />
-										<button type="submit" class="card-btn join" disabled={isMember || isFull}>
-											[ JOIN ]
-										</button>
-									</form>
-									
-									<form method="POST" action="?/leave" use:enhance>
-										<input type="hidden" name="room_name" value={room.name} />
-										<button type="submit" class="card-btn leave" disabled={!isMember}>
-											[ LEAVE ]
-										</button>
-									</form>
+							<div class="signal-name">{room.name}</div>
+							<div class="signal-game">Playing: {room.game}</div>
+							<div class="signal-footer">
+								<div class="progress-bar">
+									<div
+										class="progress-fill"
+										style="width: {(room.players_active / room.players_max) * 100}%"
+									></div>
 								</div>
-							{/if}
+
+								{#if data.isAuthenticated && data.user}
+									{@const isMember = room.member_addresses.includes(data.user.address)}
+									{@const isFull = room.players_active >= room.players_max}
+									<div class="card-actions">
+										<form method="POST" action="?/join" use:enhance>
+											<input type="hidden" name="room_name" value={room.name} />
+											<button type="submit" class="card-btn join" disabled={isMember || isFull}>
+												[ JOIN ]
+											</button>
+										</form>
+
+										<form method="POST" action="?/leave" use:enhance>
+											<input type="hidden" name="room_name" value={room.name} />
+											<button type="submit" class="card-btn leave" disabled={!isMember}>
+												[ LEAVE ]
+											</button>
+										</form>
+									</div>
+								{/if}
+							</div>
 						</div>
-					</div>
-				{/each}
-			</div>
-		{/if}
-	</section>
-</div>
+					{/each}
+				</div>
+			{/if}
+		</section>
+	</div>
 </div>
 
 {#if toastMessage}
 	<!-- svelte-ignore a11y_click_events_have_key_events -->
 	<!-- svelte-ignore a11y_no_static_element_interactions -->
-	<div 
-		class="toast {toastMessage.type}" 
-		onclick={() => { toastMessage = null; }}
+	<div
+		class="toast {toastMessage.type}"
+		onclick={() => {
+			toastMessage = null;
+		}}
 	>
 		<div class="toast-indicator"></div>
 		<div class="toast-content">
@@ -607,7 +616,8 @@
 		text-transform: uppercase;
 	}
 
-	.form-group input, .form-group select {
+	.form-group input,
+	.form-group select {
 		width: 100%;
 		background: #141415;
 		border: 1px solid #28251e;
@@ -618,7 +628,8 @@
 		font-size: 0.9rem;
 	}
 
-	.form-group input:focus, .form-group select:focus {
+	.form-group input:focus,
+	.form-group select:focus {
 		outline: none;
 		border-color: #e3bc74;
 	}
@@ -677,4 +688,3 @@
 		cursor: not-allowed;
 	}
 </style>
-

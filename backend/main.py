@@ -96,7 +96,11 @@ def get_rooms_payload(session: Session) -> str:
                 "players_active": len(r.members),
                 "players_max": r.players_max,
                 "member_addresses": [m.identity_address for m in r.members],
-                "expires_at": r.expires_at.isoformat() + "Z" if r.expires_at.tzinfo is None else r.expires_at.isoformat(),
+                "expires_at": (
+                    r.expires_at.isoformat() + "Z"
+                    if r.expires_at.tzinfo is None
+                    else r.expires_at.isoformat()
+                ),
             }
             for r in session.exec(select(Room)).all()
         ]
@@ -314,9 +318,13 @@ async def create_room(
     if existing:
         raise HTTPException(status_code=409, detail="Room name already taken")
 
-    user_rooms_count = len(session.exec(select(Room).where(Room.created_by == address)).all())
+    user_rooms_count = len(
+        session.exec(select(Room).where(Room.created_by == address)).all()
+    )
     if user_rooms_count >= 3:
-        raise HTTPException(status_code=400, detail="You can create a maximum of 3 rooms.")
+        raise HTTPException(
+            status_code=400, detail="You can create a maximum of 3 rooms."
+        )
 
     valid_game = session.exec(select(Game).where(Game.name == body.game)).first()
     if not valid_game:
