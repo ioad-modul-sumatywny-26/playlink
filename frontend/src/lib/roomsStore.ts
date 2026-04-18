@@ -7,6 +7,8 @@ export interface RoomSummary {
 	game: string;
 	players_active: number;
 	players_max: number;
+	member_addresses: string[];
+	expires_at: string;
 }
 
 function isRoomSummary(value: unknown): value is RoomSummary {
@@ -20,7 +22,9 @@ function isRoomSummary(value: unknown): value is RoomSummary {
 		typeof room.name === 'string' &&
 		typeof room.game === 'string' &&
 		typeof room.players_active === 'number' &&
-		typeof room.players_max === 'number'
+		typeof room.players_max === 'number' &&
+		Array.isArray(room.member_addresses) &&
+		typeof room.expires_at === 'string'
 	);
 }
 

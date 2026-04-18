@@ -9,6 +9,27 @@
 	let currentPing = $state<number | string>('...');
 	let isCreating = $state(false);
 
+	let toastMessage = $state<{ text: string; type: 'success' | 'error' } | null>(null);
+	let toastTimeout: ReturnType<typeof setTimeout>;
+
+	function showToast(text: string, type: 'success' | 'error') {
+		toastMessage = { text, type };
+		if (toastTimeout) clearTimeout(toastTimeout);
+		toastTimeout = setTimeout(() => {
+			toastMessage = null;
+		}, 4500);
+	}
+
+	$effect(() => {
+		if (form) {
+			if (form.error) {
+				showToast(form.error, 'error');
+			} else if (form.success && form.message) {
+				showToast(form.message, 'success');
+			}
+		}
+	});
+
 	const availableGames = [
 		'Quake III Arena', 
 		'Diablo II', 
@@ -34,6 +55,29 @@
 		const interval = setInterval(measurePing, 15000);
 		return () => clearInterval(interval);
 	});
+
+	let currentTime = $state(new Date());
+
+	$effect(() => {
+		const interval = setInterval(() => {
+			currentTime = new Date();
+		}, 1000);
+		return () => clearInterval(interval);
+	});
+
+	let activeRooms = $derived($roomsStore.filter(r => new Date(r.expires_at) > currentTime));
+
+	function getRemainingTime(expiresAtIso: string): string {
+		const expiry = new Date(expiresAtIso).getTime();
+		const diff = expiry - currentTime.getTime();
+		if (diff <= 0) return '00:00';
+		
+		const minutes = Math.floor(diff / 60000);
+		const seconds = Math.floor((diff % 60000) / 1000);
+		return `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+	}
+
+	let currentTimeState = $derived(currentTime);
 </script>
 
 <svelte:head>
@@ -67,7 +111,7 @@
 		<div class="stats-grid">
 			<div class="stat-card">
 				<h3 class="stat-title">OPEN ROOMS</h3>
-				<div class="stat-value">{$roomsStore.length}</div>
+				<div class="stat-value">{activeRooms.length}</div>
 				<p class="stat-desc">Lobbies currently broadcasting</p>
 			</div>
 			<div class="stat-card">
@@ -127,16 +171,19 @@
 			<h2 class="section-title">— ACTIVE ROOMS</h2>
 		</div>
 
-		{#if $roomsStore.length === 0}
+		{#if activeRooms.length === 0}
 			<div class="empty-state">
 				<p>Awaiting signals...</p>
 			</div>
 		{:else}
 			<div class="signals-grid">
-				{#each $roomsStore as room (room.name)}
+				{#each activeRooms as room (room.name)}
 					<div class="signal-card">
 						<div class="signal-header">
 							<span class="signal-badge">LOBBY</span>
+							<span class="signal-slots" style="color: #ff6b6b; margin-right: auto; padding-left: 0.5rem; font-family: ui-monospace, sans-serif;">
+								{getRemainingTime(room.expires_at)}
+							</span>
 							<span class="signal-slots">{room.players_active} / {room.players_max} SLOTS</span>
 						</div>
 						<div class="signal-name">{room.name}</div>
@@ -146,18 +193,20 @@
 								<div class="progress-fill" style="width: {(room.players_active / room.players_max) * 100}%"></div>
 							</div>
 							
-							{#if data.isAuthenticated}
+							{#if data.isAuthenticated && data.user}
+								{@const isMember = room.member_addresses.includes(data.user.address)}
+								{@const isFull = room.players_active >= room.players_max}
 								<div class="card-actions">
 									<form method="POST" action="?/join" use:enhance>
 										<input type="hidden" name="room_name" value={room.name} />
-										<button type="submit" class="card-btn join" disabled={room.players_active >= room.players_max}>
+										<button type="submit" class="card-btn join" disabled={isMember || isFull}>
 											[ JOIN ]
 										</button>
 									</form>
 									
 									<form method="POST" action="?/leave" use:enhance>
 										<input type="hidden" name="room_name" value={room.name} />
-										<button type="submit" class="card-btn leave" disabled={room.players_active === 0}>
+										<button type="submit" class="card-btn leave" disabled={!isMember}>
 											[ LEAVE ]
 										</button>
 									</form>
@@ -172,7 +221,116 @@
 </div>
 </div>
 
+{#if toastMessage}
+	<!-- svelte-ignore a11y_click_events_have_key_events -->
+	<!-- svelte-ignore a11y_no_static_element_interactions -->
+	<div 
+		class="toast {toastMessage.type}" 
+		onclick={() => { toastMessage = null; }}
+	>
+		<div class="toast-indicator"></div>
+		<div class="toast-content">
+			<div class="toast-title">
+				{toastMessage.type === 'error' ? 'SYSTEM ERROR' : 'SYSTEM CONFIRM'}
+			</div>
+			<div class="toast-text">{toastMessage.text}</div>
+		</div>
+		<div class="toast-close">×</div>
+	</div>
+{/if}
+
 <style>
+	.toast {
+		position: fixed;
+		bottom: 2rem;
+		right: 2rem;
+		z-index: 100;
+		background: #0d0d0d;
+		border: 1px solid #332f26;
+		box-shadow: 0 10px 30px rgba(0,0,0,0.8), inset 0 0 15px rgba(0,0,0,0.5);
+		padding: 1rem 1.5rem;
+		display: flex;
+		align-items: center;
+		gap: 1rem;
+		min-width: 300px;
+		max-width: 450px;
+		cursor: pointer;
+		animation: slideIn 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+	}
+
+	.toast.success {
+		border-color: #4a5c40;
+	}
+
+	.toast.success .toast-indicator {
+		background-color: #a4ce82;
+		box-shadow: 0 0 10px rgba(164, 206, 130, 0.3);
+	}
+
+	.toast.success .toast-title {
+		color: #a4ce82;
+	}
+
+	.toast.error {
+		border-color: #7a1d1d;
+	}
+
+	.toast.error .toast-indicator {
+		background-color: #ff6b6b;
+		box-shadow: 0 0 10px rgba(255, 107, 107, 0.3);
+	}
+
+	.toast.error .toast-title {
+		color: #ff6b6b;
+	}
+
+	.toast-indicator {
+		width: 4px;
+		height: 100%;
+		position: absolute;
+		left: 0;
+		top: 0;
+	}
+
+	.toast-content {
+		flex: 1;
+		padding-left: 0.5rem;
+	}
+
+	.toast-title {
+		font-family: ui-monospace, SFMono-Regular, monospace;
+		font-size: 0.7rem;
+		letter-spacing: 0.1em;
+		margin-bottom: 0.3rem;
+	}
+
+	.toast-text {
+		color: #f1e9cd;
+		font-size: 0.95rem;
+		line-height: 1.4;
+	}
+
+	.toast-close {
+		color: #8c877a;
+		font-size: 1.5rem;
+		line-height: 1;
+	}
+
+	.toast:hover .toast-close {
+		color: #f1e9cd;
+	}
+
+	@keyframes slideIn {
+		0% {
+			opacity: 0;
+			transform: translateX(20px) scale(0.95);
+		}
+		100% {
+			opacity: 1;
+			transform: translateX(0) scale(1);
+		}
+	}
+
 	.rooms-page-container {
 		background-color: #0d0d0d;
 		color: #e4d8b8;

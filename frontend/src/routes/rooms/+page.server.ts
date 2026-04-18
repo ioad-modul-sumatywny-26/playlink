@@ -1,11 +1,32 @@
 import type { Actions, PageServerLoad } from './$types';
 import { env } from '$env/dynamic/public';
 import { fail } from '@sveltejs/kit';
+import { jwtDecode } from 'jwt-decode';
+
+interface SessionTokenClaims {
+	sub?: string;
+	username?: string;
+	exp?: number;
+}
 
 export const load: PageServerLoad = async ({ cookies }) => {
 	const session = cookies.get('session');
+	let user = null;
+
+	if (session) {
+		try {
+			const decoded = jwtDecode<SessionTokenClaims>(session);
+			if (decoded?.sub) {
+				user = { address: decoded.sub };
+			}
+		} catch {
+			// fail token parsing silently here
+		}
+	}
+
 	return {
-		isAuthenticated: !!session
+		isAuthenticated: !!session,
+		user
 	};
 };
 
@@ -44,7 +65,7 @@ export const actions: Actions = {
 				const result = await res.json();
 				return fail(res.status, { error: result.detail || 'Failed to create room' });
 			}
-			return { success: true };
+			return { success: true, message: `Successfully created room: ${name}` };
 		} catch (err) {
 			return fail(500, { error: 'Server error' });
 		}
@@ -70,7 +91,7 @@ export const actions: Actions = {
 				const result = await res.json();
 				return fail(res.status, { error: result.detail || 'Failed to join room' });
 			}
-			return { success: true };
+			return { success: true, message: `Successfully joined room: ${room_name}` };
 		} catch (err) {
 			return fail(500, { error: 'Server error' });
 		}
@@ -96,7 +117,7 @@ export const actions: Actions = {
 				const result = await res.json();
 				return fail(res.status, { error: result.detail || 'Failed to leave room' });
 			}
-			return { success: true };
+			return { success: true, message: `Successfully left room: ${room_name}` };
 		} catch (err) {
 			return fail(500, { error: 'Server error' });
 		}
