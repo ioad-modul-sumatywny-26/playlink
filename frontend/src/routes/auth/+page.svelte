@@ -99,25 +99,106 @@
 </div>
 
 <style>
+	h1, h3 {
+		font-family: 'Exocet', serif;
+		color: #f1e9cd;
+		text-transform: uppercase;
+		font-weight: normal;
+	}
+
+	.auth-page {
+		max-width: 800px;
+		margin: 2rem auto;
+		padding: 2.5rem;
+		background: #111111;
+		border: 1px solid #23201a;
+		border-radius: 12px;
+		box-shadow: inset 0 0 40px rgba(0,0,0,0.5), 0 10px 40px rgba(0,0,0,0.8);
+		color: #8c877a;
+	}
+
 	.auth-header {
 		display: flex;
 		justify-content: space-between;
 		align-items: center;
+		margin-bottom: 2rem;
 	}
 
 	.session-box,
 	.auth-container {
-		margin-top: 1rem;
-		padding: 1rem;
-		border: 1px solid #ccc;
+		margin-top: 1.5rem;
+		padding: 2rem;
+		border: 1px solid #28251e;
+		background: #0a0a0b;
+		border-radius: 8px;
+	}
+
+	strong {
+		color: #a39c8c;
+		font-family: ui-monospace, monospace;
+		font-size: 0.8rem;
+		text-transform: uppercase;
+		letter-spacing: 0.1em;
 	}
 
 	code {
 		display: block;
 		word-break: break-all;
-		background: #eee;
-		padding: 0.2rem;
-		margin: 0.5rem 0;
+		background: #141415;
+		color: #e3bc74;
+		padding: 0.8rem;
+		margin: 0.5rem 0 1.5rem 0;
+		border-radius: 4px;
+		border: 1px solid #28251e;
+		font-family: ui-monospace, monospace;
+		font-size: 0.8rem;
+	}
+
+	button {
+		font-family: ui-monospace, SFMono-Regular, monospace;
+		font-size: 0.75rem;
+		letter-spacing: 0.15em;
+		padding: 0.8rem 1.5rem;
+		border-radius: 6px;
+		cursor: pointer;
+		text-transform: uppercase;
+		transition: all 0.2s;
+		background: transparent;
+		color: #a39c8c;
+		border: 1px solid #3d3930;
+	}
+
+	button:hover:not(:disabled) {
+		border-color: #e3bc74;
+		color: #e3bc74;
+	}
+
+	button:disabled {
+		opacity: 0.5;
+		cursor: not-allowed;
+	}
+
+	.auth-btn, .logout-btn {
+		background: #e3bc74;
+		color: #1a1405;
+		border: none;
+		box-shadow: 0 0 15px rgba(227, 188, 116, 0.3);
+		font-weight: bold;
+		margin-top: 1rem;
+		width: 100%;
+	}
+
+	.auth-btn:hover:not(:disabled), .logout-btn:hover {
+		background: #f1cf8f;
+		box-shadow: 0 0 25px rgba(227, 188, 116, 0.5);
+		border-color: #f1cf8f;
+		color: #1a1405;
+	}
+
+	.error {
+		color: #ff6b6b;
+		margin-top: 1rem;
+		font-size: 0.9rem;
 	}
 
 	.jwt {

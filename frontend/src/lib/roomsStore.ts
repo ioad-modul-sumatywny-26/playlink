@@ -4,6 +4,7 @@ import { writable, type Readable } from 'svelte/store';
 
 export interface RoomSummary {
 	name: string;
+	game: string;
 	players_active: number;
 	players_max: number;
 }
@@ -17,6 +18,7 @@ function isRoomSummary(value: unknown): value is RoomSummary {
 
 	return (
 		typeof room.name === 'string' &&
+		typeof room.game === 'string' &&
 		typeof room.players_active === 'number' &&
 		typeof room.players_max === 'number'
 	);

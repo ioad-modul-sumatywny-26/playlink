@@ -83,6 +83,7 @@ def get_rooms_payload(session: Session) -> str:
         [
             {
                 "name": r.name,
+                "game": r.game,
                 "players_active": r.players_active,
                 "players_max": r.players_max,
             }

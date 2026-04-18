@@ -128,25 +128,50 @@
 	.mnemonic-grid {
 		display: grid;
 		grid-template-columns: repeat(3, 1fr);
-		gap: 0.5rem;
-		margin: 1rem 0;
+		gap: 0.8rem;
+		margin: 1.5rem 0;
 	}
 
 	.word-slot {
 		display: flex;
-		border: 1px solid #ccc;
-		padding: 0.2rem;
+		align-items: center;
+		background: #141415;
+		border: 1px solid #28251e;
+		padding: 0.8rem;
+		border-radius: 6px;
+		transition: all 0.2s ease;
+	}
+
+	.word-slot.focused {
+		border-color: #e3bc74;
+		box-shadow: 0 0 10px rgba(227, 188, 116, 0.15);
+	}
+
+	.word-slot.invalid {
+		border-color: #993333;
+		box-shadow: 0 0 10px rgba(153, 51, 51, 0.15);
 	}
 
 	.number {
-		font-size: 0.8rem;
-		color: #888;
-		margin-right: 0.4rem;
+		font-family: ui-monospace, monospace;
+		font-size: 0.7rem;
+		color: #5c584a;
+		min-width: 1.5rem;
+		user-select: none;
 	}
 
 	input {
+		background: transparent;
+		color: #e4d8b8;
 		border: none;
 		outline: none;
 		width: 100%;
+		font-family: ui-monospace, monospace;
+		font-size: 0.9rem;
+		letter-spacing: 0.05em;
+	}
+
+	input::placeholder {
+		color: #3d3930;
 	}
 </style>

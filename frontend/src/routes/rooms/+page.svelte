@@ -17,12 +17,6 @@
 				strong atmosphere, and a clear path to a later backend.
 			</p>
 			
-			<div class="badges">
-				<span class="badge">INSTANT SESSION BROWSE</span>
-				<span class="badge">NO-AUTH CONCEPT</span>
-				<span class="badge">RETRO SKIN SYSTEM</span>
-			</div>
-			
 			<div class="actions">
 				<button class="btn btn-primary">BROWSE SIGNALS</button>
 				<button class="btn btn-secondary">STAGE A MOCK SIGNAL</button>
@@ -61,6 +55,7 @@
 							<span class="signal-slots">{room.players_active} / {room.players_max} SLOTS</span>
 						</div>
 						<div class="signal-name">{room.name}</div>
+						<div class="signal-game">Playing: {room.game}</div>
 						<div class="signal-footer">
 							<div class="progress-bar">
 								<div class="progress-fill" style="width: {(room.players_active / room.players_max) * 100}%"></div>
@@ -295,9 +290,17 @@
 		font-family: 'Exocet', serif;
 		font-size: 1.8rem;
 		color: #f1e9cd;
-		margin-bottom: 1.5rem;
+		margin-bottom: 0.5rem;
 		text-transform: uppercase;
 		line-height: 1.1;
+	}
+
+	.signal-game {
+		font-family: ui-monospace, monospace;
+		font-size: 0.75rem;
+		color: #a39c8c;
+		margin-bottom: 1.5rem;
+		letter-spacing: 0.05em;
 	}
 
 	.signal-footer {

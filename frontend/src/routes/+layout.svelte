@@ -20,6 +20,10 @@
 {@render children()}
 
 <style>
+	:global(body) {
+		font-family: 'Inter', ui-sans-serif, system-ui, -apple-system, sans-serif;
+	}
+
 	nav {
 		font-size: 2.5rem;
 
@@ -34,7 +38,7 @@
 	nav a {
 		color: white;
 		text-decoration: none;
-		font-family: var(--font-main), sans-serif;
+		font-family: 'Exocet', serif;
 		transition: color 0.2s;
 	}
 
