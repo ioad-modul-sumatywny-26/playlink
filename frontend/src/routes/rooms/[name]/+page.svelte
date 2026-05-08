@@ -59,6 +59,30 @@
 			<h1>{data.roomName}</h1>
 			{#if data.roomGame}<span class="game">{data.roomGame}</span>{/if}
 		</div>
+		{#if data.description || data.communicatorLink || data.requirements}
+			<div class="meta-block">
+				{#if data.description}
+					<div class="meta-item">
+						<span class="meta-label">Description</span>
+						<p class="meta-value">{data.description}</p>
+					</div>
+				{/if}
+				{#if data.communicatorLink}
+					<div class="meta-item">
+						<span class="meta-label">Communicator</span>
+						<a class="meta-link" href={data.communicatorLink} target="_blank" rel="noopener">
+							{data.communicatorLink}
+						</a>
+					</div>
+				{/if}
+				{#if data.requirements}
+					<div class="meta-item">
+						<span class="meta-label">Requirements</span>
+						<p class="meta-value">{data.requirements}</p>
+					</div>
+				{/if}
+			</div>
+		{/if}
 	</header>
 
 	<div class="chat" bind:this={scroller}>
@@ -142,6 +166,52 @@
 		color: #e3bc74;
 		font-size: 0.9rem;
 		opacity: 0.85;
+	}
+
+	.meta-block {
+		display: flex;
+		flex-direction: column;
+		gap: 0.5rem;
+		margin-top: 0.5rem;
+		padding: 0.75rem 1rem;
+		background: rgba(255, 255, 255, 0.03);
+		border: 1px solid rgba(227, 188, 116, 0.2);
+		border-radius: 8px;
+	}
+
+	.meta-item {
+		display: flex;
+		flex-direction: column;
+		gap: 0.15rem;
+	}
+
+	.meta-label {
+		font-size: 0.7rem;
+		letter-spacing: 0.1em;
+		text-transform: uppercase;
+		color: #e3bc74;
+		opacity: 0.85;
+	}
+
+	.meta-value {
+		margin: 0;
+		color: #f4ecd8;
+		font-size: 0.9rem;
+		line-height: 1.4;
+		white-space: pre-wrap;
+		word-wrap: break-word;
+	}
+
+	.meta-link {
+		color: #f4ecd8;
+		font-size: 0.9rem;
+		word-break: break-all;
+		text-decoration: underline;
+		text-decoration-color: rgba(227, 188, 116, 0.4);
+	}
+
+	.meta-link:hover {
+		text-decoration-color: #e3bc74;
 	}
 
 	.chat {

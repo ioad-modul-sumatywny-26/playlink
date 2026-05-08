@@ -19,6 +19,9 @@ interface RoomDetail {
 	players_max: number;
 	players_active: number;
 	member_addresses: string[];
+	description: string | null;
+	communicator_link: string | null;
+	requirements: string | null;
 	expires_at: string;
 }
 
@@ -40,11 +43,17 @@ export const load: PageServerLoad = async ({ params, cookies }) => {
 	const baseUrl = backendBase();
 	let isMember = false;
 	let roomGame = '';
+	let description: string | null = null;
+	let communicatorLink: string | null = null;
+	let requirements: string | null = null;
 	try {
 		const res = await fetch(`${baseUrl}/rooms/${encodeURIComponent(params.name)}`);
 		if (res.ok) {
 			const data = (await res.json()) as RoomDetail;
 			roomGame = data.game;
+			description = data.description;
+			communicatorLink = data.communicator_link;
+			requirements = data.requirements;
 			const lower = address.toLowerCase();
 			isMember = data.member_addresses.some((a) => a.toLowerCase() === lower);
 		}
@@ -57,6 +66,9 @@ export const load: PageServerLoad = async ({ params, cookies }) => {
 	return {
 		roomName: params.name,
 		roomGame,
+		description,
+		communicatorLink,
+		requirements,
 		token: session,
 		address,
 		username
