@@ -15,6 +15,9 @@ class Room(SQLModel, table=True):
     name: str = Field(index=True, unique=True)
     game: str
     players_max: int
+    description: str | None = Field(default=None, max_length=500)
+    communicator_link: str | None = Field(default=None, max_length=500)
+    requirements: str | None = Field(default=None, max_length=1000)
     created_by: str = Field(index=True)  # identity_address of creator
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     expires_at: datetime = Field(
