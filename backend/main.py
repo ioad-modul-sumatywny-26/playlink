@@ -15,7 +15,8 @@ from eth_utils.address import to_checksum_address
 from fastapi import Depends, FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordBearer
-from pydantic import BaseModel
+from pydantic import BaseModel, HttpUrl
+from pydantic import Field as PydField
 from sqlmodel import Session, select
 
 from database import get_session
@@ -51,6 +52,9 @@ class CreateRoomRequest(BaseModel):
     name: str
     game: str
     players_max: int
+    description: str | None = PydField(default=None, max_length=500)
+    communicator_link: HttpUrl | None = None
+    requirements: str | None = PydField(default=None, max_length=1000)
 
 
 # --- WebSocket connection manager ---
@@ -123,6 +127,9 @@ def get_rooms_payload(session: Session) -> str:
                 "players_active": len(r.members),
                 "players_max": r.players_max,
                 "member_addresses": [m.identity_address for m in r.members],
+                "description": r.description,
+                "communicator_link": r.communicator_link,
+                "requirements": r.requirements,
                 "expires_at": (
                     r.expires_at.isoformat() + "Z"
                     if r.expires_at.tzinfo is None
@@ -370,6 +377,9 @@ def get_room(room_name: str, session: SessionDep):
         "players_max": room.players_max,
         "players_active": len(room.members),
         "member_addresses": [m.identity_address for m in room.members],
+        "description": room.description,
+        "communicator_link": room.communicator_link,
+        "requirements": room.requirements,
         "expires_at": (
             room.expires_at.isoformat() + "Z"
             if room.expires_at.tzinfo is None
@@ -423,6 +433,11 @@ async def create_room(
         name=body.name,
         game=body.game,
         players_max=body.players_max,
+        description=body.description,
+        communicator_link=(
+            str(body.communicator_link) if body.communicator_link else None
+        ),
+        requirements=body.requirements,
         created_by=address,
     )
 
