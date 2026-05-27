@@ -12,6 +12,11 @@ export interface ChatMessage {
 	created_at: string;
 }
 
+export interface RoomMember {
+	address: string;
+	username: string;
+}
+
 export type RsvpStatus = 'present' | 'absent' | 'maybe';
 
 export interface RsvpEntry {
@@ -52,7 +57,17 @@ interface RsvpUpdateFrame {
 	rsvp: RsvpEntry;
 }
 
-type ChatFrame = HistoryFrame | MessageFrame | EventUpdateFrame | RsvpUpdateFrame;
+interface RosterUpdateFrame {
+	type: 'roster_update';
+	members: RoomMember[];
+}
+
+type ChatFrame =
+	| HistoryFrame
+	| MessageFrame
+	| EventUpdateFrame
+	| RsvpUpdateFrame
+	| RosterUpdateFrame;
 
 // ---------- Frame validation ----------
 
@@ -66,6 +81,12 @@ function isChatMessage(value: unknown): value is ChatMessage {
 		typeof m.content === 'string' &&
 		typeof m.created_at === 'string'
 	);
+}
+
+function isRoomMember(value: unknown): value is RoomMember {
+	if (typeof value !== 'object' || value === null) return false;
+	const m = value as Record<string, unknown>;
+	return typeof m.address === 'string' && typeof m.username === 'string';
 }
 
 function isRsvpStatus(value: unknown): value is RsvpStatus {
@@ -121,6 +142,9 @@ function parseFrame(raw: string): ChatFrame | null {
 	if (f.type === 'rsvp_update' && isRsvpEntry(f.rsvp)) {
 		return { type: 'rsvp_update', rsvp: f.rsvp };
 	}
+	if (f.type === 'roster_update' && Array.isArray(f.members) && f.members.every(isRoomMember)) {
+		return { type: 'roster_update', members: f.members as RoomMember[] };
+	}
 	return null;
 }
 
@@ -131,6 +155,8 @@ export interface ChatStore {
 	messages: Readable<ChatMessage[]>;
 	/** Current scheduled event (or null when none / not yet observed). */
 	event: Readable<RoomEventState | null>;
+	/** Live room roster (address + username), updated as members join/leave. */
+	members: Readable<RoomMember[]>;
 	send(content: string): void;
 	destroy(): void;
 }
@@ -138,6 +164,8 @@ export interface ChatStore {
 export interface CreateChatStoreOptions {
 	/** Initial event state from SSR, if any. Avoids a flash of empty content. */
 	initialEvent?: RoomEventState | null;
+	/** Initial member roster from SSR, used until the first WS update. */
+	initialMembers?: RoomMember[];
 }
 
 export function createChatStore(
@@ -147,6 +175,7 @@ export function createChatStore(
 ): ChatStore {
 	const messages = writable<ChatMessage[]>([]);
 	const event = writable<RoomEventState | null>(options.initialEvent ?? null);
+	const members = writable<RoomMember[]>(options.initialMembers ?? []);
 
 	let ws: WebSocket | null = null;
 	let reconnectTimeout: ReturnType<typeof setTimeout> | null = null;
@@ -199,6 +228,9 @@ export function createChatStore(
 				case 'rsvp_update':
 					applyRsvpUpdate(frame.rsvp);
 					break;
+				case 'roster_update':
+					members.set(frame.members);
+					break;
 			}
 		};
 
@@ -227,6 +259,7 @@ export function createChatStore(
 	return {
 		messages: { subscribe: messages.subscribe },
 		event: { subscribe: event.subscribe },
+		members: { subscribe: members.subscribe },
 		send(content: string) {
 			const trimmed = content.trim();
 			if (!trimmed || !ws || ws.readyState !== WebSocket.OPEN) return;

@@ -5,7 +5,8 @@
 		createChatStore,
 		type ChatMessage,
 		type ChatStore,
-		type RoomEventState
+		type RoomEventState,
+		type RoomMember
 	} from '$lib/chatStore';
 	import RoomEvent from '$lib/components/RoomEvent.svelte';
 
@@ -14,14 +15,14 @@
 	let chat = $state<ChatStore | null>(null);
 	let messages = $state<ChatMessage[]>([]);
 	let event = $state<RoomEventState | null>(null);
+	let members = $state<RoomMember[]>(data.members);
 	let input = $state('');
 	let scroller: HTMLDivElement | null = $state(null);
 
-	const members = $derived(data.members);
-
 	onMount(() => {
 		const store = createChatStore(data.roomName, data.token, {
-			initialEvent: data.event
+			initialEvent: data.event,
+			initialMembers: data.members
 		});
 		chat = store;
 		const unsubMessages = store.messages.subscribe(async (m) => {
@@ -32,9 +33,13 @@
 		const unsubEvent = store.event.subscribe((e) => {
 			event = e;
 		});
+		const unsubMembers = store.members.subscribe((m) => {
+			members = m;
+		});
 		return () => {
 			unsubMessages();
 			unsubEvent();
+			unsubMembers();
 		};
 	});
 

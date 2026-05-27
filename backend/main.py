@@ -204,6 +204,13 @@ def _iso(dt: datetime) -> str:
     return dt.isoformat() + "Z" if dt.tzinfo is None else dt.isoformat()
 
 
+def _members_payload(room: Room) -> list[dict[str, str]]:
+    """Compact roster for chat WS `roster_update` frames."""
+    return [
+        {"address": m.identity_address, "username": m.username} for m in room.members
+    ]
+
+
 def _serialize_event_state(session: Session, room: Room) -> dict | None:
     """Build the JSON payload for a room's scheduled event.
 
@@ -552,6 +559,10 @@ async def join_room(
     session.commit()
 
     await manager.broadcast(get_rooms_payload(session))
+    await chat_manager.broadcast(
+        room_name,
+        json.dumps({"type": "roster_update", "members": _members_payload(room)}),
+    )
     return {"status": "joined", "room": room.name}
 
 
@@ -591,6 +602,10 @@ async def leave_room(
     session.commit()
 
     await manager.broadcast(get_rooms_payload(session))
+    await chat_manager.broadcast(
+        room_name,
+        json.dumps({"type": "roster_update", "members": _members_payload(room)}),
+    )
     if rsvp_to_drop is not None:
         await chat_manager.broadcast(
             room_name,

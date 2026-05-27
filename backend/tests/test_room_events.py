@@ -528,6 +528,44 @@ def test_rsvp_update_broadcast(client: TestClient, session: Session):
             assert frame["rsvp"]["status"] == "maybe"
 
 
+def test_join_broadcasts_roster_update(client: TestClient, session: Session):
+    """A second member joining mid-session appears in the chat WS roster
+    of an already-connected member."""
+    _seed_room(session, "lobby-1", ["0xCreator"])
+    creator_t = _mint_token("0xCreator")
+
+    # Pre-create the joining user so the JWT subject resolves to a real user.
+    new_user = User(identity_address="0xJoiner")
+    session.add(new_user)
+    session.commit()
+
+    with client.websocket_connect(f"/ws/rooms/lobby-1/chat?token={creator_t}") as ws:
+        ws.receive_json()  # history
+
+        client.post("/rooms/lobby-1/join", headers=_auth_headers("0xJoiner"))
+
+        frame = ws.receive_json()
+        assert frame["type"] == "roster_update"
+        addrs = [m["address"] for m in frame["members"]]
+        assert "0xCreator" in addrs
+        assert "0xJoiner" in addrs
+
+
+def test_leave_broadcasts_roster_update(client: TestClient, session: Session):
+    _seed_room(session, "lobby-1", ["0xCreator", "0xMember"])
+    creator_t = _mint_token("0xCreator")
+
+    with client.websocket_connect(f"/ws/rooms/lobby-1/chat?token={creator_t}") as ws:
+        ws.receive_json()  # history
+
+        client.post("/rooms/lobby-1/leave", headers=_auth_headers("0xMember"))
+
+        frame = ws.receive_json()
+        assert frame["type"] == "roster_update"
+        addrs = [m["address"] for m in frame["members"]]
+        assert addrs == ["0xCreator"]
+
+
 def test_leave_with_rsvp_broadcasts_event_update(client: TestClient, session: Session):
     _seed_room(session, "lobby-1", ["0xCreator", "0xMember"])
     client.put(
@@ -547,9 +585,15 @@ def test_leave_with_rsvp_broadcasts_event_update(client: TestClient, session: Se
 
         client.post("/rooms/lobby-1/leave", headers=_auth_headers("0xMember"))
 
-        frame = ws_a.receive_json()
-        assert frame["type"] == "event_update"
-        assert frame["event"]["rsvps"] == []
+        # leave broadcasts roster_update first, then event_update because the
+        # member had an RSVP that needs clearing.
+        roster_frame = ws_a.receive_json()
+        assert roster_frame["type"] == "roster_update"
+        assert [m["address"] for m in roster_frame["members"]] == ["0xCreator"]
+
+        event_frame = ws_a.receive_json()
+        assert event_frame["type"] == "event_update"
+        assert event_frame["event"]["rsvps"] == []
 
 
 def test_cancel_event_broadcasts_null_event(client: TestClient, session: Session):
