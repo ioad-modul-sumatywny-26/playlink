@@ -1,6 +1,8 @@
 import secrets
 from datetime import UTC, datetime, timedelta
+from enum import StrEnum
 
+from sqlalchemy import Column, ForeignKey, Integer, UniqueConstraint
 from sqlmodel import Field, Relationship, SQLModel
 
 
@@ -33,6 +35,71 @@ class Message(SQLModel, table=True):
     sender_address: str = Field(index=True)
     content: str
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC), index=True)
+
+
+class RsvpStatus(StrEnum):
+    """Attendance state a member can advertise for a scheduled RoomEvent."""
+
+    present = "present"
+    absent = "absent"
+    maybe = "maybe"
+
+
+class RoomEvent(SQLModel, table=True):
+    """A single scheduled gathering attached to a Room.
+
+    Issue #62 only requires one event per room, so `room_id` is unique.
+    Lifting that constraint later is a non-breaking change.
+    """
+
+    id: int | None = Field(default=None, primary_key=True)
+    room_id: int = Field(
+        sa_column=Column(
+            "room_id",
+            Integer,
+            ForeignKey("room.id", ondelete="CASCADE"),
+            unique=True,
+            index=True,
+            nullable=False,
+        ),
+    )
+    starts_at: datetime = Field(index=True)
+    ends_at: datetime = Field(index=True)
+    created_by: str = Field(index=True)  # identity_address of room creator
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class RoomEventRsvp(SQLModel, table=True):
+    """A member's attendance declaration for a RoomEvent.
+
+    A given user can hold at most one RSVP per event (enforced by the
+    composite unique constraint), updated through upsert semantics.
+    """
+
+    id: int | None = Field(default=None, primary_key=True)
+    event_id: int = Field(
+        sa_column=Column(
+            "event_id",
+            Integer,
+            ForeignKey("roomevent.id", ondelete="CASCADE"),
+            index=True,
+            nullable=False,
+        ),
+    )
+    user_id: int = Field(
+        sa_column=Column(
+            "user_id",
+            Integer,
+            ForeignKey("user.id", ondelete="CASCADE"),
+            index=True,
+            nullable=False,
+        ),
+    )
+    status: RsvpStatus
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+    __table_args__ = (UniqueConstraint("event_id", "user_id"),)
 
 
 class Game(SQLModel, table=True):
