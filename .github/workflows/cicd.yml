@@ -111,6 +111,7 @@ jobs:
                       NONCE_EXPIRATION_MINUTES=${{ vars.NONCE_EXPIRATION_MINUTES }}
                       JWT_EXPIRATION_MINUTES=${{ vars.JWT_EXPIRATION_MINUTES }}
                       ORIGIN=https://playlink.bartek.monster
+                      ADMIN_ADDRESSES=${{ secrets.ADMIN_ADDRESSES }}
                       EOF
 
                       cat > frontend/.env << EOF
