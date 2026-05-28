@@ -694,6 +694,21 @@ async def schedule_room_event(
         )
         session.add(event)
     else:
+        # If the time window shifted at all, every RSVP was a decision about
+        # the old time — drop them so members re-confirm against the new slot.
+        existing_starts = event.starts_at
+        existing_ends = event.ends_at
+        if existing_starts.tzinfo is None:
+            existing_starts = existing_starts.replace(tzinfo=UTC)
+        if existing_ends.tzinfo is None:
+            existing_ends = existing_ends.replace(tzinfo=UTC)
+        time_changed = existing_starts != starts_at or existing_ends != ends_at
+        if time_changed:
+            stale_rsvps = session.exec(
+                select(RoomEventRsvp).where(RoomEventRsvp.event_id == event.id)
+            ).all()
+            for rsvp in stale_rsvps:
+                session.delete(rsvp)
         event.starts_at = starts_at
         event.ends_at = ends_at
         event.updated_at = datetime.now(UTC)

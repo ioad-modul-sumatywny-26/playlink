@@ -12,7 +12,6 @@
 	import SectionTitle from '$lib/components/chrome/SectionTitle.svelte';
 	import OrnateButton from '$lib/components/chrome/OrnateButton.svelte';
 	import Sigil from '$lib/components/chrome/Sigil.svelte';
-	import PipMeter from '$lib/components/chrome/PipMeter.svelte';
 	import Crest from '$lib/components/chrome/Crest.svelte';
 	import RoomEvent from '$lib/components/RoomEvent.svelte';
 	import { getHintsState } from '$lib/hintsContext.svelte';
@@ -139,15 +138,6 @@
 								</span>
 								<span class="member-addr">{shortAddr(m.address)}</span>
 							</div>
-							<span class="member-pip">
-								<PipMeter
-									value={m.isMe ? 3 : 2}
-									total={3}
-									tone={m.isMe ? 'good' : 'mid'}
-									size="sm"
-									glow={m.isMe}
-								/>
-							</span>
 						</li>
 					{/each}
 				</ul>
@@ -363,10 +353,6 @@
 		font-size: 0.65rem;
 		color: var(--bone-dim);
 		letter-spacing: 0.04em;
-	}
-
-	.member-pip {
-		display: inline-flex;
 	}
 
 	/* --- Main column --- */

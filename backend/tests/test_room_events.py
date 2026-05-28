@@ -214,6 +214,61 @@ def test_schedule_event_is_idempotent_upsert(client: TestClient, session: Sessio
     assert len(session.exec(select(RoomEvent)).all()) == 1
 
 
+def test_rescheduling_event_clears_existing_rsvps(client: TestClient, session: Session):
+    _seed_room(session, "lobby-1", ["0xCreator", "0xAlice", "0xBob"])
+
+    client.put(
+        "/rooms/lobby-1/event",
+        json=_event_body(30),
+        headers=_auth_headers("0xCreator"),
+    )
+
+    for addr, status in [("0xAlice", "present"), ("0xBob", "maybe")]:
+        res = client.put(
+            "/rooms/lobby-1/event/rsvp",
+            json={"status": status},
+            headers=_auth_headers(addr),
+        )
+        assert res.status_code == 200
+
+    pre = client.get("/rooms/lobby-1/event").json()
+    assert len(pre["rsvps"]) == 2
+
+    res = client.put(
+        "/rooms/lobby-1/event",
+        json=_event_body(120),
+        headers=_auth_headers("0xCreator"),
+    )
+    assert res.status_code == 200
+    after = res.json()
+    assert after["rsvps"] == []
+
+    rsvp_rows = session.exec(select(RoomEventRsvp)).all()
+    assert rsvp_rows == []
+
+
+def test_rescheduling_event_with_identical_times_keeps_rsvps(
+    client: TestClient, session: Session
+):
+    _seed_room(session, "lobby-1", ["0xCreator", "0xAlice"])
+
+    body = _event_body(30)
+    client.put("/rooms/lobby-1/event", json=body, headers=_auth_headers("0xCreator"))
+    client.put(
+        "/rooms/lobby-1/event/rsvp",
+        json={"status": "present"},
+        headers=_auth_headers("0xAlice"),
+    )
+
+    res = client.put(
+        "/rooms/lobby-1/event", json=body, headers=_auth_headers("0xCreator")
+    )
+    assert res.status_code == 200
+    after = res.json()
+    assert len(after["rsvps"]) == 1
+    assert after["rsvps"][0]["status"] == "present"
+
+
 def test_schedule_event_creator_match_is_case_insensitive(
     client: TestClient, session: Session
 ):

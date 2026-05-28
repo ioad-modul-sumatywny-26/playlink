@@ -1,0 +1,18 @@
+* text=auto eol=lf
+
+# Force LF for scripts and Dockerfiles regardless of platform.
+*.sh        text eol=lf
+*.bash      text eol=lf
+Dockerfile  text eol=lf
+*.dockerfile text eol=lf
+
+# Binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.cur binary
+*.ani binary
+*.woff binary
+*.woff2 binary

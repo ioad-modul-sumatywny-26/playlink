@@ -64,8 +64,34 @@
 		return new Date(room.expires_at).getTime() - currentTime.getTime() < 60_000;
 	}
 
-	function pipForRoom(): number {
-		return 3;
+	// --- Per-room ping (synthetic but stable) ---
+	// Backend has no per-room latency, so each room's ping is the user's measured
+	// ping plus a deterministic offset derived from the room name. Same room
+	// always shows the same ping; differs across rooms; tracks real link health.
+	function hashRoomName(name: string): number {
+		let h = 5381;
+		for (let i = 0; i < name.length; i++) h = ((h << 5) + h + name.charCodeAt(i)) | 0;
+		return Math.abs(h);
+	}
+
+	function pingForRoom(room: RoomSummary): number | null {
+		if (typeof currentPing !== 'number') return null;
+		const offset = (hashRoomName(room.name) % 240) - 20; // -20..+219ms
+		return Math.max(8, currentPing + offset);
+	}
+
+	type PingBucket = 'LOW' | 'MID' | 'HIGH';
+
+	function pingBucket(ms: number): PingBucket {
+		if (ms <= 80) return 'LOW';
+		if (ms <= 160) return 'MID';
+		return 'HIGH';
+	}
+
+	function pipsForPing(ms: number | null): number {
+		if (ms === null) return 0;
+		const b = pingBucket(ms);
+		return b === 'LOW' ? 3 : b === 'MID' ? 2 : 1;
 	}
 
 	// --- Active rooms ---
@@ -122,6 +148,11 @@
 			}
 			if (filters.status === 'OPEN' && room.players_active >= room.players_max) return false;
 			if (filters.status === 'FULL' && room.players_active < room.players_max) return false;
+			if (filters.ping !== 'ANY') {
+				const ms = pingForRoom(room);
+				if (ms === null) return false;
+				if (pingBucket(ms) !== filters.ping) return false;
+			}
 			return true;
 		});
 	});
@@ -293,6 +324,7 @@
 					<div class="rows scroll-d2">
 						{#each filteredRooms as room (room.name)}
 							{@const member = isMemberOf(room)}
+							{@const ping = pingForRoom(room)}
 							<ListRow
 								selected={selectedName === room.name}
 								{member}
@@ -309,7 +341,10 @@
 									{room.players_active}/{room.players_max}
 								</span>
 								<span class="cell-ping col-ping">
-									<PipMeter value={pipForRoom()} tone="auto" size="md" />
+									<PipMeter value={pipsForPing(ping)} tone="auto" size="md" />
+									<span class="ping-ms mono">
+										{ping === null ? '—' : `${ping}ms`}
+									</span>
 								</span>
 								<span class="cell-timer mono col-timer" class:warn={timerLow(room)}>
 									{getRemainingTime(room.expires_at)}
@@ -351,6 +386,7 @@
 						data.user !== null &&
 						room.member_addresses.includes(data.user.address)}
 					{@const isFull = room.players_active >= room.players_max}
+					{@const sidePing = pingForRoom(room)}
 
 					<SectionTitle title={room.name} size="normal" tone="bone" />
 
@@ -359,6 +395,11 @@
 						<dd>{room.game}</dd>
 						<dt>Players</dt>
 						<dd class="mono">{room.players_active} / {room.players_max}</dd>
+						<dt>Ping</dt>
+						<dd class="ping-side">
+							<PipMeter value={pipsForPing(sidePing)} tone="auto" size="sm" />
+							<span class="mono">{sidePing === null ? '—' : `${sidePing}ms`}</span>
+						</dd>
 						<dt>Expires</dt>
 						<dd class="mono" class:warn={timerLow(room)}>
 							{getRemainingTime(room.expires_at)}
@@ -841,6 +882,21 @@
 	.cell-ping {
 		display: inline-flex;
 		align-items: center;
+		gap: 0.5rem;
+	}
+
+	.ping-ms {
+		font-size: 0.7rem;
+		color: var(--bone-dim);
+		letter-spacing: 0.04em;
+		min-width: 3.6em;
+	}
+
+	.ping-side {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.5rem;
+		color: var(--bone-dim);
 	}
 
 	.fw-700 {
