@@ -3,6 +3,7 @@ declare global {
 		interface Locals {
 			user?: {
 				address: string;
+				isAdmin: boolean;
 			};
 		}
 	}

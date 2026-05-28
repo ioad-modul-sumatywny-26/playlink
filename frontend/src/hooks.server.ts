@@ -4,6 +4,7 @@ import type { Handle } from '@sveltejs/kit';
 interface SessionTokenClaims {
 	sub?: string;
 	exp?: number;
+	is_admin?: boolean;
 }
 
 export const handle: Handle = async ({ event, resolve }) => {
@@ -19,7 +20,8 @@ export const handle: Handle = async ({ event, resolve }) => {
 
 			if (decoded.sub) {
 				event.locals.user = {
-					address: decoded.sub
+					address: decoded.sub,
+					isAdmin: decoded.is_admin === true
 				};
 			}
 		} catch {

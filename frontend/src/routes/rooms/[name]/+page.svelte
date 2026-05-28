@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onDestroy, onMount, tick, untrack } from 'svelte';
+	import { goto } from '$app/navigation';
 	import type { PageData } from './$types';
 	import {
 		createChatStore,
@@ -13,8 +14,11 @@
 	import OrnateButton from '$lib/components/chrome/OrnateButton.svelte';
 	import Sigil from '$lib/components/chrome/Sigil.svelte';
 	import Crest from '$lib/components/chrome/Crest.svelte';
+	import SystemDialog from '$lib/components/chrome/SystemDialog.svelte';
 	import RoomEvent from '$lib/components/RoomEvent.svelte';
 	import { getHintsState } from '$lib/hintsContext.svelte';
+
+	const CLOSE_REDIRECT_SECONDS = 5;
 
 	let { data, form }: { data: PageData; form: { error?: string } | null } = $props();
 
@@ -24,6 +28,15 @@
 	let roster = $state<RoomMember[]>(untrack(() => data.members));
 	let input = $state('');
 	let scroller: HTMLDivElement | null = $state(null);
+
+	// Set when an admin closes the room; freezes the UI and counts down to a
+	// redirect back to the rooms list.
+	let closed = $state(false);
+	let redirectIn = $state(CLOSE_REDIRECT_SECONDS);
+
+	function leaveClosedRoom() {
+		goto('/rooms');
+	}
 
 	const hintsState = getHintsState();
 
@@ -52,10 +65,24 @@
 		const unsubMembers = store.members.subscribe((m) => {
 			roster = m;
 		});
+		let countdown: ReturnType<typeof setInterval> | null = null;
+		let redirectTimer: ReturnType<typeof setTimeout> | null = null;
+		const unsubClosed = store.closed.subscribe((isClosed) => {
+			if (!isClosed || closed) return;
+			closed = true;
+			redirectIn = CLOSE_REDIRECT_SECONDS;
+			countdown = setInterval(() => {
+				redirectIn = Math.max(0, redirectIn - 1);
+			}, 1000);
+			redirectTimer = setTimeout(leaveClosedRoom, CLOSE_REDIRECT_SECONDS * 1000);
+		});
 		return () => {
 			unsubMessages();
 			unsubEvent();
 			unsubMembers();
+			unsubClosed();
+			if (countdown) clearInterval(countdown);
+			if (redirectTimer) clearTimeout(redirectTimer);
 		};
 	});
 
@@ -64,7 +91,7 @@
 	});
 
 	function send() {
-		if (!chat || !input.trim()) return;
+		if (closed || !chat || !input.trim()) return;
 		chat.send(input);
 		input = '';
 	}
@@ -254,11 +281,17 @@
 							type="text"
 							bind:value={input}
 							onkeydown={onKey}
-							placeholder="Speak…"
+							placeholder={closed ? 'Room closed' : 'Speak…'}
 							maxlength={1000}
 							autocomplete="off"
+							disabled={closed}
 						/>
-						<OrnateButton type="submit" variant="primary" size="md" disabled={!input.trim()}>
+						<OrnateButton
+							type="submit"
+							variant="primary"
+							size="md"
+							disabled={closed || !input.trim()}
+						>
 							Transmit
 						</OrnateButton>
 					</form>
@@ -268,14 +301,41 @@
 	</div>
 </section>
 
+{#if closed}
+	<SystemDialog
+		open={true}
+		title="Connection Lost"
+		tone="blood"
+		modal
+		closeable={false}
+		width="460px"
+	>
+		<p class="closed-text">This room has been closed by an administrator.</p>
+		<p class="closed-sub">
+			Returning to the rooms list in {redirectIn}
+			{redirectIn === 1 ? 'second' : 'seconds'}…
+		</p>
+		{#snippet footer()}
+			<OrnateButton variant="primary" size="md" onclick={leaveClosedRoom}
+				>Return to Rooms</OrnateButton
+			>
+		{/snippet}
+	</SystemDialog>
+{/if}
+
 <style>
 	.room-page {
 		display: grid;
 		grid-template-columns: 240px 1fr;
+		/* `minmax(0, 1fr)` row + a viewport-bounded height give the grid a definite
+		   height, so the flex chain inside can hand the chat exactly the leftover
+		   space (and scroll it) instead of growing the page. The subtracted ~20rem
+		   accounts for the fixed page chrome above/below (frame, brand, tabs, hint
+		   bar). */
+		grid-template-rows: minmax(0, 1fr);
 		gap: 1rem;
-		min-height: 0;
-		height: 100%;
-		flex: 1;
+		min-height: 380px;
+		height: calc(100dvh - 10rem);
 		align-items: stretch;
 	}
 
@@ -524,7 +584,11 @@
 	.chat {
 		position: relative;
 		flex: 1;
-		min-height: 240px;
+		/* `min-height: 0` lets this flex child shrink below its content size so
+		   `overflow-y` engages. The room-page grid gives the column a definite
+		   height, so the chat takes the leftover space and scrolls — the message
+		   log no longer stretches the page without bound. */
+		min-height: 160px;
 		overflow-y: auto;
 		padding: 1rem 1.05rem;
 		background: linear-gradient(180deg, var(--stone-2) 0%, var(--stone-1) 100%);
@@ -697,5 +761,22 @@
 		.rail {
 			max-height: 200px;
 		}
+	}
+
+	.closed-text {
+		margin: 0 0 0.6rem 0;
+		font-family: var(--font-display);
+		font-size: 1rem;
+		color: var(--bone-bright);
+		letter-spacing: 0.02em;
+		line-height: 1.5;
+	}
+
+	.closed-sub {
+		margin: 0;
+		font-family: var(--font-mono);
+		font-size: 0.82rem;
+		color: var(--bone-muted);
+		letter-spacing: 0.03em;
 	}
 </style>

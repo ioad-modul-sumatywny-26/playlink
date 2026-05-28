@@ -62,12 +62,18 @@ interface RosterUpdateFrame {
 	members: RoomMember[];
 }
 
+interface RoomClosedFrame {
+	type: 'room_closed';
+	room: string;
+}
+
 type ChatFrame =
 	| HistoryFrame
 	| MessageFrame
 	| EventUpdateFrame
 	| RsvpUpdateFrame
-	| RosterUpdateFrame;
+	| RosterUpdateFrame
+	| RoomClosedFrame;
 
 // ---------- Frame validation ----------
 
@@ -145,6 +151,9 @@ function parseFrame(raw: string): ChatFrame | null {
 	if (f.type === 'roster_update' && Array.isArray(f.members) && f.members.every(isRoomMember)) {
 		return { type: 'roster_update', members: f.members as RoomMember[] };
 	}
+	if (f.type === 'room_closed' && typeof f.room === 'string') {
+		return { type: 'room_closed', room: f.room };
+	}
 	return null;
 }
 
@@ -157,6 +166,8 @@ export interface ChatStore {
 	event: Readable<RoomEventState | null>;
 	/** Live room roster (address + username), updated as members join/leave. */
 	members: Readable<RoomMember[]>;
+	/** Becomes `true` when an admin closes the room (`room_closed` frame). */
+	closed: Readable<boolean>;
 	send(content: string): void;
 	destroy(): void;
 }
@@ -176,6 +187,7 @@ export function createChatStore(
 	const messages = writable<ChatMessage[]>([]);
 	const event = writable<RoomEventState | null>(options.initialEvent ?? null);
 	const members = writable<RoomMember[]>(options.initialMembers ?? []);
+	const closed = writable<boolean>(false);
 
 	let ws: WebSocket | null = null;
 	let reconnectTimeout: ReturnType<typeof setTimeout> | null = null;
@@ -231,6 +243,14 @@ export function createChatStore(
 				case 'roster_update':
 					members.set(frame.members);
 					break;
+				case 'room_closed':
+					// The room is gone. Flag it, tear down the socket and suppress any
+					// reconnect attempts — the page will redirect the user out.
+					closed.set(true);
+					isTornDown = true;
+					if (reconnectTimeout) clearTimeout(reconnectTimeout);
+					ws?.close();
+					break;
 			}
 		};
 
@@ -260,6 +280,7 @@ export function createChatStore(
 		messages: { subscribe: messages.subscribe },
 		event: { subscribe: event.subscribe },
 		members: { subscribe: members.subscribe },
+		closed: { subscribe: closed.subscribe },
 		send(content: string) {
 			const trimmed = content.trim();
 			if (!trimmed || !ws || ws.readyState !== WebSocket.OPEN) return;

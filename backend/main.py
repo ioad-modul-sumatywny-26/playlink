@@ -50,6 +50,29 @@ NONCE_EXPIRATION_MINUTES = int(os.getenv("NONCE_EXPIRATION_MINUTES", "5"))
 JWT_EXPIRATION_MINUTES = int(os.getenv("JWT_EXPIRATION_MINUTES", "60"))
 
 
+def _parse_admin_addresses(raw: str | None) -> set[str]:
+    """Parse the comma-separated `ADMIN_ADDRESSES` env value into a set.
+
+    Addresses are lower-cased so membership checks are case-insensitive and
+    independent of EIP-55 checksum casing. An empty/unset value yields an
+    empty set — i.e. the system simply has no admins.
+    """
+    if not raw:
+        return set()
+    return {part.strip().lower() for part in raw.split(",") if part.strip()}
+
+
+# Whitelisted admin identity addresses. Authority lives entirely in the
+# environment — there is no `is_admin` column, so the only way to grant power
+# is to edit `.env`. Kept mutable at module scope so tests can adjust it.
+ADMIN_ADDRESSES: set[str] = _parse_admin_addresses(os.getenv("ADMIN_ADDRESSES"))
+
+
+def is_admin_address(address: str) -> bool:
+    """Return whether `address` is whitelisted as an administrator."""
+    return address.lower() in ADMIN_ADDRESSES
+
+
 # --- Schemas ---
 class VerifyRequest(BaseModel):
     address: str
@@ -77,6 +100,12 @@ class SetRsvpRequest(BaseModel):
     """Body for `PUT /rooms/{name}/event/rsvp`."""
 
     status: RsvpStatus
+
+
+class CreateGameRequest(BaseModel):
+    """Body for `POST /games` — admin adds a new game category."""
+
+    name: str = PydField(min_length=1, max_length=100)
 
 
 # --- WebSocket connection manager ---
@@ -199,6 +228,20 @@ async def get_current_user_address(
         raise HTTPException(status_code=401, detail="Invalid token") from None
 
 
+async def get_admin_address(
+    address: Annotated[str, Depends(get_current_user_address)],
+) -> str:
+    """Authorize the caller as an administrator.
+
+    Reuses the normal JWT auth to resolve the identity address, then checks it
+    against the `ADMIN_ADDRESSES` whitelist. The whitelist is authoritative —
+    a forged `is_admin` JWT claim cannot grant access here.
+    """
+    if not is_admin_address(address):
+        raise HTTPException(status_code=403, detail="Admin privileges required")
+    return address
+
+
 def _iso(dt: datetime) -> str:
     """Serialize a datetime to ISO 8601, appending `Z` for naive UTC values."""
     return dt.isoformat() + "Z" if dt.tzinfo is None else dt.isoformat()
@@ -244,6 +287,31 @@ def _serialize_event_state(session: Session, room: Room) -> dict | None:
             for rsvp, user in rsvp_rows
         ],
     }
+
+
+def _purge_room(session: Session, room: Room) -> None:
+    """Delete a room and every row that depends on it.
+
+    Removes the room's chat messages, its scheduled event and that event's
+    RSVPs, then the room itself. Membership link rows are cleared explicitly so
+    the cascade works the same on SQLite (tests) as on Postgres. Does not
+    commit — the caller decides the transaction boundary.
+    """
+    messages = session.exec(select(Message).where(Message.room_id == room.id)).all()
+    for m in messages:
+        session.delete(m)
+
+    event = session.exec(select(RoomEvent).where(RoomEvent.room_id == room.id)).first()
+    if event is not None:
+        rsvps = session.exec(
+            select(RoomEventRsvp).where(RoomEventRsvp.event_id == event.id)
+        ).all()
+        for r in rsvps:
+            session.delete(r)
+        session.delete(event)
+
+    room.members.clear()
+    session.delete(room)
 
 
 DEFAULT_GAMES: list[str] = [
@@ -416,19 +484,25 @@ def verify_signature(body: VerifyRequest, session: SessionDep):
     session.commit()
 
     # Generate JWT
+    is_admin = is_admin_address(checksum_address)
     token_data = {
         "sub": checksum_address,
         "username": user.username if user else "Unknown",
+        "is_admin": is_admin,
         "iat": datetime.now(UTC),
         "exp": datetime.now(UTC) + timedelta(minutes=JWT_EXPIRATION_MINUTES),
         "iss": "playlink-auth",
     }
     token = jwt.encode(token_data, JWT_SECRET, algorithm=JWT_ALGORITHM)
 
-    return {"token": token, "username": user.username if user else "Unknown"}
+    return {
+        "token": token,
+        "username": user.username if user else "Unknown",
+        "is_admin": is_admin,
+    }
 
 
-@app.get("/users/me", response_model=User)
+@app.get("/users/me")
 def get_me(
     session: SessionDep,
     address: Annotated[str, Depends(get_current_user_address)],
@@ -436,7 +510,14 @@ def get_me(
     user = session.exec(select(User).where(User.identity_address == address)).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
-    return user
+    return {
+        "id": user.id,
+        "identity_address": user.identity_address,
+        "username": user.username,
+        "created_at": _iso(user.created_at),
+        "last_login": _iso(user.last_login) if user.last_login else None,
+        "is_admin": is_admin_address(address),
+    }
 
 
 @app.get("/rooms")
@@ -472,6 +553,98 @@ def get_room(room_name: str, session: SessionDep):
 def list_games(session: SessionDep):
     games = session.exec(select(Game).order_by(Game.sort_order)).all()
     return [game.name for game in games]
+
+
+@app.delete(
+    "/rooms/{room_name}",
+    status_code=200,
+    dependencies=[Depends(get_admin_address)],
+)
+async def delete_room(
+    room_name: str,
+    session: SessionDep,
+):
+    """Admin-only: close a room.
+
+    Cascades deletion of the room's chat messages, scheduled event and RSVPs,
+    notifies anyone connected to the room's chat via a `room_closed` frame so
+    their client can redirect them out, and broadcasts the refreshed active
+    rooms list to all global listeners.
+    """
+    room = session.exec(select(Room).where(Room.name == room_name)).first()
+    if not room:
+        raise HTTPException(status_code=404, detail="Room not found")
+
+    _purge_room(session, room)
+    session.commit()
+
+    await chat_manager.broadcast(
+        room_name, json.dumps({"type": "room_closed", "room": room_name})
+    )
+    await manager.broadcast(get_rooms_payload(session))
+    return {"status": "closed", "room": room_name}
+
+
+@app.post("/games", status_code=201, dependencies=[Depends(get_admin_address)])
+async def create_game(
+    body: CreateGameRequest,
+    session: SessionDep,
+):
+    """Admin-only: add a new game category at the end of the sort order."""
+    name = body.name.strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Game name is required")
+
+    existing = session.exec(select(Game).where(Game.name == name)).first()
+    if existing:
+        raise HTTPException(status_code=409, detail="Game already exists")
+
+    next_order = 1 + max(
+        (g.sort_order for g in session.exec(select(Game)).all()), default=0
+    )
+    game = Game(name=name, sort_order=next_order)
+    session.add(game)
+    session.commit()
+    session.refresh(game)
+    return {"name": game.name, "sort_order": game.sort_order}
+
+
+@app.delete("/games/{name}", status_code=200, dependencies=[Depends(get_admin_address)])
+async def delete_game(
+    name: str,
+    session: SessionDep,
+    force: bool = False,
+):
+    """Admin-only: delete a game category.
+
+    If rooms are still playing this game the request is refused with `409`
+    unless `force=true`, in which case those rooms are closed first (cascading
+    like `DELETE /rooms/{name}`) and their chat clients are redirected out.
+    """
+    game = session.exec(select(Game).where(Game.name == name)).first()
+    if not game:
+        raise HTTPException(status_code=404, detail="Game not found")
+
+    rooms = session.exec(select(Room).where(Room.game == name)).all()
+    if rooms and not force:
+        raise HTTPException(
+            status_code=409,
+            detail=f"There are {len(rooms)} active rooms currently playing this game.",
+        )
+
+    closed_rooms = [room.name for room in rooms]
+    for room in rooms:
+        _purge_room(session, room)
+    session.delete(game)
+    session.commit()
+
+    for closed_name in closed_rooms:
+        await chat_manager.broadcast(
+            closed_name, json.dumps({"type": "room_closed", "room": closed_name})
+        )
+    if closed_rooms:
+        await manager.broadcast(get_rooms_payload(session))
+    return {"status": "deleted", "game": name, "rooms_closed": closed_rooms}
 
 
 @app.post("/rooms", status_code=201)

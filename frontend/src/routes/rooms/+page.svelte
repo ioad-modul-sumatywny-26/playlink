@@ -2,8 +2,8 @@
 	import { onMount } from 'svelte';
 	import { roomsStore, type RoomSummary } from '$lib/roomsStore';
 	import { env } from '$env/dynamic/public';
-	import { enhance } from '$app/forms';
-	import { goto } from '$app/navigation';
+	import { enhance, deserialize } from '$app/forms';
+	import { goto, invalidateAll } from '$app/navigation';
 	import type { PageProps } from './$types';
 
 	import InnerPanel from '$lib/components/chrome/InnerPanel.svelte';
@@ -16,6 +16,7 @@
 	import ProgressBar from '$lib/components/chrome/ProgressBar.svelte';
 	import SystemDialog from '$lib/components/chrome/SystemDialog.svelte';
 	import Crest from '$lib/components/chrome/Crest.svelte';
+	import GameManager from '$lib/components/GameManager.svelte';
 
 	import { getHintsState } from '$lib/hintsContext.svelte';
 
@@ -225,6 +226,37 @@
 	// --- Create dialog ---
 	let createOpen = $state(false);
 
+	// --- Admin: game manager + room deletion ---
+	let gamesOpen = $state(false);
+	let confirmDeleteName = $state<string | null>(null);
+	let deletingRoom = $state(false);
+
+	async function closeRoom(name: string) {
+		if (deletingRoom) return;
+		deletingRoom = true;
+		try {
+			const body = new FormData();
+			body.append('room_name', name);
+			const res = await fetch('?/deleteRoom', { method: 'POST', body });
+			const result = deserialize(await res.text()) as
+				| { type: 'success' }
+				| { type: 'failure'; data?: { error?: string } }
+				| { type: 'error' | 'redirect' };
+			if (result.type === 'success') {
+				showToast(`Closed room: ${name}`, 'success');
+				if (selectedName === name) selectedName = null;
+				await invalidateAll();
+			} else if (result.type === 'failure') {
+				showToast(result.data?.error ?? 'Failed to close room', 'error');
+			} else {
+				showToast('Failed to close room', 'error');
+			}
+		} finally {
+			deletingRoom = false;
+			confirmDeleteName = null;
+		}
+	}
+
 	// --- Refs ---
 	let nameInputRef = $state<HTMLInputElement | null>(null);
 
@@ -349,6 +381,20 @@
 								<span class="cell-timer mono col-timer" class:warn={timerLow(room)}>
 									{getRemainingTime(room.expires_at)}
 								</span>
+								{#if data.isAdmin}
+									<button
+										class="admin-x"
+										type="button"
+										title="Close room (admin)"
+										aria-label="Close room {room.name}"
+										onclick={(e) => {
+											e.stopPropagation();
+											confirmDeleteName = room.name;
+										}}
+									>
+										✕
+									</button>
+								{/if}
 							</ListRow>
 						{/each}
 
@@ -367,6 +413,11 @@
 			<div class="create-fab">
 				{#if !data.isAuthenticated}
 					<span class="auth-warn small-caps">Identity required</span>
+				{/if}
+				{#if data.isAdmin}
+					<OrnateButton variant="secondary" size="md" onclick={() => (gamesOpen = true)}>
+						Manage Games
+					</OrnateButton>
 				{/if}
 				<OrnateButton
 					variant="primary"
@@ -478,6 +529,18 @@
 									href="/rooms/{encodeURIComponent(room.name)}"
 								>
 									Open
+								</OrnateButton>
+							{/if}
+
+							{#if data.isAdmin}
+								<OrnateButton
+									variant="danger"
+									size="md"
+									fullWidth
+									disabled={deletingRoom}
+									onclick={() => (confirmDeleteName = room.name)}
+								>
+									Close Room (Admin)
 								</OrnateButton>
 							{/if}
 
@@ -688,6 +751,40 @@
 		onclose={() => (toastMessage = null)}
 	>
 		<p class="toast-text">{toast.text}</p>
+	</SystemDialog>
+{/if}
+
+{#if data.isAdmin}
+	<GameManager bind:open={gamesOpen} games={data.games} onclose={() => (gamesOpen = false)} />
+{/if}
+
+{#if confirmDeleteName}
+	{@const target = confirmDeleteName}
+	<SystemDialog
+		open={true}
+		title="Close Room"
+		tone="blood"
+		modal
+		width="440px"
+		onclose={() => (confirmDeleteName = null)}
+	>
+		<p class="confirm-text">
+			Close room <strong>{target}</strong>? This deletes its chat, scheduled event and all RSVPs,
+			and disconnects everyone inside. This cannot be undone.
+		</p>
+		{#snippet footer()}
+			<OrnateButton variant="ghost" size="md" onclick={() => (confirmDeleteName = null)}>
+				Cancel
+			</OrnateButton>
+			<OrnateButton
+				variant="danger"
+				size="md"
+				disabled={deletingRoom}
+				onclick={() => closeRoom(target)}
+			>
+				Close Room
+			</OrnateButton>
+		{/snippet}
 	</SystemDialog>
 {/if}
 
@@ -1164,6 +1261,58 @@
 		font-size: 0.9rem;
 		color: var(--bone-bright);
 		letter-spacing: var(--track-loose);
+	}
+
+	.confirm-text {
+		margin: 0;
+		font-family: var(--font-display);
+		font-size: 0.9rem;
+		color: var(--bone);
+		line-height: 1.5;
+		letter-spacing: 0.02em;
+	}
+	.confirm-text strong {
+		color: var(--gold-base);
+	}
+
+	/* Admin close-room affordance. Absolutely positioned so it sits on top of the
+	   row without consuming a grid track (abspos items don't size grid columns),
+	   keeping the carefully-tuned list layout intact. */
+	.admin-x {
+		position: absolute;
+		top: 50%;
+		right: 0.4rem;
+		transform: translateY(-50%);
+		z-index: 3;
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		width: 22px;
+		height: 22px;
+		padding: 0;
+		border: 1px solid #4a1414;
+		background: rgba(20, 8, 8, 0.9);
+		color: var(--blood-bright);
+		font-family: var(--font-mono);
+		font-size: 0.8rem;
+		line-height: 1;
+		cursor: pointer;
+		opacity: 0;
+		transition:
+			opacity 140ms ease,
+			color 140ms ease,
+			border-color 140ms ease;
+	}
+
+	:global(.row.is-interactive:hover) .admin-x,
+	:global(.row.is-selected) .admin-x,
+	.admin-x:focus-visible {
+		opacity: 1;
+	}
+
+	.admin-x:hover {
+		color: #ffd9d9;
+		border-color: var(--blood-bright);
 	}
 
 	/* Create dialog form rows */

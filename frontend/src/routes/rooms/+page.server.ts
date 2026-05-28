@@ -12,6 +12,7 @@ interface SessionTokenClaims {
 	sub?: string;
 	username?: string;
 	exp?: number;
+	is_admin?: boolean;
 }
 
 function isStringArray(value: unknown): value is string[] {
@@ -21,6 +22,7 @@ function isStringArray(value: unknown): value is string[] {
 export const load: PageServerLoad = async ({ cookies }) => {
 	const session = cookies.get('session');
 	let user = null;
+	let isAdmin = false;
 	let games: string[] = [];
 
 	if (session) {
@@ -28,6 +30,7 @@ export const load: PageServerLoad = async ({ cookies }) => {
 			const decoded = jwtDecode<SessionTokenClaims>(session);
 			if (decoded?.sub) {
 				user = { address: decoded.sub };
+				isAdmin = decoded.is_admin === true;
 			}
 		} catch {
 			// fail token parsing silently here
@@ -51,6 +54,7 @@ export const load: PageServerLoad = async ({ cookies }) => {
 	return {
 		isAuthenticated: !!session,
 		user,
+		isAdmin,
 		games
 	};
 };
@@ -156,6 +160,102 @@ export const actions: Actions = {
 				return fail(res.status, { error: result.detail || 'Failed to leave room' });
 			}
 			return { success: true, message: `Successfully left room: ${room_name}` };
+		} catch {
+			return fail(500, { error: 'Server error' });
+		}
+	},
+
+	deleteRoom: async ({ request, cookies }) => {
+		const session = cookies.get('session');
+		if (!session) return fail(401, { error: 'Not authenticated' });
+
+		const data = await request.formData();
+		const room_name = data.get('room_name');
+		if (!room_name) return fail(400, { error: 'Missing room name' });
+
+		try {
+			const baseUrl = backendBase();
+			const res = await fetch(`${baseUrl}/rooms/${encodeURIComponent(room_name.toString())}`, {
+				method: 'DELETE',
+				headers: { Authorization: `Bearer ${session}` }
+			});
+
+			if (!res.ok) {
+				const result = await res.json().catch(() => ({}));
+				return fail(res.status, { error: result.detail || 'Failed to close room' });
+			}
+			return { success: true, message: `Closed room: ${room_name}` };
+		} catch {
+			return fail(500, { error: 'Server error' });
+		}
+	},
+
+	addGame: async ({ request, cookies }) => {
+		const session = cookies.get('session');
+		if (!session) return fail(401, { error: 'Not authenticated' });
+
+		const data = await request.formData();
+		const name = data.get('name');
+		if (typeof name !== 'string' || name.trim() === '') {
+			return fail(400, { error: 'Game name is required' });
+		}
+
+		try {
+			const baseUrl = backendBase();
+			const res = await fetch(`${baseUrl}/games`, {
+				method: 'POST',
+				headers: {
+					'Content-Type': 'application/json',
+					Authorization: `Bearer ${session}`
+				},
+				body: JSON.stringify({ name: name.trim() })
+			});
+
+			if (!res.ok) {
+				const result = await res.json().catch(() => ({}));
+				return fail(res.status, { error: result.detail || 'Failed to add game' });
+			}
+			return { success: true, message: `Added game: ${name.trim()}` };
+		} catch {
+			return fail(500, { error: 'Server error' });
+		}
+	},
+
+	deleteGame: async ({ request, cookies }) => {
+		const session = cookies.get('session');
+		if (!session) return fail(401, { error: 'Not authenticated' });
+
+		const data = await request.formData();
+		const name = data.get('name');
+		const force = data.get('force') === 'true';
+		if (typeof name !== 'string' || name.trim() === '') {
+			return fail(400, { error: 'Missing game name' });
+		}
+		const gameName = name.trim();
+
+		try {
+			const baseUrl = backendBase();
+			const url = new URL(`${baseUrl}/games/${encodeURIComponent(gameName)}`);
+			if (force) url.searchParams.set('force', 'true');
+			const res = await fetch(url, {
+				method: 'DELETE',
+				headers: { Authorization: `Bearer ${session}` }
+			});
+
+			if (!res.ok) {
+				const result = await res.json().catch(() => ({}));
+				// 409 means active rooms are still playing this game — surface it as a
+				// conflict so the UI can offer a force-delete confirmation.
+				if (res.status === 409) {
+					return fail(409, {
+						error: result.detail || 'Game has active rooms',
+						conflict: true,
+						game: gameName
+					});
+				}
+				return fail(res.status, { error: result.detail || 'Failed to delete game' });
+			}
+			return { success: true, message: `Deleted game: ${gameName}` };
 		} catch {
 			return fail(500, { error: 'Server error' });
 		}
