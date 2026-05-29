@@ -327,15 +327,16 @@
 	.room-page {
 		display: grid;
 		grid-template-columns: 240px 1fr;
-		/* `minmax(0, 1fr)` row + a viewport-bounded height give the grid a definite
-		   height, so the flex chain inside can hand the chat exactly the leftover
-		   space (and scroll it) instead of growing the page. The subtracted ~20rem
-		   accounts for the fixed page chrome above/below (frame, brand, tabs, hint
-		   bar). */
+		/* A viewport-bounded height gives the grid a definite size, so the inner
+		   flex chain hands the chat the leftover space (and scrolls it) instead
+		   of growing the page. The ~18rem accounts for the real fixed chrome
+		   above (frame padding + brand + tabs ≈ 165px) and below (hint bar block
+		   + frame padding ≈ 114px) — measured, not guessed. `min-height` keeps a
+		   usable floor on very short viewports (the page scrolls below it). */
 		grid-template-rows: minmax(0, 1fr);
 		gap: 1rem;
 		min-height: 380px;
-		height: calc(100dvh - 10rem);
+		height: calc(100dvh - 18rem);
 		align-items: stretch;
 	}
 
@@ -569,6 +570,9 @@
 	.event-slot {
 		display: flex;
 		flex-direction: column;
+		/* Let the event panel shrink within the flex column so it can never
+		   steal the chat's space — the roster scrolls internally instead. */
+		min-height: 0;
 	}
 
 	/* --- Chat scroll area --- */

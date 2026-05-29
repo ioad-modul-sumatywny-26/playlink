@@ -244,4 +244,20 @@
 			gap: 0.5rem;
 		}
 	}
+
+	/* Very small phones: reclaim the wide left gutter and tighten cells so the
+	   word inputs stay legible at ~300px wide. */
+	@media (max-width: 360px) {
+		.word-slot {
+			min-height: 46px;
+			padding: 0 0.5rem 0 1.6rem;
+		}
+		.number {
+			left: 0.35rem;
+			font-size: 0.55rem;
+		}
+		input {
+			font-size: 0.82rem;
+		}
+	}
 </style>

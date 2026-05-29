@@ -268,14 +268,20 @@
 .anim-frame-in {
 	animation: fadeIn 0.55s ease-out 0ms both;
 }
+/* `backwards` (not `both`) so the staggered "from" state still applies during
+   the start delay, but the element rests at `transform: none` once the
+   animation finishes. A retained identity transform would otherwise make these
+   elements a containing block for `position: fixed`, breaking modal/toast
+   anchoring to the viewport. The end keyframe equals the resting state, so
+   there is no visual change. */
 .anim-panel-in {
-	animation: slideUp 0.5s cubic-bezier(0.16, 1, 0.3, 1) 200ms both;
+	animation: slideUp 0.5s cubic-bezier(0.16, 1, 0.3, 1) 200ms backwards;
 }
 .anim-content-in {
-	animation: slideUp 0.45s cubic-bezier(0.16, 1, 0.3, 1) 380ms both;
+	animation: slideUp 0.45s cubic-bezier(0.16, 1, 0.3, 1) 380ms backwards;
 }
 .anim-hints-in {
-	animation: slideUp 0.4s cubic-bezier(0.16, 1, 0.3, 1) 560ms both;
+	animation: slideUp 0.4s cubic-bezier(0.16, 1, 0.3, 1) 560ms backwards;
 }
 
 .torch-flicker {

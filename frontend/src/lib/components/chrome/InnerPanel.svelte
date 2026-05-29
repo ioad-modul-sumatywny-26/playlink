@@ -80,6 +80,14 @@
 		overflow: hidden;
 	}
 
+	/* On very small phones the 8px margin plus the bronze ring leaves too little
+	   width for content — trim the margin to claw back ~8px each side. */
+	@media (max-width: 380px) {
+		.inner-panel {
+			margin: 4px;
+		}
+	}
+
 	/* Mid-grey stone fill with multi-octave fractal noise baked into a data URI.
 	   This is the "weathered stone" surface at the panel's center. */
 	.panel-stone {

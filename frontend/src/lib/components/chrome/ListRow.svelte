@@ -96,6 +96,13 @@
 		border-radius: 0;
 	}
 
+	/* Let every cell shrink below its content width so long values (e.g. room
+	   names) truncate via ellipsis instead of widening the track and forcing
+	   the whole row to overflow horizontally. */
+	.row > :global(*) {
+		min-width: 0;
+	}
+
 	/* Vertical etched separators between columns.
 	   Exclude .select-pip so the absolute-positioned indicator isn't reset to relative
 	   (which would push it into the first grid track and shift every cell). */
