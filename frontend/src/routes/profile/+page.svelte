@@ -20,11 +20,7 @@
 	let clientValid = $derived(USERNAME_RE.test(username.trim()));
 	let dirty = $derived(username.trim() !== data.profile.username);
 	let serverError = $derived(form && 'error' in form ? form.error : '');
-	let errorOpen = $state(false);
-
-	$effect(() => {
-		errorOpen = !!serverError;
-	});
+	let errorOpen = $derived(!!serverError);
 
 	const hintsState = getHintsState();
 	$effect(() => {
