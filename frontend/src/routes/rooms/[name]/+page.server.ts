@@ -3,6 +3,7 @@ import { env } from '$env/dynamic/public';
 import { env as privateEnv } from '$env/dynamic/private';
 import { fail, redirect } from '@sveltejs/kit';
 import { jwtDecode } from 'jwt-decode';
+import { lobbyLocationLabel, FALLBACK_LOBBY_LOCATIONS } from '$lib/lobbyLocations';
 import type { RoomEventState } from '$lib/chatStore';
 
 function backendBase(): string {
@@ -17,6 +18,7 @@ interface SessionTokenClaims {
 interface RoomDetail {
 	name: string;
 	game: string;
+	lobby_location: string;
 	players_max: number;
 	players_active: number;
 	member_addresses: string[];
@@ -68,6 +70,8 @@ export const load: PageServerLoad = async ({ params, cookies }) => {
 	return {
 		roomName: roomDetail.name,
 		roomGame: roomDetail.game,
+		roomLocation: roomDetail.lobby_location,
+		roomLocationLabel: lobbyLocationLabel(FALLBACK_LOBBY_LOCATIONS, roomDetail.lobby_location),
 		description: roomDetail.description,
 		communicatorLink: roomDetail.communicator_link,
 		requirements: roomDetail.requirements,

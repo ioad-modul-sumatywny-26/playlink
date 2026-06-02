@@ -25,7 +25,10 @@
 		| { type: 'error' }
 		| { type: 'redirect' };
 
-	async function callAction(action: string, fields: Record<string, string>): Promise<ActionResult> {
+	async function callAction(
+		action: string,
+		fields: Record<string, string>
+	): Promise<ActionResult> {
 		const body = new FormData();
 		for (const [k, v] of Object.entries(fields)) body.append(k, v);
 		const res = await fetch(`?/${action}`, { method: 'POST', body });
@@ -44,7 +47,10 @@
 				feedback = { text: `Added “${name}”.`, type: 'success' };
 				await invalidateAll();
 			} else if (result.type === 'failure') {
-				feedback = { text: String(result.data?.error ?? 'Failed to add game.'), type: 'error' };
+				feedback = {
+					text: String(result.data?.error ?? 'Failed to add game.'),
+					type: 'error'
+				};
 			} else {
 				feedback = { text: 'Failed to add game.', type: 'error' };
 			}
@@ -72,7 +78,10 @@
 					message: String(result.data?.error ?? `Active rooms are still playing ${game}.`)
 				};
 			} else if (result.type === 'failure') {
-				feedback = { text: String(result.data?.error ?? 'Failed to delete game.'), type: 'error' };
+				feedback = {
+					text: String(result.data?.error ?? 'Failed to delete game.'),
+					type: 'error'
+				};
 			} else {
 				feedback = { text: 'Failed to delete game.', type: 'error' };
 			}
@@ -98,7 +107,7 @@
 	}
 </script>
 
-<SystemDialog {open} title="Game Manager" tone="gold" modal width="520px" onclose={close}>
+<SystemDialog {open} title="Custom Game Manager" tone="gold" modal width="520px" onclose={close}>
 	{#if conflict}
 		<div class="conflict" role="alert">
 			<p class="conflict-text">{conflict.message}</p>
@@ -119,7 +128,7 @@
 	{/if}
 
 	<section class="section">
-		<h4 class="section-title small-caps">Add Game <span class="rule"></span></h4>
+		<h4 class="section-title small-caps">Create Custom Game <span class="rule"></span></h4>
 		<div class="add-row">
 			<input
 				class="text-input bevel-in"
@@ -142,7 +151,7 @@
 	</section>
 
 	<section class="section">
-		<h4 class="section-title small-caps">Existing Games <span class="rule"></span></h4>
+		<h4 class="section-title small-caps">Existing Custom Games <span class="rule"></span></h4>
 		{#if games.length === 0}
 			<p class="empty">No game categories defined.</p>
 		{:else}

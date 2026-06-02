@@ -132,7 +132,9 @@
 		}));
 	});
 
-	const eventMembers = $derived(roster.map((m) => ({ address: m.address, username: m.username })));
+	const eventMembers = $derived(
+		roster.map((m) => ({ address: m.address, username: m.username }))
+	);
 
 	function isMine(addr: string): boolean {
 		return (addr ?? '').toLowerCase() === (data.address ?? '').toLowerCase();
@@ -189,6 +191,12 @@
 							<span class="game small-caps">
 								<span class="dot" aria-hidden="true">·</span>
 								Game · {data.roomGame}
+							</span>
+						{/if}
+						{#if data.roomLocationLabel}
+							<span class="game small-caps">
+								<span class="dot" aria-hidden="true">·</span>
+								Location · {data.roomLocationLabel}
 							</span>
 						{/if}
 					</div>
@@ -254,10 +262,15 @@
 										<article class="msg" class:mine class:other={!mine}>
 											<div class="msg-meta">
 												<span class="sender small-caps">
-													{mine ? 'You' : msg.sender_username || shortAddr(msg.sender_address)}
+													{mine
+														? 'You'
+														: msg.sender_username ||
+															shortAddr(msg.sender_address)}
 												</span>
 												<span class="sep" aria-hidden="true">·</span>
-												<span class="addr">{shortAddr(msg.sender_address)}</span>
+												<span class="addr"
+													>{shortAddr(msg.sender_address)}</span
+												>
 												<span class="sep" aria-hidden="true">·</span>
 												<span class="time">{fmtTime(msg.created_at)}</span>
 											</div>
