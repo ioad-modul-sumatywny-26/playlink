@@ -35,16 +35,17 @@ export function lobbyLocationLabel(locations: LobbyLocation[], code: string): st
 	return locations.find((location) => location.code === code)?.label ?? code;
 }
 
-export function distanceKm(a: Pick<LobbyLocation, 'lat' | 'lon'>, b: Pick<LobbyLocation, 'lat' | 'lon'>) {
+export function distanceKm(
+	a: Pick<LobbyLocation, 'lat' | 'lon'>,
+	b: Pick<LobbyLocation, 'lat' | 'lon'>
+) {
 	const toRad = (deg: number) => (deg * Math.PI) / 180;
 	const earthRadiusKm = 6371;
 	const dLat = toRad(b.lat - a.lat);
 	const dLon = toRad(b.lon - a.lon);
 	const lat1 = toRad(a.lat);
 	const lat2 = toRad(b.lat);
-	const h =
-		Math.sin(dLat / 2) ** 2 +
-		Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLon / 2) ** 2;
+	const h = Math.sin(dLat / 2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLon / 2) ** 2;
 	return 2 * earthRadiusKm * Math.asin(Math.sqrt(h));
 }
 

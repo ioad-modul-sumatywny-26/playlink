@@ -25,10 +25,7 @@
 		| { type: 'error' }
 		| { type: 'redirect' };
 
-	async function callAction(
-		action: string,
-		fields: Record<string, string>
-	): Promise<ActionResult> {
+	async function callAction(action: string, fields: Record<string, string>): Promise<ActionResult> {
 		const body = new FormData();
 		for (const [k, v] of Object.entries(fields)) body.append(k, v);
 		const res = await fetch(`?/${action}`, { method: 'POST', body });
