@@ -9,7 +9,7 @@
 	import Hint from '$lib/components/chrome/Hint.svelte';
 	import { provideHints } from '$lib/hintsContext.svelte';
 
-	let { children } = $props();
+	let { children, data } = $props();
 
 	const hints = provideHints([
 		{ key: 'Esc', label: 'Back', tone: 'red' },
@@ -33,6 +33,9 @@
 	<Tabs>
 		<Tab href="/auth">Identity</Tab>
 		<Tab href="/rooms">Rooms</Tab>
+		{#if data?.isAuthenticated}
+			<Tab href="/profile">Profile</Tab>
+		{/if}
 		<Tab href="/about">About</Tab>
 	</Tabs>
 

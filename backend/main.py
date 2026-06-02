@@ -17,6 +17,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordBearer
 from pydantic import BaseModel, HttpUrl
 from pydantic import Field as PydField
+from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 
 from database import get_session
@@ -30,6 +31,7 @@ from models import (
     RsvpStatus,
     User,
 )
+from usernames import validate_username
 
 # Load .env from project root if it exists
 env_path = Path(__file__).parent.parent / ".env"
@@ -502,6 +504,22 @@ def verify_signature(body: VerifyRequest, session: SessionDep):
     }
 
 
+def _user_payload(user: User) -> dict:
+    """Public-facing serialization of a user (shared by GET/PATCH /users/me)."""
+    return {
+        "id": user.id,
+        "identity_address": user.identity_address,
+        "username": user.username,
+        "created_at": _iso(user.created_at),
+        "last_login": _iso(user.last_login) if user.last_login else None,
+        "is_admin": is_admin_address(user.identity_address),
+    }
+
+
+class UpdateUserRequest(BaseModel):
+    username: str
+
+
 @app.get("/users/me")
 def get_me(
     session: SessionDep,
@@ -510,14 +528,48 @@ def get_me(
     user = session.exec(select(User).where(User.identity_address == address)).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
-    return {
-        "id": user.id,
-        "identity_address": user.identity_address,
-        "username": user.username,
-        "created_at": _iso(user.created_at),
-        "last_login": _iso(user.last_login) if user.last_login else None,
-        "is_admin": is_admin_address(address),
-    }
+    return _user_payload(user)
+
+
+@app.patch("/users/me")
+def update_me(
+    payload: UpdateUserRequest,
+    session: SessionDep,
+    address: Annotated[str, Depends(get_current_user_address)],
+):
+    user = session.exec(select(User).where(User.identity_address == address)).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    username = payload.username.strip()
+
+    error = validate_username(username)
+    if error == "invalid_format":
+        raise HTTPException(
+            status_code=400,
+            detail="Username must be 3-20 characters: letters, numbers, _ or -.",
+        )
+    if error == "profane":
+        raise HTTPException(
+            status_code=400, detail="Username contains inappropriate language."
+        )
+
+    if username == user.username:
+        return _user_payload(user)
+
+    existing = session.exec(select(User).where(User.username == username)).first()
+    if existing is not None:
+        raise HTTPException(status_code=409, detail="Username already taken.")
+
+    user.username = username
+    session.add(user)
+    try:
+        session.commit()
+    except IntegrityError:
+        session.rollback()
+        raise HTTPException(status_code=409, detail="Username already taken.") from None
+    session.refresh(user)
+    return _user_payload(user)
 
 
 @app.get("/rooms")
