@@ -22,6 +22,7 @@ from sqlmodel import Session, select
 
 from database import get_session
 from models import (
+    DEFAULT_LOBBY_LOCATION,
     Game,
     Message,
     Nonce,
@@ -84,7 +85,8 @@ class VerifyRequest(BaseModel):
 
 class CreateRoomRequest(BaseModel):
     name: str
-    game: str
+    game: str = PydField(min_length=1, max_length=100)
+    lobby_location: str = PydField(min_length=1, max_length=50)
     players_max: int
     description: str | None = PydField(default=None, max_length=500)
     communicator_link: HttpUrl | None = None
@@ -108,6 +110,21 @@ class CreateGameRequest(BaseModel):
     """Body for `POST /games` — admin adds a new game category."""
 
     name: str = PydField(min_length=1, max_length=100)
+
+
+LOBBY_LOCATIONS: list[dict[str, str | float]] = [
+    {"code": "na-east", "label": "North America East", "lat": 39.0, "lon": -77.0},
+    {"code": "na-west", "label": "North America West", "lat": 37.8, "lon": -122.4},
+    {"code": "eu-west", "label": "Europe West", "lat": 51.5, "lon": -0.1},
+    {"code": "eu-central", "label": "Europe Central", "lat": 50.1, "lon": 8.7},
+    {"code": "eu-north", "label": "Europe North", "lat": 59.3, "lon": 18.1},
+    {"code": "sa-east", "label": "South America East", "lat": -23.6, "lon": -46.6},
+    {"code": "asia-east", "label": "Asia East", "lat": 35.7, "lon": 139.7},
+    {"code": "asia-south", "label": "Asia South", "lat": 1.3, "lon": 103.8},
+    {"code": "oceania", "label": "Oceania", "lat": -33.9, "lon": 151.2},
+    {"code": "africa-south", "label": "Africa South", "lat": -26.2, "lon": 28.0},
+]
+LOBBY_LOCATION_CODES = {str(location["code"]) for location in LOBBY_LOCATIONS}
 
 
 # --- WebSocket connection manager ---
@@ -190,6 +207,7 @@ def get_rooms_payload(session: Session) -> str:
             {
                 "name": r.name,
                 "game": r.game,
+                "lobby_location": r.lobby_location,
                 "players_active": len(r.members),
                 "players_max": r.players_max,
                 "member_addresses": [m.identity_address for m in r.members],
@@ -291,14 +309,29 @@ def _serialize_event_state(session: Session, room: Room) -> dict | None:
     }
 
 
-def _purge_room(session: Session, room: Room) -> None:
-    """Delete a room and every row that depends on it.
+def _ensure_game(session: Session, name: str) -> Game:
+    game = session.exec(select(Game).where(Game.name == name)).first()
+    if game is not None:
+        return game
 
-    Removes the room's chat messages, its scheduled event and that event's
-    RSVPs, then the room itself. Membership link rows are cleared explicitly so
-    the cascade works the same on SQLite (tests) as on Postgres. Does not
-    commit — the caller decides the transaction boundary.
-    """
+    next_order = 1 + max(
+        (g.sort_order for g in session.exec(select(Game)).all()), default=0
+    )
+    game = Game(name=name, sort_order=next_order)
+    session.add(game)
+    try:
+        session.commit()
+    except IntegrityError:
+        session.rollback()
+        existing = session.exec(select(Game).where(Game.name == name)).first()
+        if existing is not None:
+            return existing
+        raise HTTPException(status_code=409, detail="Game already exists") from None
+    session.refresh(game)
+    return game
+
+
+def _purge_room(session: Session, room: Room) -> None:
     messages = session.exec(select(Message).where(Message.room_id == room.id)).all()
     for m in messages:
         session.delete(m)
@@ -326,7 +359,6 @@ DEFAULT_GAMES: list[str] = [
 
 
 def seed_default_games() -> None:
-    """Idempotent: insert any DEFAULT_GAMES rows that don't exist yet."""
     from database import engine
 
     with Session(engine) as session:
@@ -353,7 +385,6 @@ async def lifespan(_app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 
-# Configure CORS
 origins = [
     "https://playlink.bartek.monster",
     "http://localhost:3000",
@@ -577,6 +608,11 @@ def list_rooms(session: SessionDep):
     return session.exec(select(Room)).all()
 
 
+@app.get("/lobby-locations")
+def list_lobby_locations():
+    return {"default": DEFAULT_LOBBY_LOCATION, "locations": LOBBY_LOCATIONS}
+
+
 @app.get("/rooms/{room_name}")
 def get_room(room_name: str, session: SessionDep):
     room = session.exec(select(Room).where(Room.name == room_name)).first()
@@ -585,6 +621,7 @@ def get_room(room_name: str, session: SessionDep):
     return {
         "name": room.name,
         "game": room.game,
+        "lobby_location": room.lobby_location,
         "players_max": room.players_max,
         "players_active": len(room.members),
         "member_addresses": [m.identity_address for m in room.members],
@@ -730,13 +767,20 @@ async def create_room(
             status_code=400, detail="You can create a maximum of 3 rooms."
         )
 
-    valid_game = session.exec(select(Game).where(Game.name == body.game)).first()
-    if not valid_game:
-        raise HTTPException(status_code=400, detail="Unsupported game")
+    game_name = body.game.strip()
+    if not game_name:
+        raise HTTPException(status_code=400, detail="Game name is required")
+
+    lobby_location = body.lobby_location.strip()
+    if lobby_location not in LOBBY_LOCATION_CODES:
+        raise HTTPException(status_code=400, detail="Unsupported lobby location")
+
+    _ = _ensure_game(session, game_name)
 
     room = Room(
         name=body.name,
-        game=body.game,
+        game=game_name,
+        lobby_location=lobby_location,
         players_max=body.players_max,
         description=body.description,
         communicator_link=(

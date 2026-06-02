@@ -5,6 +5,7 @@ import { writable, type Readable } from 'svelte/store';
 export interface RoomSummary {
 	name: string;
 	game: string;
+	lobby_location: string;
 	players_active: number;
 	players_max: number;
 	member_addresses: string[];
@@ -28,6 +29,7 @@ function isRoomSummary(value: unknown): value is RoomSummary {
 	return (
 		typeof room.name === 'string' &&
 		typeof room.game === 'string' &&
+		typeof room.lobby_location === 'string' &&
 		typeof room.players_active === 'number' &&
 		typeof room.players_max === 'number' &&
 		Array.isArray(room.member_addresses) &&

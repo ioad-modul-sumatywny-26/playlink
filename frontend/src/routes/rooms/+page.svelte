@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
+	import { onMount, untrack } from 'svelte';
 	import { roomsStore, type RoomSummary } from '$lib/roomsStore';
 	import { env } from '$env/dynamic/public';
 	import { enhance, deserialize } from '$app/forms';
@@ -17,10 +17,22 @@
 	import SystemDialog from '$lib/components/chrome/SystemDialog.svelte';
 	import Crest from '$lib/components/chrome/Crest.svelte';
 	import GameManager from '$lib/components/GameManager.svelte';
+	import {
+		distanceKm,
+		lobbyLocationLabel,
+		nearestLobbyLocation,
+		type LobbyLocation
+	} from '$lib/lobbyLocations';
 
 	import { getHintsState } from '$lib/hintsContext.svelte';
 
 	let { data, form }: PageProps = $props();
+
+	const lobbyLocations = $derived(data.lobbyLocations as LobbyLocation[]);
+
+	function locationLabel(code: string): string {
+		return lobbyLocationLabel(lobbyLocations, code);
+	}
 
 	// --- Ping ---
 	let currentPing = $state<number | string>('...');
@@ -65,20 +77,23 @@
 		return new Date(room.expires_at).getTime() - currentTime.getTime() < 60_000;
 	}
 
-	// --- Per-room ping (synthetic but stable) ---
-	// Backend has no per-room latency, so each room's ping is the user's measured
-	// ping plus a deterministic offset derived from the room name. Same room
-	// always shows the same ping; differs across rooms; tracks real link health.
-	function hashRoomName(name: string): number {
-		let h = 5381;
-		for (let i = 0; i < name.length; i++) h = ((h << 5) + h + name.charCodeAt(i)) | 0;
-		return Math.abs(h);
+	// --- Location-based ping estimate ---
+	// There is still no per-location game relay to ping directly, so we combine the
+	// user's measured API latency with an estimate based on distance between the
+	// viewer's selected/auto-detected location and the room's lobby location.
+	let viewerLocationCode = $state(untrack(() => data.defaultLobbyLocation));
+
+	function locationByCode(code: string): LobbyLocation | null {
+		return lobbyLocations.find((location) => location.code === code) ?? null;
 	}
 
 	function pingForRoom(room: RoomSummary): number | null {
 		if (typeof currentPing !== 'number') return null;
-		const offset = (hashRoomName(room.name) % 240) - 20; // -20..+219ms
-		return Math.max(8, currentPing + offset);
+		const viewerLocation = locationByCode(viewerLocationCode);
+		const roomLocation = locationByCode(room.lobby_location);
+		if (!viewerLocation || !roomLocation) return currentPing;
+		const estimatedDistanceLatency = Math.round(distanceKm(viewerLocation, roomLocation) / 100);
+		return Math.max(8, currentPing + estimatedDistanceLatency);
 	}
 
 	type PingBucket = 'LOW' | 'MID' | 'HIGH';
@@ -135,7 +150,7 @@
 
 		return activeRooms.filter((room) => {
 			if (q) {
-				const hay = `${room.name} ${room.game}`.toLowerCase();
+				const hay = `${room.name} ${room.game} ${locationLabel(room.lobby_location)}`.toLowerCase();
 				if (!hay.includes(q)) return false;
 			}
 			if (anySlot) {
@@ -225,6 +240,51 @@
 
 	// --- Create dialog ---
 	let createOpen = $state(false);
+	let selectedCreateGame = $state(untrack(() => data.games[0] ?? '__custom__'));
+	let customGameName = $state('');
+	let selectedCreateLocation = $state(untrack(() => data.defaultLobbyLocation));
+	let detectingLocation = $state(false);
+	let locationFeedback = $state<string | null>(null);
+
+	function applyDetectedLocation(location: LobbyLocation) {
+		selectedCreateLocation = location.code;
+		viewerLocationCode = location.code;
+		locationFeedback = `Nearest lobby location: ${location.label}`;
+		try {
+			localStorage.setItem('playlink.viewerLocation', location.code);
+		} catch {
+			// Ignore storage errors; the current session still uses the detected value.
+		}
+	}
+
+	async function detectLobbyLocation() {
+		if (!navigator.geolocation || detectingLocation) {
+			locationFeedback = 'Browser location is not available.';
+			return;
+		}
+
+		detectingLocation = true;
+		locationFeedback = 'Reading browser location…';
+		navigator.geolocation.getCurrentPosition(
+			(position) => {
+				const nearest = nearestLobbyLocation(lobbyLocations, {
+					lat: position.coords.latitude,
+					lon: position.coords.longitude
+				});
+				if (nearest) {
+					applyDetectedLocation(nearest);
+				} else {
+					locationFeedback = 'No lobby locations are configured.';
+				}
+				detectingLocation = false;
+			},
+			() => {
+				locationFeedback = 'Location permission denied or unavailable.';
+				detectingLocation = false;
+			},
+			{ enableHighAccuracy: false, timeout: 8000, maximumAge: 86_400_000 }
+		);
+	}
 
 	// --- Admin: game manager + room deletion ---
 	let gamesOpen = $state(false);
@@ -274,6 +334,16 @@
 	});
 
 	onMount(() => {
+		try {
+			const storedLocation = localStorage.getItem('playlink.viewerLocation');
+			if (storedLocation && locationByCode(storedLocation)) {
+				viewerLocationCode = storedLocation;
+				selectedCreateLocation = storedLocation;
+			}
+		} catch {
+			// Ignore storage errors.
+		}
+
 		const handler = (e: KeyboardEvent) => {
 			const target = e.target as HTMLElement | null;
 			const tag = target?.tagName;
@@ -416,7 +486,7 @@
 				{/if}
 				{#if data.isAdmin}
 					<OrnateButton variant="secondary" size="md" onclick={() => (gamesOpen = true)}>
-						Manage Games
+						Manage Custom Games
 					</OrnateButton>
 				{/if}
 				<OrnateButton
@@ -446,6 +516,8 @@
 						<dd>{room.game}</dd>
 						<dt>Players</dt>
 						<dd class="mono">{room.players_active} / {room.players_max}</dd>
+						<dt>Location</dt>
+						<dd>{locationLabel(room.lobby_location)}</dd>
 						<dt>Ping</dt>
 						<dd class="ping-side">
 							<PipMeter value={pipsForPing(sidePing)} tone="auto" size="sm" />
@@ -597,6 +669,28 @@
 						/>
 					</div>
 
+					<SectionTitle title="Ping Location" size="small" tone="gold" />
+					<div class="filter-group">
+						<select
+							class="text-input bevel-in"
+							bind:value={viewerLocationCode}
+							aria-label="Your location for ping estimates"
+						>
+							{#each lobbyLocations as location (location.code)}
+								<option value={location.code}>{location.label}</option>
+							{/each}
+						</select>
+						<OrnateButton
+							variant="secondary"
+							size="sm"
+							fullWidth
+							disabled={detectingLocation}
+							onclick={detectLobbyLocation}
+						>
+							Auto-detect
+						</OrnateButton>
+					</div>
+
 					<SectionTitle title="Status" size="small" tone="gold" />
 					<div class="stats">
 						<div class="stat">
@@ -661,16 +755,53 @@
 				class="text-input bevel-in"
 				name="game"
 				required
-				disabled={!data.games.length}
+				bind:value={selectedCreateGame}
 			>
-				{#if data.games.length > 0}
-					{#each data.games as g (g)}
-						<option value={g}>{g}</option>
-					{/each}
-				{:else}
-					<option value="" disabled selected>No games available</option>
-				{/if}
+				{#each data.games as g (g)}
+					<option value={g}>{g}</option>
+				{/each}
+				<option value="__custom__">Custom game…</option>
 			</select>
+			{#if selectedCreateGame === '__custom__'}
+				<input
+					class="text-input bevel-in"
+					type="text"
+					name="custom_game"
+					bind:value={customGameName}
+					maxlength="100"
+					required
+					placeholder="Enter custom game name"
+					autocomplete="off"
+				/>
+			{/if}
+		</div>
+
+		<div class="form-row">
+			<label for="create-location" class="small-caps">Lobby Location</label>
+			<div class="select-with-action">
+				<select
+					id="create-location"
+					class="text-input bevel-in"
+					name="lobby_location"
+					required
+					bind:value={selectedCreateLocation}
+				>
+					{#each lobbyLocations as location (location.code)}
+						<option value={location.code}>{location.label}</option>
+					{/each}
+				</select>
+				<OrnateButton
+					variant="secondary"
+					size="sm"
+					disabled={detectingLocation}
+					onclick={detectLobbyLocation}
+				>
+					{detectingLocation ? 'Detecting…' : 'Auto'}
+				</OrnateButton>
+			</div>
+			{#if locationFeedback}
+				<p class="form-help">{locationFeedback}</p>
+			{/if}
 		</div>
 
 		<div class="form-row">
@@ -1332,6 +1463,21 @@
 		display: flex;
 		flex-direction: column;
 		gap: 0.4rem;
+	}
+
+	.select-with-action {
+		display: grid;
+		grid-template-columns: 1fr auto;
+		gap: 0.5rem;
+		align-items: stretch;
+	}
+
+	.form-help {
+		margin: 0;
+		font-family: var(--font-mono);
+		font-size: 0.75rem;
+		line-height: 1.35;
+		color: var(--bone-muted);
 	}
 
 	.form-row label {

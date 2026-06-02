@@ -5,6 +5,8 @@ from enum import StrEnum
 from sqlalchemy import Column, ForeignKey, Integer, UniqueConstraint
 from sqlmodel import Field, Relationship, SQLModel
 
+DEFAULT_LOBBY_LOCATION = "eu-central"
+
 
 class RoomMember(SQLModel, table=True):
     room_id: int = Field(default=None, foreign_key="room.id", primary_key=True)
@@ -16,6 +18,7 @@ class Room(SQLModel, table=True):
     id: int | None = Field(default=None, primary_key=True)
     name: str = Field(index=True, unique=True)
     game: str
+    lobby_location: str = Field(default=DEFAULT_LOBBY_LOCATION, index=True)
     players_max: int
     description: str | None = Field(default=None, max_length=500)
     communicator_link: str | None = Field(default=None, max_length=500)

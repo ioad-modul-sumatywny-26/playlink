@@ -191,6 +191,12 @@
 								Game · {data.roomGame}
 							</span>
 						{/if}
+						{#if data.roomLocationLabel}
+							<span class="game small-caps">
+								<span class="dot" aria-hidden="true">·</span>
+								Location · {data.roomLocationLabel}
+							</span>
+						{/if}
 					</div>
 					<span class="head-rule" aria-hidden="true"></span>
 

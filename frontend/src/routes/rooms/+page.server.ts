@@ -3,6 +3,12 @@ import { env } from '$env/dynamic/public';
 import { env as privateEnv } from '$env/dynamic/private';
 import { fail } from '@sveltejs/kit';
 import { jwtDecode } from 'jwt-decode';
+import {
+	FALLBACK_LOBBY_LOCATION,
+	FALLBACK_LOBBY_LOCATIONS,
+	isLobbyLocation,
+	type LobbyLocation
+} from '$lib/lobbyLocations';
 
 function backendBase(): string {
 	return privateEnv.BACKEND_INTERNAL_URL || env.PUBLIC_BACKEND_URL || 'http://localhost:8000';
@@ -19,11 +25,36 @@ function isStringArray(value: unknown): value is string[] {
 	return Array.isArray(value) && value.every((item) => typeof item === 'string');
 }
 
+interface LobbyLocationsResponse {
+	default?: unknown;
+	locations?: unknown;
+}
+
+function parseLobbyLocations(value: unknown): {
+	locations: LobbyLocation[];
+	defaultLocation: string;
+} {
+	const payload = value as LobbyLocationsResponse;
+	const locations = Array.isArray(payload?.locations)
+		? payload.locations.filter(isLobbyLocation)
+		: FALLBACK_LOBBY_LOCATIONS;
+	const defaultLocation =
+		typeof payload?.default === 'string' && locations.some((l) => l.code === payload.default)
+			? payload.default
+			: FALLBACK_LOBBY_LOCATION;
+	return {
+		locations: locations.length > 0 ? locations : FALLBACK_LOBBY_LOCATIONS,
+		defaultLocation
+	};
+}
+
 export const load: PageServerLoad = async ({ cookies }) => {
 	const session = cookies.get('session');
 	let user = null;
 	let isAdmin = false;
 	let games: string[] = [];
+	let lobbyLocations = FALLBACK_LOBBY_LOCATIONS;
+	let defaultLobbyLocation = FALLBACK_LOBBY_LOCATION;
 
 	if (session) {
 		try {
@@ -39,23 +70,35 @@ export const load: PageServerLoad = async ({ cookies }) => {
 
 	try {
 		const baseUrl = backendBase();
-		const response = await fetch(`${baseUrl}/games`);
+		const [gamesResponse, locationsResponse] = await Promise.all([
+			fetch(`${baseUrl}/games`),
+			fetch(`${baseUrl}/lobby-locations`)
+		]);
 
-		if (response.ok) {
-			const data: unknown = await response.json();
+		if (gamesResponse.ok) {
+			const data: unknown = await gamesResponse.json();
 			if (isStringArray(data)) {
 				games = data;
 			}
 		}
+
+		if (locationsResponse.ok) {
+			const data: unknown = await locationsResponse.json();
+			const parsed = parseLobbyLocations(data);
+			lobbyLocations = parsed.locations;
+			defaultLobbyLocation = parsed.defaultLocation;
+		}
 	} catch {
-		// If games cannot be loaded, keep an empty list so the page can still render.
+		// If metadata cannot be loaded, keep fallbacks so the page can still render.
 	}
 
 	return {
 		isAuthenticated: !!session,
 		user,
 		isAdmin,
-		games
+		games,
+		lobbyLocations,
+		defaultLobbyLocation
 	};
 };
 
@@ -67,13 +110,24 @@ export const actions: Actions = {
 		const data = await request.formData();
 		const name = data.get('name');
 		const game = data.get('game');
+		const customGame = data.get('custom_game');
+		const lobbyLocation = data.get('lobby_location');
 		const players_max = data.get('players_max');
 		const description = data.get('description');
 		const communicator_link = data.get('communicator_link');
 		const requirements = data.get('requirements');
 
-		if (!name || !game || !players_max) {
+		if (!name || !game || !lobbyLocation || !players_max) {
 			return fail(400, { error: 'Missing required fields' });
+		}
+
+		const selectedGame = game.toString();
+		const gameName =
+			selectedGame === '__custom__' && typeof customGame === 'string'
+				? customGame.trim()
+				: selectedGame.trim();
+		if (!gameName) {
+			return fail(400, { error: 'Game name is required' });
 		}
 
 		const optionalText = (value: FormDataEntryValue | null): string | null => {
@@ -92,7 +146,8 @@ export const actions: Actions = {
 				},
 				body: JSON.stringify({
 					name: name.toString(),
-					game: game.toString(),
+					game: gameName,
+					lobby_location: lobbyLocation.toString(),
 					players_max: parseInt(players_max.toString(), 10),
 					description: optionalText(description),
 					communicator_link: optionalText(communicator_link),
