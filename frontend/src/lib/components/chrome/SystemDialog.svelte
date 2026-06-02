@@ -208,10 +208,28 @@
 		animation: sys-scale-in 200ms cubic-bezier(0.16, 1, 0.3, 1) both;
 	}
 
-	/* Modal variant: dialog inside overlay flexbox. */
+	/* Modal variant: dialog inside overlay flexbox.
+	   Capped to the viewport (overlay adds 1rem padding each side → 2rem) and
+	   laid out as a column so the body scrolls and the footer stays reachable
+	   no matter how tall the content gets. */
 	.sys-dialog.modal {
 		position: relative;
 		animation: sys-scale-in 200ms cubic-bezier(0.16, 1, 0.3, 1) both;
+		display: flex;
+		flex-direction: column;
+		max-height: calc(100dvh - 2rem);
+		overflow: hidden;
+	}
+
+	.sys-dialog.modal .title-bar,
+	.sys-dialog.modal .footer {
+		flex-shrink: 0;
+	}
+
+	.sys-dialog.modal .body {
+		flex: 1 1 auto;
+		min-height: 0;
+		overflow-y: auto;
 	}
 
 	.left-bar {

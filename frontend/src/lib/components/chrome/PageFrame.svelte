@@ -118,6 +118,13 @@
 		overflow: hidden;
 	}
 
+	/* Reclaim horizontal space on very small phones. */
+	@media (max-width: 380px) {
+		.page-frame {
+			padding: 14px;
+		}
+	}
+
 	.frame-back {
 		position: absolute;
 		inset: 0;

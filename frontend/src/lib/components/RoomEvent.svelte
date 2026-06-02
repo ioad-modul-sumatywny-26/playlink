@@ -475,6 +475,10 @@
 		box-shadow:
 			var(--bevel-in),
 			inset 0 0 30px rgba(0, 0, 0, 0.25);
+		/* Cap the whole event area so a full lobby's RSVP list scrolls here
+		   instead of growing the panel and squeezing the chat out of view. */
+		max-height: clamp(180px, 32vh, 320px);
+		overflow-y: auto;
 	}
 
 	.trail-countdown {
@@ -671,6 +675,7 @@
 		display: flex;
 		justify-content: space-between;
 		align-items: center;
+		gap: 0.5rem;
 		padding: 0.4rem 0.55rem;
 		border-bottom: 1px solid var(--stone-5);
 		font-family: var(--font-display);
@@ -684,11 +689,17 @@
 	.roster-name {
 		color: var(--bone);
 		letter-spacing: var(--track-loose);
+		/* Truncate long usernames instead of stretching the row. */
+		min-width: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
 	}
 
 	.roster-status {
 		font-size: 0.7rem;
 		letter-spacing: var(--track-loose);
+		flex-shrink: 0;
 	}
 
 	.roster-row[data-status='present'] .roster-status {

@@ -363,7 +363,7 @@
 								onclick={() => (selectedName = room.name)}
 							>
 								<span class="cell-name fw-700" class:is-member={member}>
-									{room.name}
+									<span class="name-text">{room.name}</span>
 									{#if member}
 										<span class="member-tag" aria-label="You are a member">JOINED</span>
 									{/if}
@@ -925,12 +925,23 @@
 	/* Cells */
 	.cell-name {
 		color: var(--bone-bright);
+		min-width: 0;
 		overflow: hidden;
-		text-overflow: ellipsis;
-		white-space: nowrap;
 		display: inline-flex;
 		align-items: center;
 		gap: 0.55rem;
+	}
+
+	/* The name itself truncates; the JOINED tag keeps its size. */
+	.cell-name .name-text {
+		min-width: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	.cell-name .member-tag {
+		flex-shrink: 0;
 	}
 
 	.cell-name.is-member {
