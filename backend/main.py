@@ -420,16 +420,15 @@ async def cleanup_expired_rooms_task() -> None:
                     session.commit()
                     rooms_count = len(expired_rooms)
                     logger.info(
-                        "Cleanup task deleted {} room(s) and {} message(s)".format(
-                            rooms_count, total_messages_deleted
-                        )
+                        f"""Cleanup task deleted {rooms_count} room(s)
+                        and {total_messages_deleted} message(s)"""
                     )
 
                     # Broadcast updated rooms payload to all WebSocket clients
                     rooms_payload = get_rooms_payload(session)
                     await manager.broadcast(rooms_payload)
         except Exception as exc:
-            logger.exception("Error in cleanup_expired_rooms_task: {}".format(exc))
+            logger.exception(f"Error in cleanup_expired_rooms_task: {exc}")
 
 
 @asynccontextmanager

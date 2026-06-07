@@ -4,7 +4,7 @@ from datetime import UTC, datetime, timedelta
 import jwt
 from eth_account import Account
 from fastapi.testclient import TestClient
-from sqlmodel import Session, select
+from sqlmodel import Session
 
 
 def _auth_headers() -> tuple[dict[str, str], str]:

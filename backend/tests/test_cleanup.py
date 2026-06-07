@@ -30,9 +30,9 @@ def _auth_headers() -> tuple[dict[str, str], str]:
     return {"Authorization": f"Bearer {token}"}, address
 
 
-def test_cleanup_removes_expired_rooms(client: TestClient, session: Session):
+def test_cleanup_removes_expired_rooms(session: Session):
     """Verify that get_rooms_payload cleans up expired rooms and messages."""
-    headers, address = _auth_headers()
+    _, address = _auth_headers()
     user = User(identity_address=address)
     session.add(user)
     session.commit()
@@ -85,9 +85,9 @@ def test_cleanup_removes_expired_rooms(client: TestClient, session: Session):
     )
 
 
-def test_cleanup_does_not_remove_valid_rooms(client: TestClient, session: Session):
+def test_cleanup_does_not_remove_valid_rooms(session: Session):
     """Verify that cleanup only removes expired rooms, not valid ones."""
-    headers, address = _auth_headers()
+    _, address = _auth_headers()
     user = User(identity_address=address)
     session.add(user)
     session.commit()
