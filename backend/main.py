@@ -1,5 +1,7 @@
+import asyncio
 import hashlib
 import json
+import logging
 import os
 import uuid
 from contextlib import asynccontextmanager
@@ -20,7 +22,7 @@ from pydantic import Field as PydField
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 
-from database import get_session
+from database import engine, get_session
 from models import (
     DEFAULT_LOBBY_LOCATION,
     Game,
@@ -33,6 +35,8 @@ from models import (
     User,
 )
 from usernames import validate_username
+
+logger = logging.getLogger(__name__)
 
 # Load .env from project root if it exists
 env_path = Path(__file__).parent.parent / ".env"
@@ -51,6 +55,7 @@ if not JWT_SECRET:
 JWT_ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
 NONCE_EXPIRATION_MINUTES = int(os.getenv("NONCE_EXPIRATION_MINUTES", "5"))
 JWT_EXPIRATION_MINUTES = int(os.getenv("JWT_EXPIRATION_MINUTES", "60"))
+ROOM_CLEANUP_INTERVAL_SECONDS = int(os.getenv("ROOM_CLEANUP_INTERVAL_SECONDS", "60"))
 
 
 def _parse_admin_addresses(raw: str | None) -> set[str]:
@@ -377,10 +382,68 @@ def seed_default_games() -> None:
             session.commit()
 
 
+async def cleanup_expired_rooms_task() -> None:
+    """Periodically clean up expired rooms from the database."""
+    while True:
+        try:
+            await asyncio.sleep(ROOM_CLEANUP_INTERVAL_SECONDS)
+
+            with Session(engine) as session:
+                now = datetime.now(UTC)
+                expired_rooms = session.exec(
+                    select(Room).where(Room.expires_at <= now)
+                ).all()
+
+                total_messages_deleted = 0
+                for er in expired_rooms:
+                    old_messages = session.exec(
+                        select(Message).where(Message.room_id == er.id)
+                    ).all()
+                    total_messages_deleted += len(old_messages)
+                    for m in old_messages:
+                        session.delete(m)
+                    old_event = session.exec(
+                        select(RoomEvent).where(RoomEvent.room_id == er.id)
+                    ).first()
+                    if old_event is not None:
+                        old_rsvps = session.exec(
+                            select(RoomEventRsvp).where(
+                                RoomEventRsvp.event_id == old_event.id
+                            )
+                        ).all()
+                        for r in old_rsvps:
+                            session.delete(r)
+                        session.delete(old_event)
+                    session.delete(er)
+
+                if expired_rooms:
+                    session.commit()
+                    rooms_count = len(expired_rooms)
+                    logger.info(
+                        "Cleanup task deleted {} room(s) and {} message(s)".format(
+                            rooms_count, total_messages_deleted
+                        )
+                    )
+
+                    # Broadcast updated rooms payload to all WebSocket clients
+                    rooms_payload = get_rooms_payload(session)
+                    await manager.broadcast(rooms_payload)
+        except Exception as exc:
+            logger.exception("Error in cleanup_expired_rooms_task: {}".format(exc))
+
+
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     seed_default_games()
-    yield
+    cleanup_task = asyncio.create_task(cleanup_expired_rooms_task())
+    try:
+        yield
+    finally:
+        cleanup_task.cancel()
+        try:
+            await cleanup_task
+        except asyncio.CancelledError:
+            logger.info("Room cleanup task cancelled during shutdown")
 
 
 app = FastAPI(lifespan=lifespan)
