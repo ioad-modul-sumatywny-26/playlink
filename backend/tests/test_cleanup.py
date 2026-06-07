@@ -3,7 +3,6 @@
 import json
 from datetime import UTC, datetime, timedelta
 
-from fastapi.testclient import TestClient
 from sqlmodel import Session, select
 
 from models import Message, Room, User
