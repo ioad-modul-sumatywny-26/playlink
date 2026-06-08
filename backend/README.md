@@ -117,6 +117,19 @@ Tests use an in-memory SQLite database and do not require PostgreSQL to be runni
 uv run pytest
 ```
 
+To see backend coverage locally, run:
+
+```bash
+uv run pytest --cov=main --cov=models --cov=database --cov=usernames --cov-report=term-missing:skip-covered --cov-fail-under=80
+```
+
+The coverage job measures the backend application modules (`main.py`,
+`models.py`, `database.py`, and `usernames.py`) and fails if total coverage
+drops below 80%. The test suite combines unit tests for helper functions with
+integration tests through FastAPI's `TestClient`. WebSocket behavior is covered
+through `websocket_connect`, and Alembic has a smoke test that upgrades a clean
+SQLite database to `head`.
+
 ## Docker
 
 The backend is designed to run via Docker Compose from the project root:

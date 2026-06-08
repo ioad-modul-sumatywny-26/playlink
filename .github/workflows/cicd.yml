@@ -43,7 +43,7 @@ jobs:
               run: uv sync --dev
               working-directory: backend
             - name: Run tests
-              run: uv run pytest
+              run: uv run pytest --cov=main --cov=models --cov=database --cov=usernames --cov-report=term-missing:skip-covered --cov-fail-under=80
               working-directory: backend
               env:
                   DATABASE_URL: sqlite:///

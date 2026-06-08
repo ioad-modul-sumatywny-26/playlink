@@ -12,19 +12,22 @@ def session_fixture():
     engine = create_engine(
         "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
     )
-    SQLModel.metadata.create_all(engine)
-    with Session(engine) as session:
-        session.add_all(
-            [
-                Game(name="Quake III Arena", sort_order=1),
-                Game(name="Diablo II", sort_order=2),
-                Game(name="StarCraft", sort_order=3),
-                Game(name="Half-Life", sort_order=4),
-                Game(name="Unreal Tournament", sort_order=5),
-            ]
-        )
-        session.commit()
-        yield session
+    try:
+        SQLModel.metadata.create_all(engine)
+        with Session(engine) as session:
+            session.add_all(
+                [
+                    Game(name="Quake III Arena", sort_order=1),
+                    Game(name="Diablo II", sort_order=2),
+                    Game(name="StarCraft", sort_order=3),
+                    Game(name="Half-Life", sort_order=4),
+                    Game(name="Unreal Tournament", sort_order=5),
+                ]
+            )
+            session.commit()
+            yield session
+    finally:
+        engine.dispose()
 
 
 @pytest.fixture(name="client")
