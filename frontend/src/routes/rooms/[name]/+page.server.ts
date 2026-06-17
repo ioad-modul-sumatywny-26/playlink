@@ -66,7 +66,7 @@ export const load: PageServerLoad = async ({ params, cookies }) => {
 
 	const lower = address.toLowerCase();
 	const isMember = roomDetail.member_addresses.some((a) => a.toLowerCase() === lower);
-	if (!isMember) {
+	if (!isMember && !isAdmin) {
 		throw redirect(303, '/rooms');
 	}
 
@@ -85,6 +85,8 @@ export const load: PageServerLoad = async ({ params, cookies }) => {
 		members: roomDetail.members,
 		event: roomDetail.event,
 		isAdmin,
+		isMember,
+		isPreview: isAdmin && !isMember,
 		createdBy: roomDetail.created_by,
 		isCreator: roomDetail.created_by.toLowerCase() === lower
 	};
@@ -103,6 +105,26 @@ function localInputToIsoUtc(value: string): string | null {
 }
 
 export const actions: Actions = {
+	closeRoom: async ({ cookies, params }) => {
+		const session = cookies.get('session');
+		if (!session) return fail(401, { error: 'Not authenticated' });
+
+		const baseUrl = backendBase();
+		try {
+			const res = await fetch(`${baseUrl}/rooms/${encodeURIComponent(params.name)}`, {
+				method: 'DELETE',
+				headers: { Authorization: `Bearer ${session}` }
+			});
+			if (!res.ok) {
+				const result = await res.json().catch(() => ({}));
+				return fail(res.status, { error: result.detail || 'Failed to close room' });
+			}
+			return { success: true, closed: true };
+		} catch {
+			return fail(500, { error: 'Server error' });
+		}
+	},
+
 	kickMember: async ({ request, cookies, params }) => {
 		const session = cookies.get('session');
 		if (!session) return fail(401, { error: 'Not authenticated' });

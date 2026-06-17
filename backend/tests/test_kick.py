@@ -200,3 +200,35 @@ def test_room_member_payload_marks_admins(
         {"address": admin_address, "username": "player_0", "is_admin": True},
         {"address": "0xMember", "username": "player_1", "is_admin": False},
     ]
+
+
+def test_admin_is_exempt_from_owned_room_limit(
+    client: TestClient, session: Session, admin_address: str
+):
+    session.add(User(identity_address=admin_address, username="admin_user"))
+    session.add_all(
+        [
+            Room(
+                name=f"owned-{index}",
+                game="Quake III Arena",
+                players_max=4,
+                created_by=admin_address,
+            )
+            for index in range(3)
+        ]
+    )
+    session.commit()
+
+    response = client.post(
+        "/rooms",
+        headers=_headers(admin_address, is_admin=True),
+        json={
+            "name": "owned-4",
+            "game": "Quake III Arena",
+            "lobby_location": "eu-central",
+            "players_max": 4,
+        },
+    )
+
+    assert response.status_code == 201
+    assert response.json() == {"status": "created", "room": "owned-4"}

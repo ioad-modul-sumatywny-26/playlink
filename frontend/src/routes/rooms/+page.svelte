@@ -388,7 +388,7 @@
 			}
 			if (e.key === 'Enter' && selectedRoom && data.isAuthenticated && data.user) {
 				const isMember = selectedRoom.member_addresses.includes(data.user.address);
-				if (isMember) {
+				if (isMember || data.isAdmin) {
 					e.preventDefault();
 					goto(`/rooms/${encodeURIComponent(selectedRoom.name)}`);
 				}
@@ -601,6 +601,15 @@
 									href="/rooms/{encodeURIComponent(room.name)}"
 								>
 									Open
+								</OrnateButton>
+							{:else if data.isAdmin}
+								<OrnateButton
+									variant="secondary"
+									size="md"
+									fullWidth
+									href="/rooms/{encodeURIComponent(room.name)}"
+								>
+									Admin Preview
 								</OrnateButton>
 							{/if}
 

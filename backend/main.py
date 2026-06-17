@@ -889,13 +889,14 @@ async def create_room(
     if existing:
         raise HTTPException(status_code=409, detail="Room name already taken")
 
-    user_rooms_count = len(
-        session.exec(select(Room).where(Room.created_by == address)).all()
-    )
-    if user_rooms_count >= 3:
-        raise HTTPException(
-            status_code=400, detail="You can create a maximum of 3 rooms."
+    if not is_admin_address(address):
+        user_rooms_count = len(
+            session.exec(select(Room).where(Room.created_by == address)).all()
         )
+        if user_rooms_count >= 3:
+            raise HTTPException(
+                status_code=400, detail="You can create a maximum of 3 rooms."
+            )
 
     game_name = body.game.strip()
     if not game_name:

@@ -39,6 +39,9 @@
 	let kickTarget = $state<PartyMember | null>(null);
 	let kickPending = $state(false);
 	let kickError = $state<string | null>(null);
+	let closeConfirm = $state(false);
+	let closePending = $state(false);
+	let closeError = $state<string | null>(null);
 
 	function leaveClosedRoom() {
 		goto('/rooms');
@@ -47,14 +50,19 @@
 	const hintsState = getHintsState();
 
 	$effect(() => {
-		hintsState?.set([
-			{ key: 'Enter', label: 'Transmit', tone: 'gold' },
-			{ key: '⇧Enter', label: 'Newline', tone: 'stone' },
-			{ key: 'Esc', label: 'Leave', tone: 'red' }
-		]);
+		hintsState?.set(
+			data.isPreview
+				? [{ key: 'Esc', label: 'Back to Rooms', tone: 'red' }]
+				: [
+						{ key: 'Enter', label: 'Transmit', tone: 'gold' },
+						{ key: '⇧Enter', label: 'Newline', tone: 'stone' },
+						{ key: 'Esc', label: 'Leave', tone: 'red' }
+					]
+		);
 	});
 
 	onMount(() => {
+		if (!data.isMember) return;
 		const store = createChatStore(data.roomName, data.token, {
 			initialEvent: data.event,
 			initialMembers: data.members,
@@ -179,10 +187,27 @@
 		try {
 			const response = await fetch('?/kickMember', { method: 'POST', body });
 			const result = deserialize(await response.text()) as
-				| { type: 'success' }
+				| {
+						type: 'success';
+						data?: { kick?: { created_by?: string } };
+				  }
 				| { type: 'failure'; data?: { error?: string } }
 				| { type: 'error' | 'redirect' };
 			if (result.type === 'success') {
+				roster = roster.filter(
+					(item) => item.address.toLowerCase() !== member.address.toLowerCase()
+				);
+				if (event) {
+					event = {
+						...event,
+						rsvps: event.rsvps.filter(
+							(rsvp) => rsvp.address.toLowerCase() !== member.address.toLowerCase()
+						)
+					};
+				}
+				if (result.data?.kick?.created_by) {
+					ownerAddress = result.data.kick.created_by;
+				}
 				kickTarget = null;
 			} else if (result.type === 'failure') {
 				kickError = result.data?.error ?? 'Failed to kick player';
@@ -193,6 +218,30 @@
 			kickError = 'Server error';
 		} finally {
 			kickPending = false;
+		}
+	}
+
+	async function closeRoom() {
+		if (closePending) return;
+		closePending = true;
+		closeError = null;
+		try {
+			const response = await fetch('?/closeRoom', { method: 'POST' });
+			const result = deserialize(await response.text()) as
+				| { type: 'success' }
+				| { type: 'failure'; data?: { error?: string } }
+				| { type: 'error' | 'redirect' };
+			if (result.type === 'success') {
+				await goto('/rooms');
+			} else if (result.type === 'failure') {
+				closeError = result.data?.error ?? 'Failed to close room';
+			} else {
+				closeError = 'Failed to close room';
+			}
+		} catch {
+			closeError = 'Server error';
+		} finally {
+			closePending = false;
 		}
 	}
 </script>
@@ -247,6 +296,9 @@
 					<div class="head-row top-row">
 						<a class="back small-caps" href="/rooms">◄ Rooms</a>
 						<div class="shard">
+							{#if data.isPreview}
+								<span class="preview-badge small-caps">Admin Preview</span>
+							{/if}
 							<span class="shard-label small-caps">Shard Hash</span>
 							<span class="shard-hash">{shortAddr(data.address)}</span>
 						</div>
@@ -305,78 +357,100 @@
 					<RoomEvent
 						{event}
 						isCreator={ownerAddress.toLowerCase() === data.address.toLowerCase()}
-						isMember={true}
+						isMember={data.isMember}
 						viewerAddress={data.address}
 						members={eventMembers}
 						formError={form?.error ?? null}
 					/>
 				</div>
 
-				<div class="chat-wrap">
-					<div class="chat scroll-d2 bevel-in" bind:this={scroller}>
-						<div class="chat-noise" aria-hidden="true"></div>
-						{#if messages.length === 0}
-							<div class="empty">
-								<Crest size={56} tone="iron" />
-								<p>The void is silent. Speak first.</p>
-							</div>
-						{:else}
-							<ul class="msg-list">
-								{#each messages as msg (msg.id)}
-									{@const system = msg.kind === 'system'}
-									{@const mine = !system && isMine(msg.sender_address)}
-									<li class="msg-row" class:mine class:other={!mine && !system} class:system>
-										<article class="msg" class:mine class:other={!mine && !system} class:system>
-											<div class="msg-meta">
-												<span class="sender small-caps">
-													{system
-														? 'System'
-														: mine
-															? 'You'
-															: msg.sender_username || shortAddr(msg.sender_address)}
-												</span>
-												{#if !system}
-													<span class="sep" aria-hidden="true">·</span>
-													<span class="addr">{shortAddr(msg.sender_address)}</span>
-												{/if}
-												<span class="sep" aria-hidden="true">·</span>
-												<span class="time">{fmtTime(msg.created_at)}</span>
-											</div>
-											<div class="content">{msg.content}</div>
-										</article>
-									</li>
-								{/each}
-							</ul>
-						{/if}
-					</div>
-
-					<form
-						class="composer"
-						onsubmit={(e) => {
-							e.preventDefault();
-							send();
-						}}
-					>
-						<input
-							class="msg-input bevel-in"
-							type="text"
-							bind:value={input}
-							onkeydown={onKey}
-							placeholder={closed ? 'Room closed' : kicked ? 'Removed from room' : 'Speak…'}
-							maxlength={1000}
-							autocomplete="off"
-							disabled={closed || kicked}
-						/>
+				{#if data.isPreview}
+					<div class="admin-preview bevel-in">
+						<Crest size={56} tone="iron" />
+						<p class="preview-title small-caps">Administrative Preview</p>
+						<p class="preview-copy">
+							You are viewing this room without joining it. Chat and RSVP actions are unavailable,
+							and no player slot is occupied.
+						</p>
 						<OrnateButton
-							type="submit"
-							variant="primary"
+							variant="danger"
 							size="md"
-							disabled={closed || kicked || !input.trim()}
+							disabled={closePending}
+							onclick={() => {
+								closeError = null;
+								closeConfirm = true;
+							}}
 						>
-							Transmit
+							Close Room
 						</OrnateButton>
-					</form>
-				</div>
+					</div>
+				{:else}
+					<div class="chat-wrap">
+						<div class="chat scroll-d2 bevel-in" bind:this={scroller}>
+							<div class="chat-noise" aria-hidden="true"></div>
+							{#if messages.length === 0}
+								<div class="empty">
+									<Crest size={56} tone="iron" />
+									<p>The void is silent. Speak first.</p>
+								</div>
+							{:else}
+								<ul class="msg-list">
+									{#each messages as msg (msg.id)}
+										{@const system = msg.kind === 'system'}
+										{@const mine = !system && isMine(msg.sender_address)}
+										<li class="msg-row" class:mine class:other={!mine && !system} class:system>
+											<article class="msg" class:mine class:other={!mine && !system} class:system>
+												<div class="msg-meta">
+													<span class="sender small-caps">
+														{system
+															? 'System'
+															: mine
+																? 'You'
+																: msg.sender_username || shortAddr(msg.sender_address)}
+													</span>
+													{#if !system}
+														<span class="sep" aria-hidden="true">·</span>
+														<span class="addr">{shortAddr(msg.sender_address)}</span>
+													{/if}
+													<span class="sep" aria-hidden="true">·</span>
+													<span class="time">{fmtTime(msg.created_at)}</span>
+												</div>
+												<div class="content">{msg.content}</div>
+											</article>
+										</li>
+									{/each}
+								</ul>
+							{/if}
+						</div>
+
+						<form
+							class="composer"
+							onsubmit={(e) => {
+								e.preventDefault();
+								send();
+							}}
+						>
+							<input
+								class="msg-input bevel-in"
+								type="text"
+								bind:value={input}
+								onkeydown={onKey}
+								placeholder={closed ? 'Room closed' : kicked ? 'Removed from room' : 'Speak…'}
+								maxlength={1000}
+								autocomplete="off"
+								disabled={closed || kicked}
+							/>
+							<OrnateButton
+								type="submit"
+								variant="primary"
+								size="md"
+								disabled={closed || kicked || !input.trim()}
+							>
+								Transmit
+							</OrnateButton>
+						</form>
+					</div>
+				{/if}
 			</div>
 		</InnerPanel>
 	</div>
@@ -463,6 +537,40 @@
 				onclick={() => kickMember(target)}
 			>
 				{kickPending ? 'Kicking…' : 'Kick Player'}
+			</OrnateButton>
+		{/snippet}
+	</SystemDialog>
+{/if}
+
+{#if closeConfirm}
+	<SystemDialog
+		open={true}
+		title="Close Room"
+		tone="blood"
+		modal
+		width="460px"
+		onclose={() => {
+			if (!closePending) closeConfirm = false;
+		}}
+	>
+		<p class="closed-text">
+			Close <strong>{data.roomName}</strong>? This deletes its chat, scheduled event and all RSVPs,
+			and disconnects everyone inside. This cannot be undone.
+		</p>
+		{#if closeError}
+			<p class="kick-error" role="alert">{closeError}</p>
+		{/if}
+		{#snippet footer()}
+			<OrnateButton
+				variant="ghost"
+				size="md"
+				disabled={closePending}
+				onclick={() => (closeConfirm = false)}
+			>
+				Cancel
+			</OrnateButton>
+			<OrnateButton variant="danger" size="md" disabled={closePending} onclick={closeRoom}>
+				{closePending ? 'Closing…' : 'Close Room'}
 			</OrnateButton>
 		{/snippet}
 	</SystemDialog>
@@ -646,6 +754,16 @@
 		letter-spacing: var(--track-loose);
 	}
 
+	.preview-badge {
+		padding: 0.18rem 0.45rem;
+		border: 1px solid var(--blood);
+		background: rgba(120, 18, 18, 0.16);
+		color: var(--blood-bright);
+		font-family: var(--font-display);
+		font-size: 0.62rem;
+		letter-spacing: var(--track-loose);
+	}
+
 	.shard-hash {
 		font-family: var(--font-mono);
 		font-size: 0.72rem;
@@ -757,6 +875,36 @@
 		gap: 0.75rem;
 		flex: 1;
 		min-height: 0;
+	}
+
+	.admin-preview {
+		flex: 1;
+		min-height: 220px;
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		justify-content: center;
+		gap: 0.75rem;
+		padding: 1.5rem;
+		text-align: center;
+		background: linear-gradient(180deg, var(--stone-2) 0%, var(--stone-1) 100%);
+	}
+
+	.preview-title {
+		margin: 0;
+		color: var(--gold-base);
+		font-family: var(--font-display);
+		font-size: 0.9rem;
+		letter-spacing: var(--track-loose);
+	}
+
+	.preview-copy {
+		max-width: 560px;
+		margin: 0 0 0.35rem;
+		color: var(--bone-muted);
+		font-family: var(--font-display);
+		font-size: 0.86rem;
+		line-height: 1.55;
 	}
 
 	.chat {
