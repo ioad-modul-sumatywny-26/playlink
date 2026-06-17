@@ -3,8 +3,8 @@ import hashlib
 import json
 import logging
 import os
-import uuid
 import time
+import uuid
 from collections import defaultdict
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
@@ -16,18 +16,24 @@ from dotenv import load_dotenv
 from eth_account import Account
 from eth_account.messages import encode_defunct
 from eth_utils.address import to_checksum_address
-from fastapi import Depends, FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Request
+from fastapi import (
+    Depends,
+    FastAPI,
+    HTTPException,
+    Request,
+    WebSocket,
+    WebSocketDisconnect,
+)
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordBearer
 from pydantic import BaseModel, HttpUrl
 from pydantic import Field as PydField
+from slowapi import Limiter
+from slowapi.errors import RateLimitExceeded
+from slowapi.extension import _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
-from slowapi import Limiter
-from slowapi.util import get_remote_address
-from slowapi.errors import RateLimitExceeded
-from slowapi.middleware import SlowAPIMiddleware
-from slowapi.extension import _rate_limit_exceeded_handler
 
 from database import engine, get_session
 from models import (
@@ -489,13 +495,13 @@ app.add_middleware(
 
 @app.get("/")
 @limiter.limit(DEFAULT_RATE_LIMIT)
-def read_root(request: Request):
+def read_root(request: Request): # noqa: ARG001
     return {"status": "ok", "service": "playlink-auth"}
 
 
 @app.post("/auth/request-nonce")
 @limiter.limit(DEFAULT_RATE_LIMIT)
-def request_nonce(request: Request, address: str, session: SessionDep):
+def request_nonce(request: Request, address: str, session: SessionDep): # noqa: ARG001
     """
     Request a one-time nonce for an identity address.
     """
@@ -547,7 +553,7 @@ def request_nonce(request: Request, address: str, session: SessionDep):
 
 @app.post("/auth/verify")
 @limiter.limit(DEFAULT_RATE_LIMIT)
-def verify_signature(request: Request, body: VerifyRequest, session: SessionDep):
+def verify_signature(request: Request, body: VerifyRequest, session: SessionDep): # noqa: ARG001
     """
     Verify signature against a nonce and issue a JWT.
     """
@@ -640,7 +646,7 @@ class UpdateUserRequest(BaseModel):
 @app.get("/users/me")
 @limiter.limit(DEFAULT_RATE_LIMIT)
 def get_me(
-    request: Request,
+    request: Request, # noqa: ARG001
     session: SessionDep,
     address: Annotated[str, Depends(get_current_user_address)],
 ):
@@ -653,7 +659,7 @@ def get_me(
 @app.patch("/users/me")
 @limiter.limit(DEFAULT_RATE_LIMIT)
 def update_me(
-    request: Request,
+    request: Request, # noqa: ARG001
     payload: UpdateUserRequest,
     session: SessionDep,
     address: Annotated[str, Depends(get_current_user_address)],
@@ -695,19 +701,19 @@ def update_me(
 
 @app.get("/rooms")
 @limiter.limit(DEFAULT_RATE_LIMIT)
-def list_rooms(request: Request, session: SessionDep):
+def list_rooms(request: Request, session: SessionDep): # noqa: ARG001
     return session.exec(select(Room)).all()
 
 
 @app.get("/lobby-locations")
 @limiter.limit(DEFAULT_RATE_LIMIT)
-def list_lobby_locations(request: Request):
+def list_lobby_locations(request: Request): # noqa: ARG001
     return {"default": DEFAULT_LOBBY_LOCATION, "locations": LOBBY_LOCATIONS}
 
 
 @app.get("/rooms/{room_name}")
 @limiter.limit(DEFAULT_RATE_LIMIT)
-def get_room(request: Request, room_name: str, session: SessionDep):
+def get_room(request: Request, room_name: str, session: SessionDep): # noqa: ARG001
     room = session.exec(select(Room).where(Room.name == room_name)).first()
     if not room:
         raise HTTPException(status_code=404, detail="Room not found")
@@ -733,7 +739,7 @@ def get_room(request: Request, room_name: str, session: SessionDep):
 
 @app.get("/games")
 @limiter.limit(DEFAULT_RATE_LIMIT)
-def list_games(request: Request, session: SessionDep):
+def list_games(request: Request, session: SessionDep): # noqa: ARG001
     games = session.exec(select(Game).order_by(Game.sort_order)).all()
     return [game.name for game in games]
 
@@ -745,7 +751,7 @@ def list_games(request: Request, session: SessionDep):
 )
 @limiter.limit(DEFAULT_RATE_LIMIT)
 async def delete_room(
-    request: Request,
+    request: Request, # noqa: ARG001
     room_name: str,
     session: SessionDep,
 ):
@@ -773,7 +779,7 @@ async def delete_room(
 @app.post("/games", status_code=201, dependencies=[Depends(get_admin_address)])
 @limiter.limit(DEFAULT_RATE_LIMIT)
 async def create_game(
-    request: Request,
+    request: Request, # noqa: ARG001
     body: CreateGameRequest,
     session: SessionDep,
 ):
@@ -799,7 +805,7 @@ async def create_game(
 @app.delete("/games/{name}", status_code=200, dependencies=[Depends(get_admin_address)])
 @limiter.limit(DEFAULT_RATE_LIMIT)
 async def delete_game(
-    request: Request,
+    request: Request, # noqa: ARG001
     name: str,
     session: SessionDep,
     force: bool = False,
@@ -839,7 +845,7 @@ async def delete_game(
 @app.post("/rooms", status_code=201)
 @limiter.limit(DEFAULT_RATE_LIMIT)
 async def create_room(
-    request: Request,
+    request: Request, # noqa: ARG001
     body: CreateRoomRequest,
     session: SessionDep,
     address: Annotated[str, Depends(get_current_user_address)],
@@ -908,7 +914,7 @@ async def create_room(
 @app.post("/rooms/{room_name}/join", status_code=200)
 @limiter.limit(DEFAULT_RATE_LIMIT)
 async def join_room(
-    request: Request,
+    request: Request, # noqa: ARG001
     room_name: str,
     session: SessionDep,
     address: Annotated[str, Depends(get_current_user_address)],
@@ -942,7 +948,7 @@ async def join_room(
 @app.post("/rooms/{room_name}/leave", status_code=200)
 @limiter.limit(DEFAULT_RATE_LIMIT)
 async def leave_room(
-    request: Request,
+    request: Request, # noqa: ARG001
     room_name: str,
     session: SessionDep,
     address: Annotated[str, Depends(get_current_user_address)],
@@ -993,7 +999,7 @@ async def leave_room(
 
 @app.get("/rooms/{room_name}/event")
 @limiter.limit(DEFAULT_RATE_LIMIT)
-def get_room_event(request: Request, room_name: str, session: SessionDep):
+def get_room_event(request: Request, room_name: str, session: SessionDep): # noqa: ARG001
     """Return the room's scheduled event (if any), including the RSVP roster.
 
     Mirrors `GET /rooms/{name}` in being public — anyone can browse the
@@ -1011,12 +1017,12 @@ def get_room_event(request: Request, room_name: str, session: SessionDep):
 @app.put("/rooms/{room_name}/event", status_code=200)
 @limiter.limit(DEFAULT_RATE_LIMIT)
 async def schedule_room_event(
-    request: Request,
+    request: Request, # noqa: ARG001
     room_name: str,
     body: ScheduleEventRequest,
     session: SessionDep,
     address: Annotated[str, Depends(get_current_user_address)],
-):
+): 
     """Create or replace the scheduled event for a room.
 
     Only the room creator may schedule. `starts_at` must lie in the future
@@ -1105,7 +1111,7 @@ async def schedule_room_event(
 @app.delete("/rooms/{room_name}/event", status_code=200)
 @limiter.limit(DEFAULT_RATE_LIMIT)
 async def cancel_room_event(
-    request: Request,
+    request: Request, # noqa: ARG001
     room_name: str,
     session: SessionDep,
     address: Annotated[str, Depends(get_current_user_address)],
@@ -1140,7 +1146,7 @@ async def cancel_room_event(
 
 @app.put("/rooms/{room_name}/event/rsvp", status_code=200)
 async def set_room_event_rsvp(
-    request: Request,
+    request: Request, # noqa: ARG001
     room_name: str,
     body: SetRsvpRequest,
     session: SessionDep,
