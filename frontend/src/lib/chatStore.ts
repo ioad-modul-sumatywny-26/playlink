@@ -301,7 +301,7 @@ export function createChatStore(
 		};
 
 		ws.onclose = (event) => {
-			if (event.code === 4409) {
+			if (event.code === 4403 || event.code === 4409) {
 				kicked.set(true);
 				isTornDown = true;
 				if (reconnectTimeout) clearTimeout(reconnectTimeout);

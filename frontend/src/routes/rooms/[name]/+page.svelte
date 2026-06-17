@@ -465,7 +465,7 @@
 		closeable={false}
 		width="460px"
 	>
-		<p class="closed-text">An administrator removed you from this room.</p>
+		<p class="closed-text">You are no longer a member of this room.</p>
 		<p class="closed-sub">
 			You may join again. Returning to the rooms list in {redirectIn}
 			{redirectIn === 1 ? 'second' : 'seconds'}…

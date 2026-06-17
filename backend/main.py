@@ -164,11 +164,17 @@ class ConnectionManager:
         self.active_connections.append(websocket)
 
     def disconnect(self, websocket: WebSocket):
-        self.active_connections.remove(websocket)
+        if websocket in self.active_connections:
+            self.active_connections.remove(websocket)
 
     async def broadcast(self, data: str):
-        for connection in self.active_connections:
-            await connection.send_text(data)
+        for connection in list(self.active_connections):
+            try:
+                await connection.send_text(data)
+            except Exception:
+                # A stale global-list listener must not turn an already
+                # committed room mutation into an HTTP 500 response.
+                self.disconnect(connection)
 
 
 manager = ConnectionManager()
@@ -190,7 +196,12 @@ class RoomChatManager:
 
     async def broadcast(self, room: str, payload: str):
         for connection in list(self.rooms.get(room, {})):
-            await connection.send_text(payload)
+            try:
+                await connection.send_text(payload)
+            except Exception:
+                # Browsers can disappear without completing a close handshake.
+                # Drop that socket and continue updating the remaining room.
+                self.disconnect(room, connection)
 
     async def disconnect_user(self, room: str, address: str, code: int = 4409):
         """Close every room-chat connection authenticated as ``address``."""
