@@ -61,6 +61,16 @@
 		);
 	});
 
+	// Members receive event/roster changes over the room WebSocket. Admin Preview
+	// deliberately has no socket, so synchronize its local state after enhanced
+	// form actions invalidate and reload the page data.
+	$effect(() => {
+		if (!data.isPreview) return;
+		event = data.event;
+		roster = data.members;
+		ownerAddress = data.createdBy;
+	});
+
 	onMount(() => {
 		if (!data.isMember) return;
 		const store = createChatStore(data.roomName, data.token, {
