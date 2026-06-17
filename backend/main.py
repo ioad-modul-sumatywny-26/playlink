@@ -64,10 +64,12 @@ NONCE_EXPIRATION_MINUTES = int(os.getenv("NONCE_EXPIRATION_MINUTES", "5"))
 JWT_EXPIRATION_MINUTES = int(os.getenv("JWT_EXPIRATION_MINUTES", "60"))
 ROOM_CLEANUP_INTERVAL_SECONDS = int(os.getenv("ROOM_CLEANUP_INTERVAL_SECONDS", "60"))
 
+DEFAULT_RATE_LIMIT = os.getenv("DEFAULT_RATE_LIMIT", "10/minute")
+
 WS_LIMITS = defaultdict(list)
 
-MAX_MSGS = 10
-WINDOW = 60
+MAX_MSGS = int(os.getenv("WS_RATE_LIMIT_MAX_MESSAGES", "10"))
+WINDOW = int(os.getenv("WS_RATE_LIMIT_TIME_WINDOW_SECONDS", "10"))
 
 def _parse_admin_addresses(raw: str | None) -> set[str]:
     """Parse the comma-separated `ADMIN_ADDRESSES` env value into a set.
@@ -486,13 +488,13 @@ app.add_middleware(
 
 
 @app.get("/")
-@limiter.limit("10/minute")
+@limiter.limit(DEFAULT_RATE_LIMIT)
 def read_root(request: Request):
     return {"status": "ok", "service": "playlink-auth"}
 
 
 @app.post("/auth/request-nonce")
-@limiter.limit("10/minute")
+@limiter.limit(DEFAULT_RATE_LIMIT)
 def request_nonce(request: Request, address: str, session: SessionDep):
     """
     Request a one-time nonce for an identity address.
@@ -544,7 +546,7 @@ def request_nonce(request: Request, address: str, session: SessionDep):
 
 
 @app.post("/auth/verify")
-@limiter.limit("10/minute")
+@limiter.limit(DEFAULT_RATE_LIMIT)
 def verify_signature(request: Request, body: VerifyRequest, session: SessionDep):
     """
     Verify signature against a nonce and issue a JWT.
@@ -636,7 +638,7 @@ class UpdateUserRequest(BaseModel):
 
 
 @app.get("/users/me")
-@limiter.limit("10/minute")
+@limiter.limit(DEFAULT_RATE_LIMIT)
 def get_me(
     request: Request,
     session: SessionDep,
@@ -649,7 +651,7 @@ def get_me(
 
 
 @app.patch("/users/me")
-@limiter.limit("10/minute")
+@limiter.limit(DEFAULT_RATE_LIMIT)
 def update_me(
     request: Request,
     payload: UpdateUserRequest,
@@ -692,19 +694,19 @@ def update_me(
 
 
 @app.get("/rooms")
-@limiter.limit("10/minute")
+@limiter.limit(DEFAULT_RATE_LIMIT)
 def list_rooms(request: Request, session: SessionDep):
     return session.exec(select(Room)).all()
 
 
 @app.get("/lobby-locations")
-@limiter.limit("10/minute")
+@limiter.limit(DEFAULT_RATE_LIMIT)
 def list_lobby_locations(request: Request):
     return {"default": DEFAULT_LOBBY_LOCATION, "locations": LOBBY_LOCATIONS}
 
 
 @app.get("/rooms/{room_name}")
-@limiter.limit("10/minute")
+@limiter.limit(DEFAULT_RATE_LIMIT)
 def get_room(request: Request, room_name: str, session: SessionDep):
     room = session.exec(select(Room).where(Room.name == room_name)).first()
     if not room:
@@ -730,7 +732,7 @@ def get_room(request: Request, room_name: str, session: SessionDep):
 
 
 @app.get("/games")
-@limiter.limit("10/minute")
+@limiter.limit(DEFAULT_RATE_LIMIT)
 def list_games(request: Request, session: SessionDep):
     games = session.exec(select(Game).order_by(Game.sort_order)).all()
     return [game.name for game in games]
@@ -741,7 +743,7 @@ def list_games(request: Request, session: SessionDep):
     status_code=200,
     dependencies=[Depends(get_admin_address)],
 )
-@limiter.limit("10/minute")
+@limiter.limit(DEFAULT_RATE_LIMIT)
 async def delete_room(
     request: Request,
     room_name: str,
@@ -769,7 +771,7 @@ async def delete_room(
 
 
 @app.post("/games", status_code=201, dependencies=[Depends(get_admin_address)])
-@limiter.limit("10/minute")
+@limiter.limit(DEFAULT_RATE_LIMIT)
 async def create_game(
     request: Request,
     body: CreateGameRequest,
@@ -795,7 +797,7 @@ async def create_game(
 
 
 @app.delete("/games/{name}", status_code=200, dependencies=[Depends(get_admin_address)])
-@limiter.limit("10/minute")
+@limiter.limit(DEFAULT_RATE_LIMIT)
 async def delete_game(
     request: Request,
     name: str,
@@ -835,7 +837,7 @@ async def delete_game(
 
 
 @app.post("/rooms", status_code=201)
-@limiter.limit("10/minute")
+@limiter.limit(DEFAULT_RATE_LIMIT)
 async def create_room(
     request: Request,
     body: CreateRoomRequest,
@@ -904,7 +906,7 @@ async def create_room(
 
 
 @app.post("/rooms/{room_name}/join", status_code=200)
-@limiter.limit("10/minute")
+@limiter.limit(DEFAULT_RATE_LIMIT)
 async def join_room(
     request: Request,
     room_name: str,
@@ -938,7 +940,7 @@ async def join_room(
 
 
 @app.post("/rooms/{room_name}/leave", status_code=200)
-@limiter.limit("10/minute")
+@limiter.limit(DEFAULT_RATE_LIMIT)
 async def leave_room(
     request: Request,
     room_name: str,
@@ -990,7 +992,7 @@ async def leave_room(
 
 
 @app.get("/rooms/{room_name}/event")
-@limiter.limit("10/minute")
+@limiter.limit(DEFAULT_RATE_LIMIT)
 def get_room_event(request: Request, room_name: str, session: SessionDep):
     """Return the room's scheduled event (if any), including the RSVP roster.
 
@@ -1007,7 +1009,7 @@ def get_room_event(request: Request, room_name: str, session: SessionDep):
 
 
 @app.put("/rooms/{room_name}/event", status_code=200)
-@limiter.limit("10/minute")
+@limiter.limit(DEFAULT_RATE_LIMIT)
 async def schedule_room_event(
     request: Request,
     room_name: str,
@@ -1101,7 +1103,7 @@ async def schedule_room_event(
 
 
 @app.delete("/rooms/{room_name}/event", status_code=200)
-@limiter.limit("10/minute")
+@limiter.limit(DEFAULT_RATE_LIMIT)
 async def cancel_room_event(
     request: Request,
     room_name: str,
