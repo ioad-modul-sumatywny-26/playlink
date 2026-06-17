@@ -50,6 +50,7 @@ export async function authenticate(mnemonicPhrase: string) {
 
 	if (!nonceRes.ok) {
 		const error = await nonceRes.json();
+		if (nonceRes.status === 429) throw new Error(error.error);
 		throw new Error(error.detail || 'Failed to request nonce');
 	}
 
