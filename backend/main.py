@@ -32,6 +32,7 @@ from slowapi import Limiter
 from slowapi.errors import RateLimitExceeded
 from slowapi.extension import _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
+from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 
@@ -44,6 +45,7 @@ from models import (
     Room,
     RoomEvent,
     RoomEventRsvp,
+    RoomMember,
     RsvpStatus,
     User,
 )
@@ -174,24 +176,44 @@ manager = ConnectionManager()
 
 class RoomChatManager:
     def __init__(self):
-        self.rooms: dict[str, list[WebSocket]] = {}
+        self.rooms: dict[str, dict[WebSocket, str]] = {}
 
-    async def connect(self, room: str, websocket: WebSocket):
+    async def connect(self, room: str, websocket: WebSocket, address: str):
         await websocket.accept()
-        self.rooms.setdefault(room, []).append(websocket)
+        self.rooms.setdefault(room, {})[websocket] = address
 
     def disconnect(self, room: str, websocket: WebSocket):
         if room in self.rooms and websocket in self.rooms[room]:
-            self.rooms[room].remove(websocket)
+            del self.rooms[room][websocket]
             if not self.rooms[room]:
                 del self.rooms[room]
 
     async def broadcast(self, room: str, payload: str):
-        for connection in list(self.rooms.get(room, [])):
+        for connection in list(self.rooms.get(room, {})):
             await connection.send_text(payload)
+
+    async def disconnect_user(self, room: str, address: str, code: int = 4409):
+        """Close every room-chat connection authenticated as ``address``."""
+        connections = self.rooms.get(room, {})
+        targets = [
+            websocket
+            for websocket, connected_address in connections.items()
+            if connected_address.lower() == address.lower()
+        ]
+        for websocket in targets:
+            try:
+                await websocket.close(code=code)
+            except RuntimeError:
+                # The browser may have closed between the broadcast and this
+                # targeted cleanup. Its registry entry still needs removing.
+                pass
+            finally:
+                self.disconnect(room, websocket)
 
 
 chat_manager = RoomChatManager()
+
+SYSTEM_SENDER_ADDRESS = "__system__"
 
 
 # --- Helpers ---
@@ -292,10 +314,15 @@ def _iso(dt: datetime) -> str:
     return dt.isoformat() + "Z" if dt.tzinfo is None else dt.isoformat()
 
 
-def _members_payload(room: Room) -> list[dict[str, str]]:
+def _members_payload(room: Room) -> list[dict[str, str | bool]]:
     """Compact roster for chat WS `roster_update` frames."""
     return [
-        {"address": m.identity_address, "username": m.username} for m in room.members
+        {
+            "address": m.identity_address,
+            "username": m.username,
+            "is_admin": is_admin_address(m.identity_address),
+        }
+        for m in room.members
     ]
 
 
@@ -722,10 +749,7 @@ def get_room(request: Request, room_name: str, session: SessionDep):  # noqa: AR
         "players_max": room.players_max,
         "players_active": len(room.members),
         "member_addresses": [m.identity_address for m in room.members],
-        "members": [
-            {"address": m.identity_address, "username": m.username}
-            for m in room.members
-        ],
+        "members": _members_payload(room),
         "description": room.description,
         "communicator_link": room.communicator_link,
         "requirements": room.requirements,
@@ -995,6 +1019,100 @@ async def leave_room(
     return {"status": "left", "room": room.name}
 
 
+@app.post("/rooms/{room_name}/members/{member_address}/kick", status_code=200)
+@limiter.limit(DEFAULT_RATE_LIMIT)
+async def kick_room_member(
+    request: Request,  # noqa: ARG001
+    room_name: str,
+    member_address: str,
+    session: SessionDep,
+    admin_address: Annotated[str, Depends(get_admin_address)],
+):
+    """Remove a non-admin member and disconnect their active chat sessions."""
+    room = session.exec(select(Room).where(Room.name == room_name)).first()
+    if not room:
+        raise HTTPException(status_code=404, detail="Room not found")
+
+    target = session.exec(
+        select(User).where(func.lower(User.identity_address) == member_address.lower())
+    ).first()
+    if not target:
+        raise HTTPException(status_code=404, detail="User not found")
+    if is_admin_address(target.identity_address):
+        raise HTTPException(status_code=403, detail="Administrators cannot be kicked")
+    if target not in room.members:
+        raise HTTPException(status_code=409, detail="User is not a room member")
+
+    event = session.exec(select(RoomEvent).where(RoomEvent.room_id == room.id)).first()
+    if event is not None:
+        rsvp = session.exec(
+            select(RoomEventRsvp).where(
+                RoomEventRsvp.event_id == event.id,
+                RoomEventRsvp.user_id == target.id,
+            )
+        ).first()
+        if rsvp is not None:
+            session.delete(rsvp)
+
+    ownership_transferred = room.created_by.lower() == target.identity_address.lower()
+    if ownership_transferred:
+        room.created_by = admin_address
+
+    room.members.remove(target)
+    system_message = Message(
+        room_id=room.id,
+        sender_address=SYSTEM_SENDER_ADDRESS,
+        content=(f"{target.username} was removed from the room by an administrator."),
+    )
+    session.add(room)
+    session.add(system_message)
+    session.commit()
+    session.refresh(system_message)
+
+    await chat_manager.broadcast(
+        room_name,
+        json.dumps(
+            {
+                "type": "message",
+                "message": _msg_dict(system_message, "System"),
+            }
+        ),
+    )
+    await chat_manager.broadcast(
+        room_name,
+        json.dumps({"type": "roster_update", "members": _members_payload(room)}),
+    )
+    if event is not None:
+        await chat_manager.broadcast(
+            room_name,
+            json.dumps(
+                {"type": "event_update", "event": _serialize_event_state(session, room)}
+            ),
+        )
+    await chat_manager.broadcast(
+        room_name,
+        json.dumps(
+            {
+                "type": "member_kicked",
+                "member_address": target.identity_address,
+                "member_username": target.username,
+                "created_by": room.created_by,
+                "ownership_transferred": ownership_transferred,
+            }
+        ),
+    )
+    await manager.broadcast(get_rooms_payload(session))
+    await chat_manager.disconnect_user(room_name, target.identity_address)
+
+    return {
+        "status": "kicked",
+        "member_address": target.identity_address,
+        "member_username": target.username,
+        "created_by": room.created_by,
+        "ownership_transferred": ownership_transferred,
+    }
+
+
 @app.get("/rooms/{room_name}/event")
 @limiter.limit(DEFAULT_RATE_LIMIT)
 def get_room_event(request: Request, room_name: str, session: SessionDep):  # noqa: ARG001
@@ -1217,13 +1335,16 @@ async def websocket_rooms(websocket: WebSocket, session: SessionDep):
 
 
 def _msg_dict(msg: Message, sender_username: str) -> dict:
-    return {
+    payload = {
         "id": msg.id,
         "sender_address": msg.sender_address,
         "sender_username": sender_username,
         "content": msg.content,
         "created_at": _iso(msg.created_at),
     }
+    if msg.sender_address == SYSTEM_SENDER_ADDRESS:
+        payload["kind"] = "system"
+    return payload
 
 
 @app.websocket("/ws/rooms/{room_name}/chat")
@@ -1252,7 +1373,7 @@ async def websocket_chat(
         await websocket.close(code=4403)
         return
 
-    await chat_manager.connect(room_name, websocket)
+    await chat_manager.connect(room_name, websocket, address)
     try:
         # Send last 50 messages in chronological order.
         recent = session.exec(
@@ -1264,6 +1385,8 @@ async def websocket_chat(
         username_cache: dict[str, str] = {}
 
         def _username_for(addr: str) -> str:
+            if addr == SYSTEM_SENDER_ADDRESS:
+                return "System"
             cached = username_cache.get(addr)
             if cached is not None:
                 return cached
@@ -1287,6 +1410,20 @@ async def websocket_chat(
 
         while True:
             raw = await websocket.receive_text()
+
+            # Membership may have changed after the socket was accepted. Query
+            # the link table directly so a stale relationship cache cannot let
+            # a removed member continue writing to chat.
+            membership = session.exec(
+                select(RoomMember).where(
+                    RoomMember.room_id == room.id,
+                    RoomMember.user_id == user.id,
+                )
+            ).first()
+            if membership is None:
+                await websocket.close(code=4403)
+                return
+
             now = time.time()
 
             key = address

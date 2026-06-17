@@ -55,8 +55,8 @@ def test_members_payload_is_compact_roster_shape():
     )
 
     assert main._members_payload(room) == [
-        {"address": "0x1", "username": "alice"},
-        {"address": "0x2", "username": "bob"},
+        {"address": "0x1", "username": "alice", "is_admin": False},
+        {"address": "0x2", "username": "bob", "is_admin": False},
     ]
 
 
