@@ -1,7 +1,19 @@
+import asyncio
 from datetime import UTC, datetime
 
 import main
 from models import Message, Room, User
+
+
+class StubWebSocket:
+    def __init__(self, *, fails: bool = False):
+        self.fails = fails
+        self.messages: list[str] = []
+
+    async def send_text(self, payload: str):
+        if self.fails:
+            raise RuntimeError("connection is closed")
+        self.messages.append(payload)
 
 
 def test_parse_admin_addresses_trims_lowercases_and_skips_empty_values():
@@ -55,8 +67,8 @@ def test_members_payload_is_compact_roster_shape():
     )
 
     assert main._members_payload(room) == [
-        {"address": "0x1", "username": "alice"},
-        {"address": "0x2", "username": "bob"},
+        {"address": "0x1", "username": "alice", "is_admin": False},
+        {"address": "0x2", "username": "bob", "is_admin": False},
     ]
 
 
@@ -77,3 +89,27 @@ def test_msg_dict_keeps_public_chat_payload_shape():
         "content": "hello",
         "created_at": "2026-01-02T03:04:05+00:00",
     }
+
+
+def test_global_broadcast_drops_stale_connection_and_continues():
+    manager = main.ConnectionManager()
+    stale = StubWebSocket(fails=True)
+    healthy = StubWebSocket()
+    manager.active_connections = [stale, healthy]
+
+    asyncio.run(manager.broadcast("rooms"))
+
+    assert manager.active_connections == [healthy]
+    assert healthy.messages == ["rooms"]
+
+
+def test_room_broadcast_drops_stale_connection_and_continues():
+    manager = main.RoomChatManager()
+    stale = StubWebSocket(fails=True)
+    healthy = StubWebSocket()
+    manager.rooms = {"lobby": {stale: "0xStale", healthy: "0xHealthy"}}
+
+    asyncio.run(manager.broadcast("lobby", "roster"))
+
+    assert manager.rooms == {"lobby": {healthy: "0xHealthy"}}
+    assert healthy.messages == ["roster"]

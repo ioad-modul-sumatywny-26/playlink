@@ -388,7 +388,7 @@
 			}
 			if (e.key === 'Enter' && selectedRoom && data.isAuthenticated && data.user) {
 				const isMember = selectedRoom.member_addresses.includes(data.user.address);
-				if (isMember) {
+				if (isMember || data.isAdmin) {
 					e.preventDefault();
 					goto(`/rooms/${encodeURIComponent(selectedRoom.name)}`);
 				}
@@ -601,6 +601,15 @@
 									href="/rooms/{encodeURIComponent(room.name)}"
 								>
 									Open
+								</OrnateButton>
+							{:else if data.isAdmin}
+								<OrnateButton
+									variant="secondary"
+									size="md"
+									fullWidth
+									href="/rooms/{encodeURIComponent(room.name)}"
+								>
+									Admin Preview
 								</OrnateButton>
 							{/if}
 
@@ -965,14 +974,65 @@
 			position: sticky;
 			top: 0;
 			align-self: start;
-			max-height: calc(100vh - 8rem);
-			overflow: auto;
+			max-height: none;
+			overflow: visible;
+		}
+
+		.create-fab {
+			display: grid;
+			grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+			gap: 0.55rem;
+			margin-bottom: 0.65rem;
+		}
+
+		.side-col :global(.inner-panel .panel-body) {
+			padding: 0.9rem 1.15rem;
+		}
+
+		.side-col :global(.section-title) {
+			margin-bottom: 0.55rem;
+		}
+
+		.side-col .filter-group {
+			gap: 0.3rem;
+			margin-bottom: 0.65rem;
+		}
+
+		.side-col .filter-actions,
+		.side-col .name-filter {
+			margin-bottom: 0.7rem;
+		}
+
+		.side-col .text-input {
+			padding: 0.5rem 0.7rem;
+		}
+
+		.side-col .stats {
+			gap: 0.5rem;
+			padding-top: 0.2rem;
+		}
+
+		.side-col .stat {
+			padding: 0.4rem 0.6rem;
 		}
 	}
 
 	.list-col {
 		display: flex;
 		min-height: 0;
+	}
+
+	/* The filter/details rail still scrolls on short viewports, but the native
+	   browser scrollbar clashes with the framed UI and steals horizontal space. */
+	.side-col {
+		scrollbar-width: none;
+		-ms-overflow-style: none;
+	}
+
+	.side-col::-webkit-scrollbar {
+		display: none;
+		width: 0;
+		height: 0;
 	}
 
 	.list-col :global(.inner-panel) {
