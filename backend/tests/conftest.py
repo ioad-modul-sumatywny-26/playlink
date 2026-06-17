@@ -40,6 +40,7 @@ def client_fixture(session: Session):
     yield client
     app.dependency_overrides.clear()
 
+
 @pytest.fixture(autouse=True)
 def disable_rate_limit():
     app.state.limiter.enabled = False
