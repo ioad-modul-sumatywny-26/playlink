@@ -4,7 +4,7 @@ import { env as privateEnv } from '$env/dynamic/private';
 import { fail, redirect } from '@sveltejs/kit';
 import { jwtDecode } from 'jwt-decode';
 import { lobbyLocationLabel, FALLBACK_LOBBY_LOCATIONS } from '$lib/lobbyLocations';
-import type { RoomEventState } from '$lib/chatStore';
+import type { RoomEventState, RoomMember } from '$lib/chatStore';
 
 function backendBase(): string {
 	return privateEnv.BACKEND_INTERNAL_URL || env.PUBLIC_BACKEND_URL || 'http://localhost:8000';
@@ -13,6 +13,7 @@ function backendBase(): string {
 interface SessionTokenClaims {
 	sub?: string;
 	username?: string;
+	is_admin?: boolean;
 }
 
 interface RoomDetail {
@@ -22,7 +23,7 @@ interface RoomDetail {
 	players_max: number;
 	players_active: number;
 	member_addresses: string[];
-	members: { address: string; username: string }[];
+	members: RoomMember[];
 	description: string | null;
 	communicator_link: string | null;
 	requirements: string | null;
@@ -37,10 +38,12 @@ export const load: PageServerLoad = async ({ params, cookies }) => {
 
 	let address: string | null = null;
 	let username = 'Unknown';
+	let isAdmin = false;
 	try {
 		const claims = jwtDecode<SessionTokenClaims>(session);
 		if (claims?.sub) address = claims.sub;
 		if (claims?.username) username = claims.username;
+		isAdmin = claims?.is_admin === true;
 	} catch {
 		throw redirect(303, '/auth');
 	}
@@ -81,6 +84,8 @@ export const load: PageServerLoad = async ({ params, cookies }) => {
 		memberAddresses: roomDetail.member_addresses,
 		members: roomDetail.members,
 		event: roomDetail.event,
+		isAdmin,
+		createdBy: roomDetail.created_by,
 		isCreator: roomDetail.created_by.toLowerCase() === lower
 	};
 };
@@ -98,6 +103,35 @@ function localInputToIsoUtc(value: string): string | null {
 }
 
 export const actions: Actions = {
+	kickMember: async ({ request, cookies, params }) => {
+		const session = cookies.get('session');
+		if (!session) return fail(401, { error: 'Not authenticated' });
+
+		const data = await request.formData();
+		const memberAddress = data.get('member_address');
+		if (typeof memberAddress !== 'string' || !memberAddress) {
+			return fail(400, { error: 'Missing member address' });
+		}
+
+		const baseUrl = backendBase();
+		try {
+			const res = await fetch(
+				`${baseUrl}/rooms/${encodeURIComponent(params.name)}/members/${encodeURIComponent(memberAddress)}/kick`,
+				{
+					method: 'POST',
+					headers: { Authorization: `Bearer ${session}` }
+				}
+			);
+			const result = await res.json().catch(() => ({}));
+			if (!res.ok) {
+				return fail(res.status, { error: result.detail || 'Failed to kick player' });
+			}
+			return { success: true, kick: result };
+		} catch {
+			return fail(500, { error: 'Server error' });
+		}
+	},
+
 	scheduleEvent: async ({ request, cookies, params }) => {
 		const session = cookies.get('session');
 		if (!session) return fail(401, { error: 'Not authenticated' });

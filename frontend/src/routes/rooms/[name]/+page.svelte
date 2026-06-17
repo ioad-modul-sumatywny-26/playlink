@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onDestroy, onMount, tick, untrack } from 'svelte';
 	import { goto } from '$app/navigation';
+	import { deserialize } from '$app/forms';
 	import type { PageData } from './$types';
 	import {
 		createChatStore,
@@ -26,13 +27,18 @@
 	let messages = $state<ChatMessage[]>([]);
 	let event = $state<RoomEventState | null>(untrack(() => data.event));
 	let roster = $state<RoomMember[]>(untrack(() => data.members));
+	let ownerAddress = $state(untrack(() => data.createdBy));
 	let input = $state('');
 	let scroller: HTMLDivElement | null = $state(null);
 
 	// Set when an admin closes the room; freezes the UI and counts down to a
 	// redirect back to the rooms list.
 	let closed = $state(false);
+	let kicked = $state(false);
 	let redirectIn = $state(CLOSE_REDIRECT_SECONDS);
+	let kickTarget = $state<PartyMember | null>(null);
+	let kickPending = $state(false);
+	let kickError = $state<string | null>(null);
 
 	function leaveClosedRoom() {
 		goto('/rooms');
@@ -51,7 +57,9 @@
 	onMount(() => {
 		const store = createChatStore(data.roomName, data.token, {
 			initialEvent: data.event,
-			initialMembers: data.members
+			initialMembers: data.members,
+			initialOwner: data.createdBy,
+			currentAddress: data.address
 		});
 		chat = store;
 		const unsubMessages = store.messages.subscribe(async (m) => {
@@ -65,22 +73,38 @@
 		const unsubMembers = store.members.subscribe((m) => {
 			roster = m;
 		});
+		const unsubOwner = store.owner.subscribe((address) => {
+			ownerAddress = address;
+		});
 		let countdown: ReturnType<typeof setInterval> | null = null;
 		let redirectTimer: ReturnType<typeof setTimeout> | null = null;
-		const unsubClosed = store.closed.subscribe((isClosed) => {
-			if (!isClosed || closed) return;
-			closed = true;
+		let exitStarted = false;
+		const beginExit = () => {
+			if (exitStarted) return;
+			exitStarted = true;
 			redirectIn = CLOSE_REDIRECT_SECONDS;
 			countdown = setInterval(() => {
 				redirectIn = Math.max(0, redirectIn - 1);
 			}, 1000);
 			redirectTimer = setTimeout(leaveClosedRoom, CLOSE_REDIRECT_SECONDS * 1000);
+		};
+		const unsubClosed = store.closed.subscribe((isClosed) => {
+			if (!isClosed || closed) return;
+			closed = true;
+			beginExit();
+		});
+		const unsubKicked = store.kicked.subscribe((wasKicked) => {
+			if (!wasKicked || kicked) return;
+			kicked = true;
+			beginExit();
 		});
 		return () => {
 			unsubMessages();
 			unsubEvent();
 			unsubMembers();
+			unsubOwner();
 			unsubClosed();
+			unsubKicked();
 			if (countdown) clearInterval(countdown);
 			if (redirectTimer) clearTimeout(redirectTimer);
 		};
@@ -91,7 +115,7 @@
 	});
 
 	function send() {
-		if (closed || !chat || !input.trim()) return;
+		if (closed || kicked || !chat || !input.trim()) return;
 		chat.send(input);
 		input = '';
 	}
@@ -121,6 +145,8 @@
 		address: string;
 		username: string;
 		isMe: boolean;
+		isAdmin: boolean;
+		isOwner: boolean;
 	}
 
 	const partyMembers = $derived.by<PartyMember[]>(() => {
@@ -128,7 +154,9 @@
 		return roster.map((m) => ({
 			address: m.address,
 			username: m.username || shortAddr(m.address),
-			isMe: m.address.toLowerCase() === meKey
+			isMe: m.address.toLowerCase() === meKey,
+			isAdmin: m.is_admin,
+			isOwner: m.address.toLowerCase() === ownerAddress.toLowerCase()
 		}));
 	});
 
@@ -141,6 +169,32 @@
 	const hasMetadata = $derived(
 		Boolean(data.description || data.communicatorLink || data.requirements)
 	);
+
+	async function kickMember(member: PartyMember) {
+		if (kickPending) return;
+		kickPending = true;
+		kickError = null;
+		const body = new FormData();
+		body.set('member_address', member.address);
+		try {
+			const response = await fetch('?/kickMember', { method: 'POST', body });
+			const result = deserialize(await response.text()) as
+				| { type: 'success' }
+				| { type: 'failure'; data?: { error?: string } }
+				| { type: 'error' | 'redirect' };
+			if (result.type === 'success') {
+				kickTarget = null;
+			} else if (result.type === 'failure') {
+				kickError = result.data?.error ?? 'Failed to kick player';
+			} else {
+				kickError = 'Failed to kick player';
+			}
+		} catch {
+			kickError = 'Server error';
+		} finally {
+			kickPending = false;
+		}
+	}
 </script>
 
 <svelte:head>
@@ -165,6 +219,20 @@
 								</span>
 								<span class="member-addr">{shortAddr(m.address)}</span>
 							</div>
+							{#if data.isAdmin && !m.isMe && !m.isAdmin}
+								<button
+									class="kick-button"
+									type="button"
+									title="Kick player"
+									aria-label="Kick {m.username}"
+									onclick={() => {
+										kickError = null;
+										kickTarget = m;
+									}}
+								>
+									✕
+								</button>
+							{/if}
 						</li>
 					{/each}
 				</ul>
@@ -236,7 +304,7 @@
 				<div class="event-slot">
 					<RoomEvent
 						{event}
-						isCreator={data.isCreator}
+						isCreator={ownerAddress.toLowerCase() === data.address.toLowerCase()}
 						isMember={true}
 						viewerAddress={data.address}
 						members={eventMembers}
@@ -255,15 +323,22 @@
 						{:else}
 							<ul class="msg-list">
 								{#each messages as msg (msg.id)}
-									{@const mine = isMine(msg.sender_address)}
-									<li class="msg-row" class:mine class:other={!mine}>
-										<article class="msg" class:mine class:other={!mine}>
+									{@const system = msg.kind === 'system'}
+									{@const mine = !system && isMine(msg.sender_address)}
+									<li class="msg-row" class:mine class:other={!mine && !system} class:system>
+										<article class="msg" class:mine class:other={!mine && !system} class:system>
 											<div class="msg-meta">
 												<span class="sender small-caps">
-													{mine ? 'You' : msg.sender_username || shortAddr(msg.sender_address)}
+													{system
+														? 'System'
+														: mine
+															? 'You'
+															: msg.sender_username || shortAddr(msg.sender_address)}
 												</span>
-												<span class="sep" aria-hidden="true">·</span>
-												<span class="addr">{shortAddr(msg.sender_address)}</span>
+												{#if !system}
+													<span class="sep" aria-hidden="true">·</span>
+													<span class="addr">{shortAddr(msg.sender_address)}</span>
+												{/if}
 												<span class="sep" aria-hidden="true">·</span>
 												<span class="time">{fmtTime(msg.created_at)}</span>
 											</div>
@@ -287,16 +362,16 @@
 							type="text"
 							bind:value={input}
 							onkeydown={onKey}
-							placeholder={closed ? 'Room closed' : 'Speak…'}
+							placeholder={closed ? 'Room closed' : kicked ? 'Removed from room' : 'Speak…'}
 							maxlength={1000}
 							autocomplete="off"
-							disabled={closed}
+							disabled={closed || kicked}
 						/>
 						<OrnateButton
 							type="submit"
 							variant="primary"
 							size="md"
-							disabled={closed || !input.trim()}
+							disabled={closed || kicked || !input.trim()}
 						>
 							Transmit
 						</OrnateButton>
@@ -306,6 +381,28 @@
 		</InnerPanel>
 	</div>
 </section>
+
+{#if kicked}
+	<SystemDialog
+		open={true}
+		title="Removed from Lobby"
+		tone="blood"
+		modal
+		closeable={false}
+		width="460px"
+	>
+		<p class="closed-text">An administrator removed you from this room.</p>
+		<p class="closed-sub">
+			You may join again. Returning to the rooms list in {redirectIn}
+			{redirectIn === 1 ? 'second' : 'seconds'}…
+		</p>
+		{#snippet footer()}
+			<OrnateButton variant="primary" size="md" onclick={leaveClosedRoom}>
+				Return to Rooms
+			</OrnateButton>
+		{/snippet}
+	</SystemDialog>
+{/if}
 
 {#if closed}
 	<SystemDialog
@@ -325,6 +422,48 @@
 			<OrnateButton variant="primary" size="md" onclick={leaveClosedRoom}
 				>Return to Rooms</OrnateButton
 			>
+		{/snippet}
+	</SystemDialog>
+{/if}
+
+{#if kickTarget}
+	{@const target = kickTarget}
+	<SystemDialog
+		open={true}
+		title="Kick Player"
+		tone="blood"
+		modal
+		width="460px"
+		onclose={() => {
+			if (!kickPending) kickTarget = null;
+		}}
+	>
+		<p class="closed-text">
+			Remove <strong>{target.username}</strong> from this room and disconnect their active session?
+		</p>
+		{#if target.isOwner}
+			<p class="owner-warning">You will become the new owner of this room.</p>
+		{/if}
+		{#if kickError}
+			<p class="kick-error" role="alert">{kickError}</p>
+		{/if}
+		{#snippet footer()}
+			<OrnateButton
+				variant="ghost"
+				size="md"
+				disabled={kickPending}
+				onclick={() => (kickTarget = null)}
+			>
+				Cancel
+			</OrnateButton>
+			<OrnateButton
+				variant="danger"
+				size="md"
+				disabled={kickPending}
+				onclick={() => kickMember(target)}
+			>
+				{kickPending ? 'Kicking…' : 'Kick Player'}
+			</OrnateButton>
 		{/snippet}
 	</SystemDialog>
 {/if}
@@ -420,6 +559,35 @@
 		font-size: 0.65rem;
 		color: var(--bone-dim);
 		letter-spacing: 0.04em;
+	}
+
+	.kick-button {
+		appearance: none;
+		width: 24px;
+		height: 24px;
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		padding: 0;
+		border: 1px solid var(--stone-6);
+		background: rgba(80, 12, 12, 0.3);
+		color: var(--blood-bright);
+		font-family: var(--font-mono);
+		font-size: 0.72rem;
+		cursor: pointer;
+		opacity: 0.72;
+		transition:
+			opacity 140ms ease,
+			border-color 140ms ease,
+			background 140ms ease;
+	}
+
+	.kick-button:hover,
+	.kick-button:focus-visible {
+		opacity: 1;
+		border-color: var(--blood-bright);
+		background: rgba(120, 18, 18, 0.45);
+		outline: none;
 	}
 
 	/* --- Main column --- */
@@ -677,6 +845,21 @@
 		background: rgba(227, 188, 116, 0.22);
 	}
 
+	.msg.system {
+		border-left: 2px solid var(--blood-bright);
+		background: rgba(120, 18, 18, 0.12);
+		text-align: center;
+	}
+
+	.msg.system .msg-meta {
+		justify-content: center;
+		width: 100%;
+	}
+
+	.msg.system .sender {
+		color: var(--blood-bright);
+	}
+
 	.msg-meta {
 		display: inline-flex;
 		flex-wrap: wrap;
@@ -788,5 +971,26 @@
 		font-size: 0.82rem;
 		color: var(--bone-muted);
 		letter-spacing: 0.03em;
+	}
+
+	.owner-warning,
+	.kick-error {
+		margin: 0.8rem 0 0;
+		padding: 0.65rem 0.75rem;
+		font-family: var(--font-mono);
+		font-size: 0.78rem;
+		line-height: 1.45;
+	}
+
+	.owner-warning {
+		border-left: 2px solid var(--gold-base);
+		background: var(--gold-faint);
+		color: var(--gold-lit);
+	}
+
+	.kick-error {
+		border-left: 2px solid var(--blood-bright);
+		background: rgba(120, 18, 18, 0.14);
+		color: #ffd9d9;
 	}
 </style>

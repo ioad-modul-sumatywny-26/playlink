@@ -10,11 +10,13 @@ export interface ChatMessage {
 	sender_username: string;
 	content: string;
 	created_at: string;
+	kind?: 'user' | 'system';
 }
 
 export interface RoomMember {
 	address: string;
 	username: string;
+	is_admin: boolean;
 }
 
 export type RsvpStatus = 'present' | 'absent' | 'maybe';
@@ -67,13 +69,22 @@ interface RoomClosedFrame {
 	room: string;
 }
 
+interface MemberKickedFrame {
+	type: 'member_kicked';
+	member_address: string;
+	member_username: string;
+	created_by: string;
+	ownership_transferred: boolean;
+}
+
 type ChatFrame =
 	| HistoryFrame
 	| MessageFrame
 	| EventUpdateFrame
 	| RsvpUpdateFrame
 	| RosterUpdateFrame
-	| RoomClosedFrame;
+	| RoomClosedFrame
+	| MemberKickedFrame;
 
 // ---------- Frame validation ----------
 
@@ -85,14 +96,19 @@ function isChatMessage(value: unknown): value is ChatMessage {
 		typeof m.sender_address === 'string' &&
 		typeof m.sender_username === 'string' &&
 		typeof m.content === 'string' &&
-		typeof m.created_at === 'string'
+		typeof m.created_at === 'string' &&
+		(m.kind === undefined || m.kind === 'user' || m.kind === 'system')
 	);
 }
 
 function isRoomMember(value: unknown): value is RoomMember {
 	if (typeof value !== 'object' || value === null) return false;
 	const m = value as Record<string, unknown>;
-	return typeof m.address === 'string' && typeof m.username === 'string';
+	return (
+		typeof m.address === 'string' &&
+		typeof m.username === 'string' &&
+		typeof m.is_admin === 'boolean'
+	);
 }
 
 function isRsvpStatus(value: unknown): value is RsvpStatus {
@@ -154,6 +170,15 @@ function parseFrame(raw: string): ChatFrame | null {
 	if (f.type === 'room_closed' && typeof f.room === 'string') {
 		return { type: 'room_closed', room: f.room };
 	}
+	if (
+		f.type === 'member_kicked' &&
+		typeof f.member_address === 'string' &&
+		typeof f.member_username === 'string' &&
+		typeof f.created_by === 'string' &&
+		typeof f.ownership_transferred === 'boolean'
+	) {
+		return f as unknown as MemberKickedFrame;
+	}
 	return null;
 }
 
@@ -168,6 +193,10 @@ export interface ChatStore {
 	members: Readable<RoomMember[]>;
 	/** Becomes `true` when an admin closes the room (`room_closed` frame). */
 	closed: Readable<boolean>;
+	/** Current room owner, updated after creator kicks. */
+	owner: Readable<string>;
+	/** Becomes `true` when this client is removed from the room. */
+	kicked: Readable<boolean>;
 	send(content: string): void;
 	destroy(): void;
 }
@@ -177,6 +206,10 @@ export interface CreateChatStoreOptions {
 	initialEvent?: RoomEventState | null;
 	/** Initial member roster from SSR, used until the first WS update. */
 	initialMembers?: RoomMember[];
+	/** Initial room owner from SSR. */
+	initialOwner?: string;
+	/** Address represented by this browser session. */
+	currentAddress?: string;
 }
 
 export function createChatStore(
@@ -188,6 +221,8 @@ export function createChatStore(
 	const event = writable<RoomEventState | null>(options.initialEvent ?? null);
 	const members = writable<RoomMember[]>(options.initialMembers ?? []);
 	const closed = writable<boolean>(false);
+	const owner = writable<string>(options.initialOwner ?? '');
+	const kicked = writable<boolean>(false);
 
 	let ws: WebSocket | null = null;
 	let reconnectTimeout: ReturnType<typeof setTimeout> | null = null;
@@ -251,10 +286,27 @@ export function createChatStore(
 					if (reconnectTimeout) clearTimeout(reconnectTimeout);
 					ws?.close();
 					break;
+				case 'member_kicked':
+					owner.set(frame.created_by);
+					if (
+						options.currentAddress &&
+						frame.member_address.toLowerCase() === options.currentAddress.toLowerCase()
+					) {
+						kicked.set(true);
+						isTornDown = true;
+						if (reconnectTimeout) clearTimeout(reconnectTimeout);
+					}
+					break;
 			}
 		};
 
-		ws.onclose = () => {
+		ws.onclose = (event) => {
+			if (event.code === 4409) {
+				kicked.set(true);
+				isTornDown = true;
+				if (reconnectTimeout) clearTimeout(reconnectTimeout);
+				return;
+			}
 			scheduleReconnect();
 		};
 
@@ -281,6 +333,8 @@ export function createChatStore(
 		event: { subscribe: event.subscribe },
 		members: { subscribe: members.subscribe },
 		closed: { subscribe: closed.subscribe },
+		owner: { subscribe: owner.subscribe },
+		kicked: { subscribe: kicked.subscribe },
 		send(content: string) {
 			const trimmed = content.trim();
 			if (!trimmed || !ws || ws.readyState !== WebSocket.OPEN) return;
