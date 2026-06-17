@@ -1143,6 +1143,7 @@ async def cancel_room_event(
 
 
 @app.put("/rooms/{room_name}/event/rsvp", status_code=200)
+@limiter.limit(DEFAULT_RATE_LIMIT)
 async def set_room_event_rsvp(
     request: Request,  # noqa: ARG001
     room_name: str,

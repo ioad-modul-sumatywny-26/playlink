@@ -528,59 +528,59 @@ def test_expired_room_is_pruned_with_event_and_rsvps(
 # ---------- realtime broadcast over the chat WebSocket ----------
 
 
-# def test_schedule_event_broadcasts_event_update(client: TestClient, session: Session):
-#     _seed_room(session, "lobby-1", ["0xCreator", "0xMember"])
-#     creator_t = _mint_token("0xCreator")
-#     member_t = _mint_token("0xMember")
+def test_schedule_event_broadcasts_event_update(client: TestClient, session: Session):
+    _seed_room(session, "lobby-1", ["0xCreator", "0xMember"])
+    creator_t = _mint_token("0xCreator")
+    member_t = _mint_token("0xMember")
 
-#     with (
-#         client.websocket_connect(f"/ws/rooms/lobby-1/chat?token={creator_t}") as ws_a,
-#         client.websocket_connect(f"/ws/rooms/lobby-1/chat?token={member_t}") as ws_b,
-#     ):
-#         ws_a.receive_json()  # history
-#         ws_b.receive_json()
+    with (
+        client.websocket_connect(f"/ws/rooms/lobby-1/chat?token={creator_t}") as ws_a,
+        client.websocket_connect(f"/ws/rooms/lobby-1/chat?token={member_t}") as ws_b,
+    ):
+        ws_a.receive_json()  # history
+        ws_b.receive_json()
 
-#         client.put(
-#             "/rooms/lobby-1/event",
-#             json=_event_body(30),
-#             headers=_auth_headers("0xCreator"),
-#         )
+        client.put(
+            "/rooms/lobby-1/event",
+            json=_event_body(30),
+            headers=_auth_headers("0xCreator"),
+        )
 
-#         for ws in (ws_a, ws_b):
-#             frame = ws.receive_json()
-#             assert frame["type"] == "event_update"
-#             assert frame["event"]["created_by"] == "0xCreator"
-#             assert frame["event"]["rsvps"] == []
+        for ws in (ws_a, ws_b):
+            frame = ws.receive_json()
+            assert frame["type"] == "event_update"
+            assert frame["event"]["created_by"] == "0xCreator"
+            assert frame["event"]["rsvps"] == []
 
 
-# def test_rsvp_update_broadcast(client: TestClient, session: Session):
-#     _seed_room(session, "lobby-1", ["0xCreator", "0xMember"])
-#     client.put(
-#         "/rooms/lobby-1/event",
-#         json=_event_body(30),
-#         headers=_auth_headers("0xCreator"),
-#     )
-#     creator_t = _mint_token("0xCreator")
-#     member_t = _mint_token("0xMember")
+def test_rsvp_update_broadcast(client: TestClient, session: Session):
+    _seed_room(session, "lobby-1", ["0xCreator", "0xMember"])
+    client.put(
+        "/rooms/lobby-1/event",
+        json=_event_body(30),
+        headers=_auth_headers("0xCreator"),
+    )
+    creator_t = _mint_token("0xCreator")
+    member_t = _mint_token("0xMember")
 
-#     with (
-#         client.websocket_connect(f"/ws/rooms/lobby-1/chat?token={creator_t}") as ws_a,
-#         client.websocket_connect(f"/ws/rooms/lobby-1/chat?token={member_t}") as ws_b,
-#     ):
-#         ws_a.receive_json()
-#         ws_b.receive_json()
+    with (
+        client.websocket_connect(f"/ws/rooms/lobby-1/chat?token={creator_t}") as ws_a,
+        client.websocket_connect(f"/ws/rooms/lobby-1/chat?token={member_t}") as ws_b,
+    ):
+        ws_a.receive_json()
+        ws_b.receive_json()
 
-#         client.put(
-#             "/rooms/lobby-1/event/rsvp",
-#             json={"status": "maybe"},
-#             headers=_auth_headers("0xMember"),
-#         )
+        client.put(
+            "/rooms/lobby-1/event/rsvp",
+            json={"status": "maybe"},
+            headers=_auth_headers("0xMember"),
+        )
 
-#         for ws in (ws_a, ws_b):
-#             frame = ws.receive_json()
-#             assert frame["type"] == "rsvp_update"
-#             assert frame["rsvp"]["address"] == "0xMember"
-#             assert frame["rsvp"]["status"] == "maybe"
+        for ws in (ws_a, ws_b):
+            frame = ws.receive_json()
+            assert frame["type"] == "rsvp_update"
+            assert frame["rsvp"]["address"] == "0xMember"
+            assert frame["rsvp"]["status"] == "maybe"
 
 
 def test_join_broadcasts_roster_update(client: TestClient, session: Session):
@@ -621,59 +621,59 @@ def test_leave_broadcasts_roster_update(client: TestClient, session: Session):
         assert addrs == ["0xCreator"]
 
 
-# def test_leave_with_rsvp_broadcasts_event_update(client: TestClient, session: Session):
-#     _seed_room(session, "lobby-1", ["0xCreator", "0xMember"])
-#     client.put(
-#         "/rooms/lobby-1/event",
-#         json=_event_body(30),
-#         headers=_auth_headers("0xCreator"),
-#     )
-#     client.put(
-#         "/rooms/lobby-1/event/rsvp",
-#         json={"status": "present"},
-#         headers=_auth_headers("0xMember"),
-#     )
+def test_leave_with_rsvp_broadcasts_event_update(client: TestClient, session: Session):
+    _seed_room(session, "lobby-1", ["0xCreator", "0xMember"])
+    client.put(
+        "/rooms/lobby-1/event",
+        json=_event_body(30),
+        headers=_auth_headers("0xCreator"),
+    )
+    client.put(
+        "/rooms/lobby-1/event/rsvp",
+        json={"status": "present"},
+        headers=_auth_headers("0xMember"),
+    )
 
-#     creator_t = _mint_token("0xCreator")
-#     with client.websocket_connect(f"/ws/rooms/lobby-1/chat?token={creator_t}") as ws_a:
-#         ws_a.receive_json()  # history
+    creator_t = _mint_token("0xCreator")
+    with client.websocket_connect(f"/ws/rooms/lobby-1/chat?token={creator_t}") as ws_a:
+        ws_a.receive_json()  # history
 
-#         client.post("/rooms/lobby-1/leave", headers=_auth_headers("0xMember"))
+        client.post("/rooms/lobby-1/leave", headers=_auth_headers("0xMember"))
 
-#         # leave broadcasts roster_update first, then event_update because the
-#         # member had an RSVP that needs clearing.
-#         roster_frame = ws_a.receive_json()
-#         assert roster_frame["type"] == "roster_update"
-#         assert [m["address"] for m in roster_frame["members"]] == ["0xCreator"]
+        # leave broadcasts roster_update first, then event_update because the
+        # member had an RSVP that needs clearing.
+        roster_frame = ws_a.receive_json()
+        assert roster_frame["type"] == "roster_update"
+        assert [m["address"] for m in roster_frame["members"]] == ["0xCreator"]
 
-#         event_frame = ws_a.receive_json()
-#         assert event_frame["type"] == "event_update"
-#         assert event_frame["event"]["rsvps"] == []
+        event_frame = ws_a.receive_json()
+        assert event_frame["type"] == "event_update"
+        assert event_frame["event"]["rsvps"] == []
 
 
-# def test_cancel_event_broadcasts_null_event(client: TestClient, session: Session):
-#     _seed_room(session, "lobby-1", ["0xCreator", "0xMember"])
-#     client.put(
-#         "/rooms/lobby-1/event",
-#         json=_event_body(30),
-#         headers=_auth_headers("0xCreator"),
-#     )
+def test_cancel_event_broadcasts_null_event(client: TestClient, session: Session):
+    _seed_room(session, "lobby-1", ["0xCreator", "0xMember"])
+    client.put(
+        "/rooms/lobby-1/event",
+        json=_event_body(30),
+        headers=_auth_headers("0xCreator"),
+    )
 
-#     creator_t = _mint_token("0xCreator")
-#     member_t = _mint_token("0xMember")
-#     with (
-#         client.websocket_connect(f"/ws/rooms/lobby-1/chat?token={creator_t}") as ws_a,
-#         client.websocket_connect(f"/ws/rooms/lobby-1/chat?token={member_t}") as ws_b,
-#     ):
-#         ws_a.receive_json()
-#         ws_b.receive_json()
+    creator_t = _mint_token("0xCreator")
+    member_t = _mint_token("0xMember")
+    with (
+        client.websocket_connect(f"/ws/rooms/lobby-1/chat?token={creator_t}") as ws_a,
+        client.websocket_connect(f"/ws/rooms/lobby-1/chat?token={member_t}") as ws_b,
+    ):
+        ws_a.receive_json()
+        ws_b.receive_json()
 
-#         client.delete("/rooms/lobby-1/event", headers=_auth_headers("0xCreator"))
+        client.delete("/rooms/lobby-1/event", headers=_auth_headers("0xCreator"))
 
-#         for ws in (ws_a, ws_b):
-#             frame = ws.receive_json()
-#             assert frame["type"] == "event_update"
-#             assert frame["event"] is None
+        for ws in (ws_a, ws_b):
+            frame = ws.receive_json()
+            assert frame["type"] == "event_update"
+            assert frame["event"] is None
 
 
 # ---------- regression: chat frames stay parseable ----------
@@ -753,34 +753,34 @@ def test_event_payload_shape(client: TestClient, session: Session):
         }
 
 
-# # Sanity check: ensure JSON serialization works the same as REST when payload
-# # is built off the same helper. This protects against silent drift.
-# def test_rest_and_ws_event_payloads_match(client: TestClient, session: Session):
-#     _seed_room(session, "lobby-1", ["0xCreator", "0xMember"])
-#     client.put(
-#         "/rooms/lobby-1/event",
-#         json=_event_body(30),
-#         headers=_auth_headers("0xCreator"),
-#     )
+# Sanity check: ensure JSON serialization works the same as REST when payload
+# is built off the same helper. This protects against silent drift.
+def test_rest_and_ws_event_payloads_match(client: TestClient, session: Session):
+    _seed_room(session, "lobby-1", ["0xCreator", "0xMember"])
+    client.put(
+        "/rooms/lobby-1/event",
+        json=_event_body(30),
+        headers=_auth_headers("0xCreator"),
+    )
 
-#     token = _mint_token("0xCreator")
-#     with client.websocket_connect(f"/ws/rooms/lobby-1/chat?token={token}") as ws:
-#         ws.receive_json()  # history
-#         client.put(
-#             "/rooms/lobby-1/event/rsvp",
-#             json={"status": "present"},
-#             headers=_auth_headers("0xCreator"),
-#         )
-#         ws.receive_json()  # the rsvp_update frame, drop it
-#         client.put(
-#             "/rooms/lobby-1/event",
-#             json=_event_body(45),
-#             headers=_auth_headers("0xCreator"),
-#         )
-#         ws_frame = ws.receive_json()
+    token = _mint_token("0xCreator")
+    with client.websocket_connect(f"/ws/rooms/lobby-1/chat?token={token}") as ws:
+        ws.receive_json()  # history
+        client.put(
+            "/rooms/lobby-1/event/rsvp",
+            json={"status": "present"},
+            headers=_auth_headers("0xCreator"),
+        )
+        ws.receive_json()  # the rsvp_update frame, drop it
+        client.put(
+            "/rooms/lobby-1/event",
+            json=_event_body(45),
+            headers=_auth_headers("0xCreator"),
+        )
+        ws_frame = ws.receive_json()
 
-#     rest_payload = client.get("/rooms/lobby-1/event").json()
-#     # WS frame's `event` should match REST byte-for-byte (same helper).
-#     assert json.dumps(ws_frame["event"], sort_keys=True) == json.dumps(
-#         rest_payload, sort_keys=True
-#     )
+    rest_payload = client.get("/rooms/lobby-1/event").json()
+    # WS frame's `event` should match REST byte-for-byte (same helper).
+    assert json.dumps(ws_frame["event"], sort_keys=True) == json.dumps(
+        rest_payload, sort_keys=True
+    )
