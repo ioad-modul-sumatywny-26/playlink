@@ -1374,7 +1374,7 @@ def _verify_chat_signature(
     payload and ``sent_at`` is within the allowed clock skew."""
     try:
         signed_at = datetime.fromisoformat(sent_at)
-    except (ValueError, TypeError):
+    except ValueError, TypeError:
         return False
     if signed_at.tzinfo is None:
         signed_at = signed_at.replace(tzinfo=UTC)
