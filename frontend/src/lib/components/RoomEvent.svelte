@@ -295,7 +295,7 @@
 	const errorToShow = $derived(localError ?? formError ?? null);
 </script>
 
-<section class="event-panel" class:is-collapsed={isCollapsed}>
+<section class="event-panel scroll-d2" class:is-collapsed={isCollapsed}>
 	<SectionTitle title="Scheduled Event" size="small" tone="gold">
 		<div class="trail-inner">
 			{#if event}
@@ -490,7 +490,7 @@
 			inset 0 0 30px rgba(0, 0, 0, 0.25);
 		/* Cap the whole event area so a full lobby's RSVP list scrolls here
 		   instead of growing the panel and squeezing the chat out of view. */
-		max-height: clamp(180px, 32vh, 320px);
+		max-height: clamp(160px, 26vh, 260px);
 		overflow-y: auto;
 	}
 
