@@ -88,6 +88,9 @@ def test_msg_dict_keeps_public_chat_payload_shape():
         "sender_username": "alice",
         "content": "hello",
         "created_at": "2026-01-02T03:04:05+00:00",
+        "signature": None,
+        "sent_at": None,
+        "verified": False,
     }
 
 

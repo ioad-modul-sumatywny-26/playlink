@@ -38,6 +38,11 @@ class Message(SQLModel, table=True):
     sender_address: str = Field(index=True)
     content: str
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC), index=True)
+    # Issue #59: EIP-191 signature over the canonical payload and the exact
+    # client-supplied ISO-8601 timestamp that was signed. Both NULL for legacy
+    # (pre-signing) messages, which stay valid but render as unverified.
+    signature: str | None = Field(default=None)
+    sent_at: str | None = Field(default=None)
 
 
 class RsvpStatus(StrEnum):

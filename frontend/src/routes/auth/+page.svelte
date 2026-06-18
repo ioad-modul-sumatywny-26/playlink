@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { generateMnemonic, authenticate } from '$lib/auth';
+	import { clearSigningKey } from '$lib/signingKey';
 	import MnemonicInput from '$lib/components/MnemonicInput.svelte';
 	import { enhance, deserialize } from '$app/forms';
 	import { invalidateAll } from '$app/navigation';
@@ -148,6 +149,7 @@
 						action="?/logout"
 						class="logout-form"
 						use:enhance={() => {
+							clearSigningKey();
 							return async ({ update }) => {
 								await update();
 								await invalidateAll();

@@ -1,5 +1,6 @@
 import { ethers, Mnemonic, HDNodeWallet } from 'ethers';
 import { env } from '$env/dynamic/public';
+import { saveSigningKey } from '$lib/signingKey';
 
 /**
  * Derives a cryptographic identity (private/public key pair) from a 12-word mnemonic.
@@ -39,6 +40,10 @@ export async function authenticate(mnemonicPhrase: string) {
 
 	const identity = getIdentityFromMnemonic(mnemonicPhrase);
 	const publicAddress = identity.address;
+
+	// Issue #59: keep the key for this tab session so chat messages can be
+	// signed without re-entering the phrase. Cleared on logout / tab close.
+	saveSigningKey(identity.privateKey);
 
 	// Phase 1: Request Challenge
 	// Note: We'll keep using searchParams as established in the backend previously,
