@@ -1,8 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import {
-	isNullableString,
-	isRoomSummary
-} from '$lib/roomsStore';
+import { isNullableString, isRoomSummary } from '$lib/roomsStore';
 
 vi.mock('$env/dynamic/public', () => ({
 	env: {
@@ -29,7 +26,6 @@ describe('isNullableString', () => {
 	});
 });
 
-
 describe('isRoomSummary', () => {
 	const validRoom = {
 		name: 'Lobby 1',
@@ -48,7 +44,6 @@ describe('isRoomSummary', () => {
 		expect(isRoomSummary(validRoom)).toBe(true);
 	});
 
-
 	it('rejects missing fields', () => {
 		const invalid = {
 			...validRoom,
@@ -58,7 +53,6 @@ describe('isRoomSummary', () => {
 		expect(isRoomSummary(invalid)).toBe(false);
 	});
 
-
 	it('rejects wrong types', () => {
 		const invalid = {
 			...validRoom,
@@ -67,7 +61,6 @@ describe('isRoomSummary', () => {
 
 		expect(isRoomSummary(invalid)).toBe(false);
 	});
-
 
 	it('allows nullable fields', () => {
 		expect(
@@ -79,7 +72,6 @@ describe('isRoomSummary', () => {
 			})
 		).toBe(true);
 	});
-
 
 	it('rejects invalid nullable fields', () => {
 		expect(

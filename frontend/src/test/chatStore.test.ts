@@ -39,7 +39,6 @@ describe('chat validation', () => {
 		).toBe(false);
 	});
 
-
 	it('accepts valid room members', () => {
 		expect(
 			isRoomMember({
@@ -49,7 +48,6 @@ describe('chat validation', () => {
 			})
 		).toBe(true);
 	});
-
 
 	it('rejects invalid room members', () => {
 		expect(
@@ -61,14 +59,12 @@ describe('chat validation', () => {
 		).toBe(false);
 	});
 
-
 	it('validates RSVP status', () => {
 		expect(isRsvpStatus('present')).toBe(true);
 		expect(isRsvpStatus('absent')).toBe(true);
 		expect(isRsvpStatus('maybe')).toBe(true);
 		expect(isRsvpStatus('nope')).toBe(false);
 	});
-
 
 	it('accepts valid RSVP entries', () => {
 		expect(
@@ -80,7 +76,6 @@ describe('chat validation', () => {
 			})
 		).toBe(true);
 	});
-
 
 	it('accepts valid event state', () => {
 		expect(
@@ -102,7 +97,6 @@ describe('chat validation', () => {
 		).toBe(true);
 	});
 });
-
 
 describe('parseFrame', () => {
 	it('parses a message frame', () => {
@@ -127,17 +121,17 @@ describe('parseFrame', () => {
 		});
 	});
 
-
 	it('returns null for bad JSON', () => {
 		expect(parseFrame('not json')).toBe(null);
 	});
 
-
 	it('returns null for unknown frames', () => {
 		expect(
-			parseFrame(JSON.stringify({
-				type: 'banana'
-			}))
+			parseFrame(
+				JSON.stringify({
+					type: 'banana'
+				})
+			)
 		).toBe(null);
 	});
 });

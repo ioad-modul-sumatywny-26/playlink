@@ -9,7 +9,6 @@ import {
 	nearestLobbyLocation
 } from '$lib/lobbyLocations';
 
-
 describe('isLobbyLocation', () => {
 	it('accepts valid locations', () => {
 		expect(
@@ -22,7 +21,6 @@ describe('isLobbyLocation', () => {
 		).toBe(true);
 	});
 
-
 	it('rejects invalid locations', () => {
 		expect(
 			isLobbyLocation({
@@ -34,31 +32,22 @@ describe('isLobbyLocation', () => {
 		).toBe(false);
 	});
 
-
 	it('rejects null', () => {
 		expect(isLobbyLocation(null)).toBe(false);
 	});
 });
 
-
 describe('lobbyLocationLabel', () => {
 	it('returns matching label', () => {
-		const label = lobbyLocationLabel(
-			FALLBACK_LOBBY_LOCATIONS,
-			'eu-central'
-		);
+		const label = lobbyLocationLabel(FALLBACK_LOBBY_LOCATIONS, 'eu-central');
 
 		expect(label).toBe('Europe Central');
 	});
 
-
 	it('returns code when location is missing', () => {
-		expect(
-			lobbyLocationLabel([], 'unknown')
-		).toBe('unknown');
+		expect(lobbyLocationLabel([], 'unknown')).toBe('unknown');
 	});
 });
-
 
 describe('distanceKm', () => {
 	it('returns zero for same coordinates', () => {
@@ -75,7 +64,6 @@ describe('distanceKm', () => {
 
 		expect(distance).toBeCloseTo(0);
 	});
-
 
 	it('calculates distance between locations', () => {
 		const distance = distanceKm(
@@ -95,20 +83,15 @@ describe('distanceKm', () => {
 	});
 });
 
-
 describe('nearestLobbyLocation', () => {
 	it('finds nearest location', () => {
-		const nearest = nearestLobbyLocation(
-			FALLBACK_LOBBY_LOCATIONS,
-			{
-				lat: 51.5,
-				lon: -0.1
-			}
-		);
+		const nearest = nearestLobbyLocation(FALLBACK_LOBBY_LOCATIONS, {
+			lat: 51.5,
+			lon: -0.1
+		});
 
 		expect(nearest?.code).toBe('eu-west');
 	});
-
 
 	it('returns null for empty list', () => {
 		expect(
@@ -119,11 +102,8 @@ describe('nearestLobbyLocation', () => {
 		).toBe(null);
 	});
 
-
 	it('has a valid fallback location', () => {
-		const fallback = FALLBACK_LOBBY_LOCATIONS.find(
-			(x) => x.code === FALLBACK_LOBBY_LOCATION
-		);
+		const fallback = FALLBACK_LOBBY_LOCATIONS.find((x) => x.code === FALLBACK_LOBBY_LOCATION);
 
 		expect(fallback).toBeDefined();
 	});

@@ -4,13 +4,11 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { load, actions } from '../routes/auth/+page.server';
 
-
 vi.mock('jwt-decode', () => ({
 	jwtDecode: vi.fn()
 }));
 
 import { jwtDecode } from 'jwt-decode';
-
 
 function mockCookies() {
 	return {
@@ -19,7 +17,6 @@ function mockCookies() {
 		delete: vi.fn()
 	};
 }
-
 
 describe('auth page server load', () => {
 	it('returns no user when no session exists', async () => {
@@ -35,7 +32,6 @@ describe('auth page server load', () => {
 			user: null
 		});
 	});
-
 
 	it('returns user from valid token', async () => {
 		const cookies = mockCookies();
@@ -59,7 +55,6 @@ describe('auth page server load', () => {
 		});
 	});
 
-
 	it('clears invalid token', async () => {
 		const cookies = mockCookies();
 
@@ -71,8 +66,7 @@ describe('auth page server load', () => {
 			cookies
 		} as any);
 
-		expect(cookies.delete)
-			.toHaveBeenCalledWith('session', { path: '/' });
+		expect(cookies.delete).toHaveBeenCalledWith('session', { path: '/' });
 
 		expect(result).toEqual({
 			user: null
@@ -80,9 +74,7 @@ describe('auth page server load', () => {
 	});
 });
 
-
 describe('login action', () => {
-
 	it('rejects missing token', async () => {
 		const cookies = mockCookies();
 
@@ -101,7 +93,6 @@ describe('login action', () => {
 		});
 	});
 
-
 	it('stores token', async () => {
 		const cookies = mockCookies();
 
@@ -117,17 +108,13 @@ describe('login action', () => {
 			cookies
 		} as any);
 
+		expect(cookies.set).toHaveBeenCalled();
 
-		expect(cookies.set)
-			.toHaveBeenCalled();
-
-		expect(result)
-			.toEqual({
-				success: true
-			});
+		expect(result).toEqual({
+			success: true
+		});
 	});
 });
-
 
 describe('logout action', () => {
 	it('deletes session cookie', async () => {
@@ -137,12 +124,10 @@ describe('logout action', () => {
 			cookies
 		} as any);
 
-		expect(cookies.delete)
-			.toHaveBeenCalledWith('session', { path: '/' });
+		expect(cookies.delete).toHaveBeenCalledWith('session', { path: '/' });
 
-		expect(result)
-			.toEqual({
-				success: true
-			});
+		expect(result).toEqual({
+			success: true
+		});
 	});
 });

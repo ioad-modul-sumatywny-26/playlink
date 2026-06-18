@@ -14,13 +14,11 @@ describe('HintsState', () => {
 		expect(state.hints[0].key).toBe('welcome');
 	});
 
-
 	it('starts empty by default', () => {
 		const state = new HintsState();
 
 		expect(state.hints).toEqual([]);
 	});
-
 
 	it('sets hints', () => {
 		const state = new HintsState();
@@ -41,7 +39,6 @@ describe('HintsState', () => {
 			}
 		]);
 	});
-
 
 	it('clears hints', () => {
 		const state = new HintsState([

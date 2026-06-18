@@ -2,7 +2,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { load, actions } from '../routes/rooms/[name]/+page.server';
 
-
 vi.mock('$env/dynamic/public', () => ({
 	env: {
 		PUBLIC_BACKEND_URL: 'http://localhost:8000'
@@ -23,22 +22,17 @@ vi.mock('jwt-decode', () => ({
 	})
 }));
 
-
 function cookies(token = 'token') {
 	return {
 		get: vi.fn(() => token)
 	};
 }
 
-
 describe('room page load', () => {
-
 	it('redirects when room missing', async () => {
-		vi.spyOn(globalThis, 'fetch')
-			.mockResolvedValue({
-				ok: false
-			} as Response);
-
+		vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+			ok: false
+		} as Response);
 
 		await expect(
 			load({
@@ -50,14 +44,10 @@ describe('room page load', () => {
 			location: '/rooms'
 		});
 	});
-
 });
 
-
 describe('room actions', () => {
-
 	it('rejects missing auth', async () => {
-
 		const result = await actions.setRsvp({
 			cookies: cookies(undefined),
 			params: { name: 'room' },
@@ -66,17 +56,12 @@ describe('room actions', () => {
 			}
 		} as any);
 
-
-		expect(result.status)
-			.toBe(400);
+		expect(result.status).toBe(400);
 	});
 
-
 	it('rejects invalid RSVP', async () => {
-
 		const form = new FormData();
 		form.set('status', 'invalid');
-
 
 		const result = await actions.setRsvp({
 			cookies: cookies(),
@@ -86,14 +71,10 @@ describe('room actions', () => {
 			}
 		} as any);
 
-
-		expect(result.status)
-			.toBe(400);
+		expect(result.status).toBe(400);
 	});
 
-
 	it('rejects missing kick member', async () => {
-
 		const result = await actions.kickMember({
 			cookies: cookies(),
 			params: { name: 'room' },
@@ -102,9 +83,6 @@ describe('room actions', () => {
 			}
 		} as any);
 
-
-		expect(result.status)
-			.toBe(400);
+		expect(result.status).toBe(400);
 	});
-
 });
