@@ -17,6 +17,7 @@
 
 	let { event, isCreator, isMember, viewerAddress, members, formError = null }: Props = $props();
 
+	let isCollapsed = $state(false);
 	let editing = $state(false);
 	let draftStartDate = $state<Date | null>(null);
 	let draftEndDate = $state<Date | null>(null);
@@ -294,172 +295,184 @@
 	const errorToShow = $derived(localError ?? formError ?? null);
 </script>
 
-<section class="event-panel">
+<section class="event-panel" class:is-collapsed={isCollapsed}>
 	<SectionTitle title="Scheduled Event" size="small" tone="gold">
-		{#if event}
-			<span class="trail-countdown">{countdown}</span>
-		{/if}
+		<div class="trail-inner">
+			{#if event}
+				<span class="trail-countdown">{countdown}</span>
+			{/if}
+			<button
+				type="button"
+				class="collapse-toggle"
+				onclick={() => (isCollapsed = !isCollapsed)}
+				aria-label={isCollapsed ? 'Expand' : 'Collapse'}
+			>
+				{isCollapsed ? '+' : '−'}
+			</button>
+		</div>
 	</SectionTitle>
 
-	{#if errorToShow}
-		<p class="error-msg">{errorToShow}</p>
-	{/if}
+	{#if !isCollapsed}
+		{#if errorToShow}
+			<p class="error-msg">{errorToShow}</p>
+		{/if}
 
-	{#if !event && !editing}
-		<div class="empty">
-			{#if isCreator}
-				<p class="empty-text">No event scheduled. Pick a moment for the warband.</p>
-				<OrnateButton variant="primary" size="sm" onclick={startEditing}>
-					Schedule Event
-				</OrnateButton>
-			{:else}
-				<p class="empty-text">No event scheduled yet. The room creator can pick a time.</p>
-			{/if}
-		</div>
-	{/if}
-
-	{#if event && !editing}
-		<div class="event-meta">
-			<div class="event-time">
-				<span class="time-value small-caps">{startsAtFormatted}</span>
-				<span class="time-end">→ ends {endsAtFormatted}</span>
-			</div>
-			{#if isCreator}
-				<div class="creator-actions">
-					<OrnateButton variant="secondary" size="sm" onclick={startEditing}>
-						Reschedule
+		{#if !event && !editing}
+			<div class="empty">
+				{#if isCreator}
+					<p class="empty-text">No event scheduled. Pick a moment for the warband.</p>
+					<OrnateButton variant="primary" size="sm" onclick={startEditing}>
+						Schedule Event
 					</OrnateButton>
-					<form method="POST" action="?/cancelEvent" use:enhance class="inline-form">
-						<OrnateButton variant="danger" size="sm" type="submit">Cancel Event</OrnateButton>
-					</form>
-				</div>
-			{/if}
-		</div>
-
-		{#if isMember}
-			<div class="rsvp-controls">
-				<span class="micro-label small-caps">Your RSVP</span>
-				<div class="rsvp-buttons">
-					{#each ['present', 'maybe', 'absent'] as status (status)}
-						<form method="POST" action="?/setRsvp" use:enhance class="rsvp-form">
-							<input type="hidden" name="status" value={status} />
-							<button
-								type="submit"
-								class="rsvp-btn small-caps"
-								class:active={myRsvp?.status === status}
-								data-status={status}
-							>
-								{statusLabel(status as RsvpStatus)}
-							</button>
-						</form>
-					{/each}
-				</div>
+				{:else}
+					<p class="empty-text">No event scheduled yet. The room creator can pick a time.</p>
+				{/if}
 			</div>
 		{/if}
 
-		<div class="roster">
-			<span class="micro-label small-caps">RSVP Roster</span>
-			<div class="rsvp-summary">
-				<span class="summary-pill small-caps" data-status="present">
-					<span class="dot"></span>
-					{rsvpCounts.present} Present
-				</span>
-				<span class="summary-pill small-caps" data-status="maybe">
-					<span class="dot"></span>
-					{rsvpCounts.maybe} Maybe
-				</span>
-				<span class="summary-pill small-caps" data-status="absent">
-					<span class="dot"></span>
-					{rsvpCounts.absent} Absent
-				</span>
-				<span class="summary-pill small-caps" data-status="none">
-					<span class="dot"></span>
-					{rsvpCounts.none} No Response
-				</span>
+		{#if event && !editing}
+			<div class="event-meta">
+				<div class="event-time">
+					<span class="time-value small-caps">{startsAtFormatted}</span>
+					<span class="time-end">→ ends {endsAtFormatted}</span>
+				</div>
+				{#if isCreator}
+					<div class="creator-actions">
+						<OrnateButton variant="secondary" size="sm" onclick={startEditing}>
+							Reschedule
+						</OrnateButton>
+						<form method="POST" action="?/cancelEvent" use:enhance class="inline-form">
+							<OrnateButton variant="danger" size="sm" type="submit">Cancel Event</OrnateButton>
+						</form>
+					</div>
+				{/if}
 			</div>
-			{#if rosterEntries.length === 0}
-				<p class="empty-text">No members yet.</p>
-			{:else}
-				<ul class="roster-list">
-					{#each rosterEntries as entry (entry.address)}
-						<li class="roster-row" data-status={entry.status ?? 'none'}>
-							<span class="roster-name small-caps">{entry.username}</span>
-							<span class="roster-status small-caps">{statusLabel(entry.status)}</span>
-						</li>
-					{/each}
-				</ul>
+
+			{#if isMember}
+				<div class="rsvp-controls">
+					<span class="micro-label small-caps">Your RSVP</span>
+					<div class="rsvp-buttons">
+						{#each ['present', 'maybe', 'absent'] as status (status)}
+							<form method="POST" action="?/setRsvp" use:enhance class="rsvp-form">
+								<input type="hidden" name="status" value={status} />
+								<button
+									type="submit"
+									class="rsvp-btn small-caps"
+									class:active={myRsvp?.status === status}
+									data-status={status}
+								>
+									{statusLabel(status as RsvpStatus)}
+								</button>
+							</form>
+						{/each}
+					</div>
+				</div>
 			{/if}
-		</div>
-	{/if}
 
-	{#if editing}
-		<form
-			method="POST"
-			action="?/scheduleEvent"
-			class="schedule-form"
-			onsubmit={onSubmit}
-			use:enhance={() => {
-				return async ({ update, result }) => {
-					await update();
-					if (result.type === 'success') {
-						editing = false;
-					}
-				};
-			}}
-		>
-			<input type="hidden" name="starts_at" value={startsAtIso ?? ''} />
-			<input type="hidden" name="ends_at" value={endsAtIso ?? ''} />
-
-			<div class="schedule-grid">
-				<div class="field group-label start-label">
-					<span class="micro-label small-caps">Start</span>
-				</div>
-				<div class="field date-field start-date">
-					<D2DatePicker
-						value={draftStartDate}
-						onChange={onStartDateChange}
-						min={todayStart}
-						placeholder="Pick a date"
-						ariaLabel="Start date"
-					/>
-				</div>
-				<div class="field time-field start-time">
-					<D2TimePicker
-						value={draftStartTime}
-						onChange={onStartTimeChange}
-						ariaLabel="Start time"
-					/>
-				</div>
-
-				<div class="field group-label end-label">
-					<span class="micro-label small-caps">
-						End
-						{#if durationLabel}
-							<span class="duration-badge">{durationLabel}</span>
-						{:else if crossesMidnight}
-							<span class="duration-badge">overnight</span>
-						{/if}
+			<div class="roster">
+				<span class="micro-label small-caps">RSVP Roster</span>
+				<div class="rsvp-summary">
+					<span class="summary-pill small-caps" data-status="present">
+						<span class="dot"></span>
+						{rsvpCounts.present} Present
+					</span>
+					<span class="summary-pill small-caps" data-status="maybe">
+						<span class="dot"></span>
+						{rsvpCounts.maybe} Maybe
+					</span>
+					<span class="summary-pill small-caps" data-status="absent">
+						<span class="dot"></span>
+						{rsvpCounts.absent} Absent
+					</span>
+					<span class="summary-pill small-caps" data-status="none">
+						<span class="dot"></span>
+						{rsvpCounts.none} No Response
 					</span>
 				</div>
-				<div class="field date-field end-date">
-					<D2DatePicker
-						value={draftEndDate}
-						onChange={onEndDateChange}
-						min={endMinDate}
-						placeholder="Pick a date"
-						ariaLabel="End date"
-					/>
-				</div>
-				<div class="field time-field end-time">
-					<D2TimePicker value={draftEndTime} onChange={onEndTimeChange} ariaLabel="End time" />
-				</div>
+				{#if rosterEntries.length === 0}
+					<p class="empty-text">No members yet.</p>
+				{:else}
+					<ul class="roster-list">
+						{#each rosterEntries as entry (entry.address)}
+							<li class="roster-row" data-status={entry.status ?? 'none'}>
+								<span class="roster-name small-caps">{entry.username}</span>
+								<span class="roster-status small-caps">{statusLabel(entry.status)}</span>
+							</li>
+						{/each}
+					</ul>
+				{/if}
 			</div>
+		{/if}
 
-			<div class="schedule-actions">
-				<OrnateButton variant="primary" size="sm" type="submit">Save</OrnateButton>
-				<OrnateButton variant="ghost" size="sm" onclick={cancelEditing}>Cancel</OrnateButton>
-			</div>
-		</form>
+		{#if editing}
+			<form
+				method="POST"
+				action="?/scheduleEvent"
+				class="schedule-form"
+				onsubmit={onSubmit}
+				use:enhance={() => {
+					return async ({ update, result }) => {
+						await update();
+						if (result.type === 'success') {
+							editing = false;
+						}
+					};
+				}}
+			>
+				<input type="hidden" name="starts_at" value={startsAtIso ?? ''} />
+				<input type="hidden" name="ends_at" value={endsAtIso ?? ''} />
+
+				<div class="schedule-grid">
+					<div class="field group-label start-label">
+						<span class="micro-label small-caps">Start</span>
+					</div>
+					<div class="field date-field start-date">
+						<D2DatePicker
+							value={draftStartDate}
+							onChange={onStartDateChange}
+							min={todayStart}
+							placeholder="Pick a date"
+							ariaLabel="Start date"
+						/>
+					</div>
+					<div class="field time-field start-time">
+						<D2TimePicker
+							value={draftStartTime}
+							onChange={onStartTimeChange}
+							ariaLabel="Start time"
+						/>
+					</div>
+
+					<div class="field group-label end-label">
+						<span class="micro-label small-caps">
+							End
+							{#if durationLabel}
+								<span class="duration-badge">{durationLabel}</span>
+							{:else if crossesMidnight}
+								<span class="duration-badge">overnight</span>
+							{/if}
+						</span>
+					</div>
+					<div class="field date-field end-date">
+						<D2DatePicker
+							value={draftEndDate}
+							onChange={onEndDateChange}
+							min={endMinDate}
+							placeholder="Pick a date"
+							ariaLabel="End date"
+						/>
+					</div>
+					<div class="field time-field end-time">
+						<D2TimePicker value={draftEndTime} onChange={onEndTimeChange} ariaLabel="End time" />
+					</div>
+				</div>
+
+				<div class="schedule-actions">
+					<OrnateButton variant="primary" size="sm" type="submit">Save</OrnateButton>
+					<OrnateButton variant="ghost" size="sm" onclick={cancelEditing}>Cancel</OrnateButton>
+				</div>
+			</form>
+		{/if}
 	{/if}
 </section>
 
@@ -479,6 +492,48 @@
 		   instead of growing the panel and squeezing the chat out of view. */
 		max-height: clamp(180px, 32vh, 320px);
 		overflow-y: auto;
+	}
+
+	.event-panel.is-collapsed {
+		max-height: none;
+		padding-bottom: 0.6rem;
+		gap: 0;
+	}
+
+	.event-panel.is-collapsed :global(.section-title) {
+		margin-bottom: 0;
+	}
+
+	.trail-inner {
+		display: flex;
+		align-items: center;
+		gap: 0.6rem;
+	}
+
+	.collapse-toggle {
+		appearance: none;
+		width: 20px;
+		height: 20px;
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		padding: 0;
+		border: 1px solid var(--stone-6);
+		background: rgba(0, 0, 0, 0.3);
+		color: var(--gold-base);
+		font-family: var(--font-mono);
+		font-size: 0.9rem;
+		cursor: pointer;
+		transition:
+			border-color 140ms ease,
+			color 140ms ease,
+			background 140ms ease;
+	}
+
+	.collapse-toggle:hover {
+		border-color: var(--gold-muted);
+		color: var(--gold-lit);
+		background: rgba(0, 0, 0, 0.45);
 	}
 
 	.trail-countdown {
