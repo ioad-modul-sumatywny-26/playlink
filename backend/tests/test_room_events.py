@@ -694,12 +694,17 @@ def test_chat_history_and_message_frames_unchanged(
         # No new top-level keys leaked into existing frames.
         assert set(msg.keys()) == {"type", "message"}
         assert msg["type"] == "message"
+        # Issue #59 added signature/sent_at/verified; an unsigned message
+        # carries them as null/false.
         assert set(msg["message"].keys()) == {
             "id",
             "sender_address",
             "sender_username",
             "content",
             "created_at",
+            "signature",
+            "sent_at",
+            "verified",
         }
 
 

@@ -1346,6 +1346,50 @@ async def websocket_rooms(websocket: WebSocket, session: SessionDep):
         manager.disconnect(websocket)
 
 
+# Issue #59: chat messages are signed with the sender's BIP39-derived key
+# (EIP-191 personal_sign) so authorship is verifiable end-to-end rather than
+# trusted on the JWT alone. Reject timestamps drifting more than this from the
+# server clock to blunt replay of captured signatures.
+CHAT_SIGNATURE_SKEW_SECONDS = 120
+
+
+def _chat_signing_message(room_name: str, content: str, sent_at: str) -> str:
+    """Canonical text the client signs and the server reconstructs.
+
+    Must stay byte-for-byte in sync with the frontend builder in
+    ``frontend/src/lib/signing.ts``.
+    """
+    return (
+        "PlayLink signed chat message\n"
+        f"room={room_name}\n"
+        f"sent_at={sent_at}\n"
+        f"content={content}"
+    )
+
+
+def _verify_chat_signature(
+    room_name: str, content: str, sent_at: str, signature: str, address: str
+) -> bool:
+    """True iff ``signature`` was produced by ``address`` over the canonical
+    payload and ``sent_at`` is within the allowed clock skew."""
+    try:
+        signed_at = datetime.fromisoformat(sent_at)
+    except (ValueError, TypeError):
+        return False
+    if signed_at.tzinfo is None:
+        signed_at = signed_at.replace(tzinfo=UTC)
+    drift = abs((datetime.now(UTC) - signed_at).total_seconds())
+    if drift > CHAT_SIGNATURE_SKEW_SECONDS:
+        return False
+
+    message = encode_defunct(text=_chat_signing_message(room_name, content, sent_at))
+    try:
+        recovered = Account.recover_message(message, signature=signature)
+    except Exception:
+        return False
+    return recovered.lower() == address.lower()
+
+
 def _msg_dict(msg: Message, sender_username: str) -> dict:
     payload = {
         "id": msg.id,
@@ -1353,6 +1397,9 @@ def _msg_dict(msg: Message, sender_username: str) -> dict:
         "sender_username": sender_username,
         "content": msg.content,
         "created_at": _iso(msg.created_at),
+        "signature": msg.signature,
+        "sent_at": msg.sent_at,
+        "verified": msg.signature is not None,
     }
     if msg.sender_address == SYSTEM_SENDER_ADDRESS:
         payload["kind"] = "system"
@@ -1456,10 +1503,30 @@ async def websocket_chat(
             if not content or len(content) > 1000:
                 continue
 
+            # Issue #59: when a signature is supplied it must verify against the
+            # connected identity, otherwise the message is rejected outright
+            # (never stored or broadcast). A missing signature is a legacy /
+            # no-key client and is accepted as unverified.
+            raw_signature = data.get("signature")
+            signature: str | None = None
+            sent_at: str | None = None
+            if raw_signature:
+                signature = str(raw_signature)
+                sent_at = str(data.get("sent_at", ""))
+                if not _verify_chat_signature(
+                    room_name, content, sent_at, signature, address
+                ):
+                    await websocket.send_text(
+                        json.dumps({"type": "error", "detail": "signature_invalid"})
+                    )
+                    continue
+
             msg = Message(
                 room_id=room.id,
                 sender_address=address,
                 content=content,
+                signature=signature,
+                sent_at=sent_at,
             )
             session.add(msg)
             session.commit()

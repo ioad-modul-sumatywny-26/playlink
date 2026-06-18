@@ -3,6 +3,8 @@ from datetime import UTC, datetime, timedelta
 
 import jwt
 import pytest
+from eth_account import Account
+from eth_account.messages import encode_defunct
 from fastapi.testclient import TestClient
 from sqlmodel import Session, select
 from starlette.websockets import WebSocketDisconnect
@@ -149,3 +151,139 @@ def test_chat_drops_oversize_and_empty(client: TestClient, session: Session):
 
     rows = _all(session, select(Message))
     assert [r.content for r in rows] == ["kept"]
+
+
+# --- Cryptographically signed messages (issue #59) ---------------------------
+
+
+def _canonical_chat(room: str, content: str, sent_at: str) -> str:
+    """Mirror of the backend's canonical signing payload. Must stay in sync."""
+    return (
+        "PlayLink signed chat message\n"
+        f"room={room}\n"
+        f"sent_at={sent_at}\n"
+        f"content={content}"
+    )
+
+
+def _sign_chat(acct, room: str, content: str, sent_at: str) -> str:
+    message = encode_defunct(text=_canonical_chat(room, content, sent_at))
+    return acct.sign_message(message).signature.hex()
+
+
+def _seed_signed_member(session: Session, room_name: str):
+    """Seed a room whose sole member owns a real keypair; return (acct, token)."""
+    acct = Account.create()
+    _seed_room_and_users(session, room_name, [acct.address])
+    return acct, _mint_token(acct.address)
+
+
+def test_chat_signed_message_is_verified(client: TestClient, session: Session):
+    acct, token = _seed_signed_member(session, "vault")
+    sent_at = datetime.now(UTC).isoformat()
+    content = "signed hello"
+    sig = _sign_chat(acct, "vault", content, sent_at)
+
+    with client.websocket_connect(f"/ws/rooms/vault/chat?token={token}") as ws:
+        ws.receive_json()  # history
+        ws.send_json({"content": content, "sent_at": sent_at, "signature": sig})
+        frame = ws.receive_json()
+
+    assert frame["type"] == "message"
+    msg = frame["message"]
+    assert msg["content"] == content
+    assert msg["verified"] is True
+    assert msg["signature"] == sig
+    assert msg["sent_at"] == sent_at
+
+    rows = _all(session, select(Message))
+    assert len(rows) == 1
+    assert rows[0].signature == sig
+    assert rows[0].sent_at == sent_at
+
+
+def test_chat_rejects_tampered_content(client: TestClient, session: Session):
+    acct, token = _seed_signed_member(session, "tamper")
+    sent_at = datetime.now(UTC).isoformat()
+    sig = _sign_chat(acct, "tamper", "original", sent_at)
+
+    with client.websocket_connect(f"/ws/rooms/tamper/chat?token={token}") as ws:
+        ws.receive_json()  # history
+        ws.send_json({"content": "modified", "sent_at": sent_at, "signature": sig})
+        frame = ws.receive_json()
+
+    assert frame["type"] == "error"
+    assert frame["detail"] == "signature_invalid"
+    assert _all(session, select(Message)) == []
+
+
+def test_chat_rejects_wrong_signer(client: TestClient, session: Session):
+    acct, token = _seed_signed_member(session, "imposter")
+    attacker = Account.create()
+    sent_at = datetime.now(UTC).isoformat()
+    content = "not really me"
+    sig = _sign_chat(attacker, "imposter", content, sent_at)
+
+    with client.websocket_connect(f"/ws/rooms/imposter/chat?token={token}") as ws:
+        ws.receive_json()  # history
+        ws.send_json({"content": content, "sent_at": sent_at, "signature": sig})
+        frame = ws.receive_json()
+
+    assert frame["type"] == "error"
+    assert frame["detail"] == "signature_invalid"
+    assert _all(session, select(Message)) == []
+
+
+def test_chat_rejects_stale_timestamp(client: TestClient, session: Session):
+    acct, token = _seed_signed_member(session, "stale")
+    sent_at = (datetime.now(UTC) - timedelta(minutes=10)).isoformat()
+    content = "old news"
+    sig = _sign_chat(acct, "stale", content, sent_at)
+
+    with client.websocket_connect(f"/ws/rooms/stale/chat?token={token}") as ws:
+        ws.receive_json()  # history
+        ws.send_json({"content": content, "sent_at": sent_at, "signature": sig})
+        frame = ws.receive_json()
+
+    assert frame["type"] == "error"
+    assert frame["detail"] == "signature_invalid"
+    assert _all(session, select(Message)) == []
+
+
+def test_chat_unsigned_message_is_unverified(client: TestClient, session: Session):
+    _, token = _seed_signed_member(session, "legacy")
+
+    with client.websocket_connect(f"/ws/rooms/legacy/chat?token={token}") as ws:
+        ws.receive_json()  # history
+        ws.send_json({"content": "plain text"})
+        frame = ws.receive_json()
+
+    msg = frame["message"]
+    assert msg["content"] == "plain text"
+    assert msg["verified"] is False
+    assert msg["signature"] is None
+
+    rows = _all(session, select(Message))
+    assert len(rows) == 1
+    assert rows[0].signature is None
+
+
+def test_chat_history_includes_signature(client: TestClient, session: Session):
+    acct, token = _seed_signed_member(session, "archive")
+    sent_at = datetime.now(UTC).isoformat()
+    content = "for the record"
+    sig = _sign_chat(acct, "archive", content, sent_at)
+
+    with client.websocket_connect(f"/ws/rooms/archive/chat?token={token}") as ws:
+        ws.receive_json()  # history
+        ws.send_json({"content": content, "sent_at": sent_at, "signature": sig})
+        ws.receive_json()  # echoed message
+
+    with client.websocket_connect(f"/ws/rooms/archive/chat?token={token}") as ws:
+        history = ws.receive_json()
+
+    assert history["type"] == "history"
+    assert len(history["messages"]) == 1
+    hm = history["messages"][0]
+    assert hm["verified"] is True
+    assert hm["signature"] == sig

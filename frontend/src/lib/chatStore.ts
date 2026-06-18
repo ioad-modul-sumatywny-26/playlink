@@ -1,6 +1,7 @@
 import { browser } from '$app/environment';
 import { env } from '$env/dynamic/public';
 import { writable, type Readable } from 'svelte/store';
+import { signChatMessage, type ChatSigner } from '$lib/signing';
 
 // ---------- Public types ----------
 
@@ -11,6 +12,12 @@ export interface ChatMessage {
 	content: string;
 	created_at: string;
 	kind?: 'user' | 'system';
+	/** EIP-191 signature over the canonical payload, or null for legacy/unsigned. */
+	signature?: string | null;
+	/** Exact client timestamp that was signed, or null for legacy/unsigned. */
+	sent_at?: string | null;
+	/** True when the server recovered a valid signer for this message. */
+	verified?: boolean;
 }
 
 export interface RoomMember {
@@ -77,6 +84,12 @@ interface MemberKickedFrame {
 	ownership_transferred: boolean;
 }
 
+/** Server rejected an inbound message (e.g. a signature that failed to verify). */
+interface ErrorFrame {
+	type: 'error';
+	detail: string;
+}
+
 type ChatFrame =
 	| HistoryFrame
 	| MessageFrame
@@ -84,7 +97,8 @@ type ChatFrame =
 	| RsvpUpdateFrame
 	| RosterUpdateFrame
 	| RoomClosedFrame
-	| MemberKickedFrame;
+	| MemberKickedFrame
+	| ErrorFrame;
 
 // ---------- Frame validation ----------
 
@@ -97,7 +111,10 @@ function isChatMessage(value: unknown): value is ChatMessage {
 		typeof m.sender_username === 'string' &&
 		typeof m.content === 'string' &&
 		typeof m.created_at === 'string' &&
-		(m.kind === undefined || m.kind === 'user' || m.kind === 'system')
+		(m.kind === undefined || m.kind === 'user' || m.kind === 'system') &&
+		(m.signature === undefined || m.signature === null || typeof m.signature === 'string') &&
+		(m.sent_at === undefined || m.sent_at === null || typeof m.sent_at === 'string') &&
+		(m.verified === undefined || typeof m.verified === 'boolean')
 	);
 }
 
@@ -179,6 +196,9 @@ function parseFrame(raw: string): ChatFrame | null {
 	) {
 		return f as unknown as MemberKickedFrame;
 	}
+	if (f.type === 'error' && typeof f.detail === 'string') {
+		return { type: 'error', detail: f.detail };
+	}
 	return null;
 }
 
@@ -197,7 +217,7 @@ export interface ChatStore {
 	owner: Readable<string>;
 	/** Becomes `true` when this client is removed from the room. */
 	kicked: Readable<boolean>;
-	send(content: string): void;
+	send(content: string): Promise<void>;
 	destroy(): void;
 }
 
@@ -210,6 +230,11 @@ export interface CreateChatStoreOptions {
 	initialOwner?: string;
 	/** Address represented by this browser session. */
 	currentAddress?: string;
+	/**
+	 * Key used to sign outgoing messages (issue #59). When absent, messages are
+	 * sent unsigned and the server marks them unverified.
+	 */
+	signer?: ChatSigner | null;
 }
 
 export function createChatStore(
@@ -297,6 +322,11 @@ export function createChatStore(
 						if (reconnectTimeout) clearTimeout(reconnectTimeout);
 					}
 					break;
+				case 'error':
+					// The server rejected our last message (e.g. signature mismatch
+					// or stale timestamp). It is never stored or broadcast.
+					console.warn('Chat message rejected:', frame.detail);
+					break;
 			}
 		};
 
@@ -335,9 +365,26 @@ export function createChatStore(
 		closed: { subscribe: closed.subscribe },
 		owner: { subscribe: owner.subscribe },
 		kicked: { subscribe: kicked.subscribe },
-		send(content: string) {
+		async send(content: string) {
 			const trimmed = content.trim();
 			if (!trimmed || !ws || ws.readyState !== WebSocket.OPEN) return;
+
+			// Issue #59: sign the canonical payload so the server can verify
+			// authorship. A signing failure degrades to an unsigned (unverified)
+			// message rather than dropping it.
+			if (options.signer) {
+				const sentAt = new Date().toISOString();
+				try {
+					const signature = await signChatMessage(options.signer, roomName, trimmed, sentAt);
+					if (!ws || ws.readyState !== WebSocket.OPEN) return;
+					ws.send(JSON.stringify({ content: trimmed, sent_at: sentAt, signature }));
+					return;
+				} catch (e) {
+					console.error('Message signing failed; sending unsigned', e);
+				}
+			}
+
+			if (!ws || ws.readyState !== WebSocket.OPEN) return;
 			ws.send(JSON.stringify({ content: trimmed }));
 		},
 		destroy() {

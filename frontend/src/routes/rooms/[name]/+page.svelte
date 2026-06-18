@@ -10,6 +10,7 @@
 		type RoomEventState,
 		type RoomMember
 	} from '$lib/chatStore';
+	import { loadSigner } from '$lib/signingKey';
 	import InnerPanel from '$lib/components/chrome/InnerPanel.svelte';
 	import SectionTitle from '$lib/components/chrome/SectionTitle.svelte';
 	import OrnateButton from '$lib/components/chrome/OrnateButton.svelte';
@@ -77,7 +78,10 @@
 			initialEvent: data.event,
 			initialMembers: data.members,
 			initialOwner: data.createdBy,
-			currentAddress: data.address
+			currentAddress: data.address,
+			// Sign outgoing messages when this tab still holds the session key
+			// (issue #59). Falls back to unsigned/unverified when it doesn't.
+			signer: loadSigner()
 		});
 		chat = store;
 		const unsubMessages = store.messages.subscribe(async (m) => {
@@ -134,8 +138,10 @@
 
 	function send() {
 		if (closed || kicked || !chat || !input.trim()) return;
-		chat.send(input);
+		const text = input;
 		input = '';
+		// Signing is async; fire and forget so the input clears immediately.
+		void chat.send(text);
 	}
 
 	function onKey(e: KeyboardEvent) {
@@ -424,6 +430,17 @@
 													{/if}
 													<span class="sep" aria-hidden="true">·</span>
 													<span class="time">{fmtTime(msg.created_at)}</span>
+													{#if msg.verified}
+														<span class="sep" aria-hidden="true">·</span>
+														<span
+															class="verified small-caps"
+															title="Cryptographically signed by {shortAddr(
+																msg.sender_address
+															)} and verified by the server"
+														>
+															✓ Verified
+														</span>
+													{/if}
 												</div>
 												<div class="content">{msg.content}</div>
 											</article>
@@ -1051,6 +1068,15 @@
 		color: var(--bone-dim);
 		font-size: 0.65rem;
 		letter-spacing: 0.04em;
+	}
+
+	.verified {
+		font-family: var(--font-display);
+		color: var(--gold-lit);
+		font-size: 0.62rem;
+		letter-spacing: var(--track-loose);
+		white-space: nowrap;
+		cursor: help;
 	}
 
 	.content {
