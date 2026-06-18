@@ -1,5 +1,3 @@
-// src/test/hints.test.ts
-
 import { describe, expect, it } from 'vitest';
 import { HintsState } from '$lib/hintsContext.svelte';
 

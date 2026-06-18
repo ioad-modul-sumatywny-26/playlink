@@ -1,5 +1,4 @@
-// src/test/profilePageServer.test.ts
-
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import { describe, expect, it, vi } from 'vitest';
 import { load, actions } from '../routes/profile/+page.server';
 
