@@ -106,6 +106,23 @@ jobs:
               run: bun x prettier --check .
               working-directory: frontend
 
+    frontend-test:
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v6
+
+            - uses: oven-sh/setup-bun@v2
+              with:
+                  bun-version: latest
+
+            - name: Install dependencies
+              run: bun install --frozen-lockfile
+              working-directory: frontend
+
+            - name: Run tests
+              run: bun run test -- --coverage
+              working-directory: frontend
+
     build-test:
         runs-on: ubuntu-latest
         steps:
