@@ -941,7 +941,7 @@
 		   `overflow-y` engages. The room-page grid gives the column a definite
 		   height, so the chat takes the leftover space and scrolls — the message
 		   log no longer stretches the page without bound. */
-		min-height: 160px;
+		min-height: 120px;
 		overflow-y: auto;
 		padding: 1rem 1.05rem;
 		background: linear-gradient(180deg, var(--stone-2) 0%, var(--stone-1) 100%);
