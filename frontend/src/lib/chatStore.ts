@@ -102,7 +102,7 @@ type ChatFrame =
 
 // ---------- Frame validation ----------
 
-function isChatMessage(value: unknown): value is ChatMessage {
+export function isChatMessage(value: unknown): value is ChatMessage {
 	if (typeof value !== 'object' || value === null) return false;
 	const m = value as Record<string, unknown>;
 	return (
@@ -118,7 +118,7 @@ function isChatMessage(value: unknown): value is ChatMessage {
 	);
 }
 
-function isRoomMember(value: unknown): value is RoomMember {
+export function isRoomMember(value: unknown): value is RoomMember {
 	if (typeof value !== 'object' || value === null) return false;
 	const m = value as Record<string, unknown>;
 	return (
@@ -128,11 +128,11 @@ function isRoomMember(value: unknown): value is RoomMember {
 	);
 }
 
-function isRsvpStatus(value: unknown): value is RsvpStatus {
+export function isRsvpStatus(value: unknown): value is RsvpStatus {
 	return value === 'present' || value === 'absent' || value === 'maybe';
 }
 
-function isRsvpEntry(value: unknown): value is RsvpEntry {
+export function isRsvpEntry(value: unknown): value is RsvpEntry {
 	if (typeof value !== 'object' || value === null) return false;
 	const r = value as Record<string, unknown>;
 	return (
@@ -143,7 +143,7 @@ function isRsvpEntry(value: unknown): value is RsvpEntry {
 	);
 }
 
-function isRoomEventState(value: unknown): value is RoomEventState {
+export function isRoomEventState(value: unknown): value is RoomEventState {
 	if (typeof value !== 'object' || value === null) return false;
 	const e = value as Record<string, unknown>;
 	return (
@@ -157,7 +157,7 @@ function isRoomEventState(value: unknown): value is RoomEventState {
 	);
 }
 
-function parseFrame(raw: string): ChatFrame | null {
+export function parseFrame(raw: string): ChatFrame | null {
 	let data: unknown;
 	try {
 		data = JSON.parse(raw);

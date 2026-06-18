@@ -15,11 +15,11 @@ export interface RoomSummary {
 	expires_at: string;
 }
 
-function isNullableString(value: unknown): value is string | null {
+export function isNullableString(value: unknown): value is string | null {
 	return value === null || typeof value === 'string';
 }
 
-function isRoomSummary(value: unknown): value is RoomSummary {
+export function isRoomSummary(value: unknown): value is RoomSummary {
 	if (typeof value !== 'object' || value === null) {
 		return false;
 	}
