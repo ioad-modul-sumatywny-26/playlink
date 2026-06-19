@@ -1,5 +1,5 @@
 @startuml komponenty
-' Diagram komponentów - PlayLink
+' Diagram komponentów - PlayLink (zgodny z docker-compose.yml: db, backend, frontend)
 skinparam backgroundColor #FFFFFF
 skinparam shadowing false
 skinparam componentStyle rectangle
@@ -22,22 +22,26 @@ node "Przeglądarka" as browser {
   component "Svelte 5 (klient)\nethers / viem\npodpisywanie BIP39" as spa
 }
 
-node "Serwer aplikacyjny\n(self-hosted, Docker Compose)" as server {
-  component "Nginx\nreverse proxy + TLS 1.3\nLet's Encrypt" as nginx
-  component "SvelteKit BFF\nadapter-node :3000\nhttpOnly session cookie" as bff
-  component "FastAPI :8000\nREST + WebSocket\nslowapi rate limiting" as api
-  component "Zadanie w tle\nczyszczenie pokojów" as cleanup
-  database "PostgreSQL 18\n(SQLModel / Alembic)" as db
+node "Serwer produkcyjny\n(self-hosted, Docker Compose)" as server {
+  component "frontend\nSvelteKit BFF (adapter-node)\n:3000, httpOnly session cookie" as bff
+  component "backend\nFastAPI :8000\nREST + WebSocket\nslowapi rate limiting" as api
+  component "zadanie w tle\nczyszczenie wygasłych pokojów" as cleanup
+  database "db\nPostgreSQL 18\n(SQLModel / Alembic)" as db
 }
 
-cloud "Tailscale (mesh VPN)\nCI/CD deploy przez SSH" as tailscale
+cloud "Tailscale (mesh VPN)\nCI/CD: SSH deploy" as tailscale
 
 user --> spa
-spa --> nginx : HTTPS / WSS
-nginx --> bff : akcje formularzy\n(login, mutacje)
-nginx --> api : REST + WebSocket\n(odczyty, czat, lista pokojów)
+spa --> bff : HTTPS\nlogin, akcje formularzy (BFF)
+spa --> api : HTTPS / WSS\nREST + WebSocket (odczyty, czat, lista pokojów)
 bff --> api : server-side fetch\n(JWT w nagłówku)
 api --> db : SQLModel / SQLAlchemy
 cleanup --> db : prune expired
 tailscale ..> server : deploy (GitHub Actions)
+
+note bottom of server
+  TLS/HTTPS terminowane na brzegu hosta produkcyjnego.
+  W repozytorium wystawione porty: frontend :3000, backend :8000;
+  baza danych bez mapowania portu (tylko sieć wewnętrzna Dockera).
+end note
 @enduml

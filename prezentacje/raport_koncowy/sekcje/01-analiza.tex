@@ -138,7 +138,7 @@ WN-03 & Dostępność & Uptime $\geq$ 99\% w skali miesiąca & \done \\
 WN-04 & Skalowalność & Do 128 użytkowników jednocześnie w pokoju & \done \\
 WN-05 & Niezawodność & Docker healthcheck + automatyczny restart kontenera & \done \\
 WN-06 & Realtime / odporność & WebSocket z heartbeatem 30~s i auto-reconnectem & \done \\
-WN-07 & Bezpieczeństwo transportu & TLS~1.3 dla HTTPS i WSS (Let's Encrypt) & \done \\
+WN-07 & Bezpieczeństwo transportu & Szyfrowanie HTTPS + WSS (TLS na brzegu hosta) & \done \\
 WN-08 & Ochrona przed nadużyciami & Rate limiting: 10/min (REST), 10~wiad./10~s (czat WS) & \done \\
 WN-09 & Użyteczność & Utworzenie pokoju w $\leq$ 30~s bez instrukcji & \done \\
 WN-10 & Modułowość & Frontend i backend wdrażane niezależnie & \done \\
@@ -166,90 +166,112 @@ challenge-response i czyszczenie wygasłych pokojów).
         pokojów i wiadomości.
 \end{itemize}
 
-Diagram przypadków użycia przedstawiono na rys.~\ref{fig:uc}. Poniżej opisano
-scenariusze pięciu kluczowych przypadków użycia — po jednym opracowanym przez
-każdego członka zespołu — w ujęciu: przepływ główny oraz przepływ alternatywny.
+Diagram przypadków użycia przedstawiono na rys.~\ref{fig:uc}. Poniżej, w
+tab.~\ref{tab:uc1}--\ref{tab:uc5}, opisano scenariusze pięciu kluczowych przypadków
+użycia — po jednym opracowanym przez każdego członka zespołu — w jednolitym formacie
+(nazwa, aktorzy, warunki wstępne, przebieg główny i alternatywny).
 
-\paragraph{UC-1: Rejestracja i pierwsze logowanie (BIP39). \normalfont\textit{(autor: Nikodem Nowak)}}
-\begin{itemize}
-  \item \textit{Aktor:} Gość. \quad \textit{Warunek wstępny:} brak.
-  \item \textit{Przepływ główny:}
-  \begin{enumerate}
-    \item Gość wybiera „Enter realm” i generuje nową 12-słowną frazę BIP39
-          (klucz prywatny derywowany lokalnie, nigdy nie opuszcza przeglądarki).
-    \item Klient pobiera z backendu jednorazowy \emph{nonce} (\code{POST /auth/request-nonce}).
-    \item Klient podpisuje komunikat zawierający nonce (\code{personal_sign}, EIP-191).
-    \item Backend odtwarza adres z podpisu, weryfikuje nonce i wydaje token JWT
-          (\code{POST /auth/verify}).
-    \item BFF zapisuje JWT w ciasteczku \code{httpOnly}; użytkownik jest zalogowany.
-  \end{enumerate}
-  \item \textit{Przepływ alternatywny:} nonce wygasł lub został już użyty —
-        backend odrzuca weryfikację (HTTP 400/401), klient ponawia od kroku~2.
-\end{itemize}
+\begin{table}[H]\footnotesize
+\renewcommand{\arraystretch}{1.3}
+\caption{Opis przypadku użycia UC-1: Rejestracja i logowanie (BIP39). Autor: Nikodem Nowak.}
+\label{tab:uc1}
+\begin{tabularx}{\textwidth}{@{}>{\bfseries\raggedright\arraybackslash}p{0.26\textwidth}Y@{}}
+\toprule
+Nazwa przypadku & Rejestracja i logowanie bezhasłowe (BIP39) \\
+\midrule
+Aktorzy & Gość, System (weryfikacja challenge-response) \\
+Warunki wstępne & Brak — konto powstaje przy pierwszym poprawnym podpisie \\
+Przebieg główny &
+  1. Gość wybiera „Enter realm” i generuje 12-słowną frazę BIP39 (klucz derywowany lokalnie, nigdy nie opuszcza przeglądarki). \newline
+  2. Klient pobiera jednorazowy \emph{nonce} (\code{POST /auth/request-nonce}). \newline
+  3. Klient podpisuje komunikat z nonce (\code{personal_sign}, EIP-191). \newline
+  4. Backend odtwarza adres z podpisu, weryfikuje nonce i wydaje token JWT (\code{POST /auth/verify}). \newline
+  5. BFF zapisuje JWT w ciasteczku \code{httpOnly}; użytkownik jest zalogowany. \\
+Przebieg alternatywny &
+  \textbf{4a.} Nonce wygasł lub został już użyty — backend odrzuca weryfikację (HTTP 400/401); klient ponawia od kroku~2. \\
+\bottomrule
+\end{tabularx}
+\end{table}
 
-\paragraph{UC-2: Utworzenie pokoju i rozpoczęcie czatu. \normalfont\textit{(autor: Bartosz Kołaciński)}}
-\begin{itemize}
-  \item \textit{Aktor:} Użytkownik. \quad \textit{Warunek wstępny:} zalogowany; mniej niż
-        3 aktywne pokoje.
-  \item \textit{Przepływ główny:}
-  \begin{enumerate}
-    \item Użytkownik wypełnia formularz (nazwa, gra, limit graczy, lokalizacja,
-          opcjonalnie opis/link/wymagania) i zatwierdza.
-    \item Backend tworzy pokój, dołącza twórcę jako członka i rozgłasza nową listę
-          pokojów przez kanał \code{/ws/rooms}.
-    \item Użytkownik wchodzi do pokoju; otwiera się kanał czatu
-          \code{/ws/rooms/<name>/chat}.
-  \end{enumerate}
-  \item \textit{Przepływ alternatywny:} przekroczony limit 3 pokojów lub zajęta nazwa —
-        backend zwraca błąd walidacji, formularz wyświetla komunikat.
-\end{itemize}
+\begin{table}[H]\footnotesize
+\renewcommand{\arraystretch}{1.3}
+\caption{Opis przypadku użycia UC-2: Utworzenie pokoju i rozpoczęcie czatu. Autor: Bartosz Kołaciński.}
+\label{tab:uc2}
+\begin{tabularx}{\textwidth}{@{}>{\bfseries\raggedright\arraybackslash}p{0.26\textwidth}Y@{}}
+\toprule
+Nazwa przypadku & Utworzenie i konfiguracja pokoju oraz rozpoczęcie czatu \\
+\midrule
+Aktorzy & Użytkownik (zalogowany) \\
+Warunki wstępne & Ważny token JWT; użytkownik ma mniej niż 3 aktywne pokoje \\
+Przebieg główny &
+  1. Użytkownik wypełnia formularz (nazwa, gra, limit graczy, lokalizacja; opcjonalnie opis, link do komunikatora, wymagania) i zatwierdza. \newline
+  2. Backend tworzy pokój (\code{POST /rooms}), dołącza twórcę jako członka i rozgłasza nową listę pokojów na kanale \code{/ws/rooms}. \newline
+  3. Użytkownik wchodzi do pokoju; otwiera się uwierzytelniony kanał czatu \code{/ws/rooms/<name>/chat}. \\
+Przebieg alternatywny &
+  \textbf{1a.} Zajęta nazwa pokoju lub przekroczony limit 3 aktywnych pokojów — backend zwraca błąd walidacji, formularz wyświetla komunikat. \\
+\bottomrule
+\end{tabularx}
+\end{table}
 
-\paragraph{UC-3: Dołączenie do pokoju i deklaracja RSVP. \normalfont\textit{(autor: Jakub Rosiak)}}
-\begin{itemize}
-  \item \textit{Aktor:} Użytkownik. \quad \textit{Warunek wstępny:} pokój istnieje i nie
-        jest pełny.
-  \item \textit{Przepływ główny:}
-  \begin{enumerate}
-    \item Użytkownik wybiera pokój z listy i dołącza; roster jest rozgłaszany do
-          pozostałych członków.
-    \item Jeśli pokój ma zaplanowane wydarzenie, użytkownik deklaruje obecność
-          (\emph{present} / \emph{maybe} / \emph{absent}); zdarzenie RSVP jest rozgłaszane.
-    \item Użytkownik bierze udział w czacie pokoju.
-  \end{enumerate}
-  \item \textit{Przepływ alternatywny:} pokój pełny lub wygasł — dołączenie zostaje
-        odrzucone, użytkownik wraca do listy.
-\end{itemize}
+\begin{table}[H]\footnotesize
+\renewcommand{\arraystretch}{1.3}
+\caption{Opis przypadku użycia UC-3: Dołączenie do pokoju i deklaracja RSVP. Autor: Jakub Rosiak.}
+\label{tab:uc3}
+\begin{tabularx}{\textwidth}{@{}>{\bfseries\raggedright\arraybackslash}p{0.26\textwidth}Y@{}}
+\toprule
+Nazwa przypadku & Dołączenie do pokoju i deklaracja obecności (RSVP) \\
+\midrule
+Aktorzy & Użytkownik (zalogowany) \\
+Warunki wstępne & Pokój istnieje i nie jest pełny; użytkownik zalogowany \\
+Przebieg główny &
+  1. Użytkownik wybiera pokój z listy i dołącza (\code{POST /rooms/<name>/join}); zaktualizowany roster (\code{roster_update}) jest rozgłaszany do członków. \newline
+  2. Jeśli pokój ma zaplanowane wydarzenie, użytkownik deklaruje obecność (\code{present} / \code{maybe} / \code{absent}) przez \code{PUT /rooms/<name>/event/rsvp}; rozgłaszana jest ramka \code{rsvp_update}. \newline
+  3. Użytkownik uczestniczy w czacie pokoju. \\
+Przebieg alternatywny &
+  \textbf{1a.} Pokój jest pełny lub wygasł — dołączenie zostaje odrzucone, użytkownik wraca do listy. \\
+\bottomrule
+\end{tabularx}
+\end{table}
 
-\paragraph{UC-4: Moderacja — wyrzucenie uczestnika. \normalfont\textit{(autor: Jakub Rusek)}}
-\begin{itemize}
-  \item \textit{Aktor:} Administrator. \quad \textit{Warunek wstępny:} adres administratora
-        znajduje się w \code{ADMIN_ADDRESSES}.
-  \item \textit{Przepływ główny:}
-  \begin{enumerate}
-    \item Administrator wybiera uczestnika i akcję „kick”.
-    \item Backend weryfikuje uprawnienia, usuwa członkostwo i rozgłasza ramkę
-          \emph{kick} oraz zaktualizowany roster; wyrzucony klient zostaje rozłączony.
-  \end{enumerate}
-  \item \textit{Przepływ alternatywny:} żądanie pochodzi od konta bez uprawnień
-        administratora — backend odrzuca operację (HTTP 403).
-\end{itemize}
+\begin{table}[H]\footnotesize
+\renewcommand{\arraystretch}{1.3}
+\caption{Opis przypadku użycia UC-4: Moderacja — wyrzucenie uczestnika. Autor: Jakub Rusek.}
+\label{tab:uc4}
+\begin{tabularx}{\textwidth}{@{}>{\bfseries\raggedright\arraybackslash}p{0.26\textwidth}Y@{}}
+\toprule
+Nazwa przypadku & Moderacja: wyrzucenie uczestnika z pokoju (kick) \\
+\midrule
+Aktorzy & Administrator \\
+Warunki wstępne & Adres konta znajduje się w \code{ADMIN_ADDRESSES}; cel jest członkiem pokoju \\
+Przebieg główny &
+  1. Administrator wybiera uczestnika i akcję „kick” (\code{POST /rooms/<name>/members/<address>/kick}). \newline
+  2. Backend weryfikuje uprawnienia, usuwa członkostwo i rozgłasza ramki \code{member_kicked} oraz \code{roster_update}. \newline
+  3. Połączenia czatu wyrzuconego użytkownika zostają zamknięte (kod \code{4409}). \\
+Przebieg alternatywny &
+  \textbf{1a.} Żądanie pochodzi od konta bez uprawnień administratora — backend odrzuca operację (HTTP 403). \\
+\bottomrule
+\end{tabularx}
+\end{table}
 
-\paragraph{UC-5: Wyszukiwanie i filtrowanie pokojów. \normalfont\textit{(autor: Mateusz Kosowski)}}
-\begin{itemize}
-  \item \textit{Aktor:} Gość lub Użytkownik. \quad \textit{Warunek wstępny:} brak.
-  \item \textit{Przepływ główny:}
-  \begin{enumerate}
-    \item Aktor otwiera listę pokojów, która jest na bieżąco aktualizowana przez
-          kanał \code{/ws/rooms}.
-    \item Aktor wpisuje frazę wyszukiwania i/lub wybiera filtr gry oraz porządek
-          sortowania.
-    \item Lista zawęża się do pokojów spełniających kryteria; wybór pokoju prowadzi
-          do jego szczegółów (a po zalogowaniu — do dołączenia, UC-2/UC-3).
-  \end{enumerate}
-  \item \textit{Przepływ alternatywny:} brak pokojów spełniających kryteria —
-        wyświetlany jest stan pusty z podpowiedzią rozszerzenia filtrów lub utworzenia
-        własnego pokoju.
-\end{itemize}
+\begin{table}[H]\footnotesize
+\renewcommand{\arraystretch}{1.3}
+\caption{Opis przypadku użycia UC-5: Wyszukiwanie i filtrowanie pokojów. Autor: Mateusz Kosowski.}
+\label{tab:uc5}
+\begin{tabularx}{\textwidth}{@{}>{\bfseries\raggedright\arraybackslash}p{0.26\textwidth}Y@{}}
+\toprule
+Nazwa przypadku & Wyszukiwanie i filtrowanie pokojów \\
+\midrule
+Aktorzy & Gość lub Użytkownik \\
+Warunki wstępne & Brak \\
+Przebieg główny &
+  1. Aktor otwiera listę pokojów, aktualizowaną na bieżąco przez kanał \code{/ws/rooms}. \newline
+  2. Aktor wpisuje frazę wyszukiwania i/lub wybiera filtr gry oraz porządek sortowania. \newline
+  3. Lista zawęża się do pokojów spełniających kryteria; wybór pokoju prowadzi do jego szczegółów (a po zalogowaniu — do dołączenia, zob.\ UC-2/UC-3). \\
+Przebieg alternatywny &
+  \textbf{3a.} Brak pokojów spełniających kryteria — wyświetlany jest stan pusty z podpowiedzią rozszerzenia filtrów lub utworzenia własnego pokoju. \\
+\bottomrule
+\end{tabularx}
+\end{table}
 
 \subsection{Diagram przypadków użycia}
 \label{sec:uc-diagram}
@@ -297,7 +319,7 @@ Baza danych & PostgreSQL~18 (prod) / SQLite in-memory (testy) \\
 Realtime & FastAPI WebSockets (kanały: rooms, chat) \\
 Uwierzytelnianie & tożsamość BIP39 + ECDSA (\code{eth_account}), JWT HS256 \\
 Rate limiting & slowapi (REST) + przesuwne okno per-adres (czat) \\
-Orkiestracja & Docker Compose (db, backend, frontend), Nginx, Tailscale \\
+Orkiestracja & Docker Compose (usługi: db, backend, frontend), Tailscale \\
 CI/CD & GitHub Actions $\rightarrow$ deploy SSH przez Tailscale \\
 \bottomrule
 \end{tabularx}
@@ -322,8 +344,9 @@ Przepływ uwierzytelniania challenge-response przedstawia rys.~\ref{fig:auth}.
 \begin{figure}[H]
   \centering
   \includegraphics[width=0.85\textwidth]{komponenty.png}
-  \caption{Diagram komponentów: przeglądarka, Nginx (TLS), BFF SvelteKit, API FastAPI
-  z zadaniem czyszczącym oraz baza PostgreSQL; wdrożenie przez Tailscale.}
+  \caption{Diagram komponentów (zgodny z \texttt{docker-compose.yml}): przeglądarka,
+  usługi \texttt{frontend} (BFF SvelteKit), \texttt{backend} (FastAPI z zadaniem
+  czyszczącym) i \texttt{db} (PostgreSQL); wdrożenie przez Tailscale.}
   \label{fig:komponenty}
 \end{figure}
 
@@ -369,7 +392,9 @@ WebSocket. Najważniejsze elementy:
         Dokumentacja generowana automatycznie (Swagger/OpenAPI).
   \item \textbf{WebSocket} — kanał \code{/ws/rooms} (rozgłasza pełną listę pokojów po
         każdej mutacji) oraz \code{/ws/rooms/<name>/chat} (czat z autoryzacją JWT i
-        kontrolą członkostwa; ramki: event, RSVP, roster, room-closed, kick).
+        kontrolą członkostwa; ramki: \code{history}, \code{message}, \code{event_update},
+        \code{rsvp_update}, \code{roster_update}, \code{room_closed}, \code{member_kicked},
+        \code{error}).
   \item \textbf{Logika biznesowa} — m.in.: limit 3 aktywnych pokojów na użytkownika,
         weryfikacja podpisów EIP-191 z odrzuceniem nadmiernego dryfu czasu
         (\code{CHAT_SIGNATURE_SKEW_SECONDS}), upsert RSVP, dobór pingu na podstawie
@@ -377,3 +402,17 @@ WebSocket. Najważniejsze elementy:
   \item \textbf{Zadanie w tle} — cykliczne czyszczenie wygasłych pokojów i wiadomości
         (co \code{ROOM_CLEANUP_INTERVAL_SECONDS}).
 \end{itemize}
+
+Stan połączeń realtime utrzymują dwie klasy menedżerów (singletony w \code{main.py}):
+\code{ConnectionManager} (rejestr połączeń kanału listy pokojów) oraz
+\code{RoomChatManager} (rejestr połączeń czatu per pokój, z mapowaniem gniazdo$\rightarrow$adres).
+Diagram klas (rys.~\ref{fig:klasy}) zestawia encje warstwy danych z tymi menedżerami
+warstwy logiki.
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=\textwidth,height=0.82\textheight,keepaspectratio]{klasy.png}
+  \caption{Diagram klas PlayLink: encje SQLModel (warstwa danych) oraz menedżery
+  połączeń WebSocket \texttt{ConnectionManager} i \texttt{RoomChatManager} (warstwa logiki).}
+  \label{fig:klasy}
+\end{figure}

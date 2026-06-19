@@ -16,6 +16,106 @@ Zastosowano aktualne standardy projektowe: typowanie statyczne w całym stosie
 (TypeScript + Pydantic/SQLModel), automatyczną walidację żądań, migracje bazy
 (Alembic) oraz w pełni zautomatyzowany pipeline CI/CD (rozdz.~\ref{sec:zarz}).
 
+\subsection{Interfejs programistyczny: REST i WebSocket}
+\label{sec:api}
+
+Backend udostępnia interfejs REST z automatyczną dokumentacją OpenAPI/Swagger
+(\url{https://playlink-backend.bartek.monster/docs}) oraz dwa kanały WebSocket. Każdy
+endpoint REST objęty jest limitem \code{10/minute} (slowapi). Zestawienie endpointów
+zawiera tab.~\ref{tab:rest}; kolumna „Dostęp": \emph{publ.} — bez logowania,
+\emph{JWT} — zalogowany, \emph{admin} — adres w \code{ADMIN_ADDRESSES}.
+
+\renewcommand{\arraystretch}{1.25}
+\footnotesize
+\begin{longtable}{@{}l>{\raggedright\arraybackslash}p{0.34\textwidth}>{\raggedright\arraybackslash}p{0.32\textwidth}c@{}}
+\caption{Endpointy REST API PlayLink.}\label{tab:rest}\\
+\toprule
+\textbf{Metoda} & \textbf{Ścieżka} & \textbf{Opis} & \textbf{Dostęp} \\
+\midrule
+\endfirsthead
+\toprule
+\textbf{Metoda} & \textbf{Ścieżka} & \textbf{Opis} & \textbf{Dostęp} \\
+\midrule
+\endhead
+GET & \bpath{/} & Sonda stanu usługi & publ. \\
+\addlinespace
+POST & \bpath{/auth/request-nonce} & Wydanie jednorazowego nonce dla adresu & publ. \\
+POST & \bpath{/auth/verify} & Weryfikacja podpisu EIP-191, wydanie JWT & publ. \\
+\addlinespace
+GET & \bpath{/users/me} & Profil bieżącego użytkownika & JWT \\
+PATCH & \bpath{/users/me} & Zmiana nazwy (format + filtr + unikalność) & JWT \\
+\addlinespace
+GET & \bpath{/rooms} & Lista pokojów & publ. \\
+GET & \bpath{/rooms/{room_name}} & Szczegóły pokoju (członkowie, wydarzenie) & publ. \\
+GET & \bpath{/lobby-locations} & Lista kodów lokalizacji lobby & publ. \\
+POST & \bpath{/rooms} & Utworzenie pokoju (twórca dołącza) & JWT \\
+POST & \bpath{/rooms/{room_name}/join} & Dołączenie do pokoju & JWT \\
+POST & \bpath{/rooms/{room_name}/leave} & Opuszczenie pokoju & JWT \\
+DELETE & \bpath{/rooms/{room_name}} & Zamknięcie pokoju (kaskada) & admin \\
+POST & \bpath{/rooms/{room_name}/members/{address}/kick} & Wyrzucenie członka & admin \\
+\addlinespace
+GET & \bpath{/rooms/{room_name}/event} & Wydarzenie + roster RSVP & publ. \\
+PUT & \bpath{/rooms/{room_name}/event} & Utworzenie/zmiana wydarzenia & JWT (twórca) \\
+DELETE & \bpath{/rooms/{room_name}/event} & Odwołanie wydarzenia & JWT (twórca) \\
+PUT & \bpath{/rooms/{room_name}/event/rsvp} & Upsert własnego RSVP & JWT (członek) \\
+\addlinespace
+GET & \bpath{/games} & Lista kategorii gier & publ. \\
+POST & \bpath{/games} & Dodanie kategorii gry & admin \\
+DELETE & \bpath{/games/{name}} & Usunięcie kategorii (\code{?force=true}) & admin \\
+\bottomrule
+\end{longtable}
+\normalsize
+
+\paragraph{Kanały WebSocket.}
+\begin{itemize}
+  \item \code{/ws/rooms} — kanał listy pokojów; bez uwierzytelniania. Wysyła tablicę
+        JSON podsumowań pokojów (na starcie i po każdej mutacji zbioru pokojów).
+  \item \code{/ws/rooms/{room_name}/chat} — czat per pokój; JWT przekazywany jako
+        parametr \code{token}. Bramki zamykające: \code{4401} (błąd JWT), \code{4404}
+        (brak pokoju), \code{4403} (brak członkostwa), \code{4429} (limit), \code{4409}
+        (rozłączenie przy kicku). Ramki wychodzące: \code{history} (ostatnie 50
+        wiadomości), \code{message}, \code{event_update}, \code{rsvp_update},
+        \code{roster_update}, \code{room_closed}, \code{member_kicked}, \code{error}.
+        Ramka wejściowa: \code{{content, sent_at?, signature?}} (treść $\leq$ 1000 znaków).
+\end{itemize}
+
+Przepływ wysłania podpisanej wiadomości czatu przedstawia rys.~\ref{fig:czat}.
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.95\textwidth]{sekwencja-czat.png}
+  \caption{Diagram sekwencji: wysłanie podpisanej (EIP-191) wiadomości na czacie,
+  weryfikacja podpisu i rozgłoszenie ramki \texttt{message} przez \texttt{RoomChatManager}.}
+  \label{fig:czat}
+\end{figure}
+
+Najważniejsze, zweryfikowane względem kodu stałe i parametry konfiguracyjne zestawia
+tab.~\ref{tab:const}.
+
+\renewcommand{\arraystretch}{1.2}
+\begin{table}[H]
+\centering\small
+\begin{tabularx}{\textwidth}{@{}Yl@{}}
+\toprule
+\textbf{Parametr} & \textbf{Wartość} \\
+\midrule
+Limit aktywnych pokojów na użytkownika & 3 (admin zwolniony) \\
+Domyślny TTL pokoju & 60 min \\
+TTL nonce (\code{NONCE_EXPIRATION_MINUTES}) & 5 min \\
+Ważność JWT (\code{JWT_EXPIRATION_MINUTES}), algorytm & 60 min, HS256 \\
+Limit REST (\code{DEFAULT_RATE_LIMIT}) & 10/min na IP \\
+Limit czatu WS & 10 wiad./10 s na adres \\
+Dryf podpisu czatu (\code{CHAT_SIGNATURE_SKEW_SECONDS}) & 120 s (na stałe) \\
+Maks. długość wiadomości & 1000 znaków \\
+Historia czatu na wejściu & 50 wiadomości \\
+Statusy RSVP & present / absent / maybe \\
+Gry (seed) & Quake III Arena, Diablo II, StarCraft, Half-Life, Unreal Tournament \\
+\bottomrule
+\end{tabularx}
+\caption{Zweryfikowane stałe i parametry konfiguracyjne (źródło: \texttt{backend/main.py}, \texttt{models.py}).}
+\label{tab:const}
+\end{table}
+
 \subsection{Projekt graficznego interfejsu użytkownika}
 \label{sec:gui}
 
@@ -57,17 +157,6 @@ CSS; UI reaguje natychmiast na zdarzenia WebSocket. Poniżej wybrane widoki apli
   \caption{Wybrane widoki graficznego interfejsu PlayLink.}
   \label{fig:gui}
 \end{figure}
-
-\subsection{Aspekty AI/ML}
-\label{sec:aiml}
-
-W uzgodnieniu z opiekunem projektu (mgr inż. Bartłomiej Jencz) zespół świadomie
-zrezygnował z komponentu AI/ML na rzecz \textbf{rozszerzonego, dopracowanego modelu
-bezpieczeństwa danych} (rozdz.~\ref{sec:bezp}). Decyzja wynika z charakteru produktu:
-kluczową wartością PlayLink jest natychmiastowy, bezpieczny i prywatny dostęp
-(tożsamość niepowiernicza BIP39, weryfikowalne autorstwo wiadomości), a nie
-rekomendacje oparte na uczeniu maszynowym. Dobór pingu odbywa się deterministycznie
-na podstawie odległości geograficznej lobby (metryka Haversine), bez modelu ML.
 
 \subsection{Aspekty bezpieczeństwa danych}
 \label{sec:bezp}
@@ -116,10 +205,11 @@ REST jest limitowany przez slowapi (domyślnie 10/min), a czat — przesuwnym ok
 per-adres. Edycja nazwy użytkownika przechodzi przez filtr wulgaryzmów (stoplist).
 
 \paragraph{7. Bezpieczeństwo sieci i wdrożenia.}
-Cały ruch szyfrowany jest TLS~1.3 (HTTPS + WSS, certyfikaty Let's Encrypt). Wdrożenie
-jest self-hosted: transfer artefaktów odbywa się prywatnym kanałem przez Tailscale
-(mesh VPN, WireGuard), publiczny SSH nie jest wystawiony (brak ataków brute-force na
-port~22), a baza PostgreSQL nie ma mapowania portu na hosta.
+Ruch jest szyfrowany (HTTPS + WSS); TLS terminowany jest na brzegu hosta produkcyjnego.
+Wdrożenie jest self-hosted: w CI połączenie z serwerem zestawiane jest prywatnym kanałem
+przez Tailscale (mesh VPN, WireGuard), a deploy odbywa się przez SSH w obrębie tailnetu —
+publiczny SSH nie jest wystawiony (brak ataków brute-force na port~22), a baza PostgreSQL
+nie ma mapowania portu na hosta (dostępna tylko w wewnętrznej sieci Dockera).
 
 \paragraph{Weryfikacja.}
 Wszystkie powyższe mechanizmy są pokryte automatycznymi testami bezpieczeństwa

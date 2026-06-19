@@ -54,6 +54,8 @@
     {Ó}{{\'O}}1 {Ś}{{\'S}}1 {Ż}{{\.Z}}1 {Ź}{{\'Z}}1
 }
 \newcommand{\code}[1]{\texttt{\detokenize{#1}}}
+\usepackage{seqsplit}
+\newcommand{\bpath}[1]{\texttt{\expandafter\seqsplit\expandafter{\detokenize{#1}}}}
 
 % ---- Tytuły sekcji ----
 \usepackage{titlesec}
@@ -129,8 +131,6 @@ Prototyp w wersji podstawowej (min.\ 50\% wymagań funkc.\ i niefunkc.) & \done 
 Prototyp w wersji zaawansowanej (min.\ 70\% wymagań funkc.\ i niefunkc.) & \done \\
 Prototyp w wersji zaawansowanej (min.\ 90\% wymagań funkc.\ i niefunkc.) & \done \\
 Projekt graficznego interfejsu użytkownika & \done \\
-Uwzględnienie wybranych aspektów AI/ML\,$^{\dagger}$ & \na \\
-Uwzględnienie co najmniej 90\% aspektów AI/ML\,$^{\dagger}$ & \na \\
 Uwzględnienie wybranych aspektów bezpieczeństwa danych & \done \\
 Uwzględnienie co najmniej 90\% aspektów bezpieczeństwa danych & \done \\
 \addlinespace
@@ -147,12 +147,6 @@ Harmonogram realizacji projektu z kamieniami milowymi & \done \\
 Szczegółowy harmonogram z kamieniami milowymi i KPI & \done \\
 \bottomrule
 \end{longtable}
-
-\noindent\footnotesize $^{\dagger}$ Aspekty AI/ML zostały — w uzgodnieniu z opiekunem projektu
-(mgr inż. Bartłomiej Jencz) — świadomie zastąpione rozszerzonym naciskiem na
-bezpieczeństwo danych (tożsamość bezhasłowa BIP39, podpisy ECDSA/EIP-191,
-ochrona przed atakami powtórzeniowymi). Uzasadnienie w rozdziale~\ref{sec:bezp}.
-\normalsize
 \newpage
 
 % =====================================================================
@@ -160,5 +154,6 @@ ochrona przed atakami powtórzeniowymi). Uzasadnienie w rozdziale~\ref{sec:bezp}
 \input{sekcje/02-implementacja}
 \input{sekcje/03-testowanie}
 \input{sekcje/04-zarzadzanie}
+\input{sekcje/05-zalaczniki}
 
 \end{document}
