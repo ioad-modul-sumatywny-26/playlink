@@ -244,7 +244,7 @@ Represents an authenticated participant. A user is created lazily on first succe
 |-------------------|------------------|----------------------------------------------------------------------|-----------------------------------------------------|
 | `id`              | `int \| None`    | `primary_key=True`, `default=None`                                   | Auto-increment primary key                          |
 | `identity_address`| `str`            | `index=True`, `unique=True`                                          | Ethereum address (checksummed, from ECDSA recovery) |
-| `username`        | `str`            | `default_factory=lambda: f"user_{secrets.token_hex(4)}"`, `index=True`, `unique=True` | Auto-generated display name (e.g. `user_a1b2c3d4`); owner may change once |
+| `username`        | `str`            | `default_factory=lambda: f"user_{secrets.token_hex(4)}"`, `index=True`, `unique=True` | Auto-generated display name (e.g. `user_a1b2c3d4`); owner may change it (no once-only limit) |
 | `created_at`      | `datetime`       | `default_factory=lambda: datetime.now(UTC)`                          | Registration timestamp                              |
 | `last_login`      | `datetime \| None` | `default=None`                                                     | Timestamp of most recent successful authentication   |
 

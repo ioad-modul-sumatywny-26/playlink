@@ -22,7 +22,7 @@ Arguments are forwarded normally:
 ```bash
 uv run pytest -v                # verbose output
 uv run pytest -k test_auth      # run only auth-related tests
-uv run pytest --coverage        # (alias for --cov=…; see CI command below)
+uv run pytest --cov=main --cov=models --cov=database --cov=usernames   # local coverage report
 ```
 
 The CI pipeline runs the full coverage gate:
@@ -68,18 +68,18 @@ The `session` fixture uses `sqlmodel.pool.StaticPool` to avoid SQLite threading 
 
 | Test file | Coverage |
 |-----------|----------|
-| `test_auth.py` (5 tests) | Happy-path authentication flow: request nonce, verify EIP-191 signature, `GET /users/me`, nonce invalidation chain. |
-| `test_auth_edges.py` (8 tests) | Edge cases: nonce hashing & DB shape, replay attack, expired nonce, bad signature format, expired/missing-sub/not-found-user JWT, forged admin claim. |
-| `test_rooms.py` (16 tests) | Room join/leave lifecycle: auth required, 404 on missing room, duplicate name (409), 3-room per-user limit, full room rejection, non-member leave, member payload shape updates. |
-| `test_rooms_lifecycle.py` (9 tests) | Room CRUD with metadata: `lobby_location` validation, oversized `description` (422), unknown location (400), custom game auto-add, `/lobby-locations` endpoint. |
-| `test_room_events.py` (25+ tests) | Event scheduling (PUT/GET/DELETE), RSVP upsert & idempotency, reschedule clears RSVPs, leave clears RSVP, expiry pruning, WebSocket broadcasts (`event_update`, `rsvp_update`, `roster_update`), payload shape parity. |
-| `test_chat.py` (10+ tests) | Chat WebSocket: bad token/not-member/missing-room disconnect, member broadcast, history replay, oversize message drop, EIP-191 signed message verification (valid, tampered, wrong signer, stale timestamp, unsigned, history includes signature). |
-| `test_kick.py` (8 tests) | Admin kick: auth required, cannot kick admin, RSVP removal + rejoin allowed, creator transfer, WS disconnect (4409) + notifications, admin exempt from 3-room limit, member payload `is_admin` flag. |
-| `test_admin.py` (12 tests) | Admin auth enforcement (401/403), delete room cascade (messages, events, RSVPs, members) + WebSocket `room_closed` broadcast, game CRUD with `force` flag. |
-| `test_admin_edges.py` (3 tests) | Admin edge cases: trimmed game name, force-delete game WS notifications across multiple rooms, broad WS connection handling. |
+| `test_auth.py` (7 tests) | Happy-path authentication flow: request nonce, verify EIP-191 signature, `GET /users/me`, nonce invalidation chain. |
+| `test_auth_edges.py` (9 tests) | Edge cases: nonce hashing & DB shape, replay attack, expired nonce, bad signature format, expired/missing-sub/not-found-user JWT, forged admin claim. |
+| `test_rooms.py` (9 tests) | Room join/leave lifecycle: auth required, 404 on missing room, duplicate name (409), 3-room per-user limit, full room rejection, non-member leave, member payload shape updates. |
+| `test_rooms_lifecycle.py` (15 tests) | Room CRUD with metadata: `lobby_location` validation, oversized `description` (422), unknown location (400), custom game auto-add, `/lobby-locations` endpoint. |
+| `test_room_events.py` (33 tests) | Event scheduling (PUT/GET/DELETE), RSVP upsert & idempotency, reschedule clears RSVPs, leave clears RSVP, expiry pruning, WebSocket broadcasts (`event_update`, `rsvp_update`, `roster_update`), payload shape parity. |
+| `test_chat.py` (12 tests) | Chat WebSocket: bad token/not-member/missing-room disconnect, member broadcast, history replay, oversize message drop, EIP-191 signed message verification (valid, tampered, wrong signer, stale timestamp, unsigned, history includes signature). |
+| `test_kick.py` (7 tests) | Admin kick: auth required, cannot kick admin, RSVP removal + rejoin allowed, creator transfer, WS disconnect (4409) + notifications, admin exempt from 3-room limit, member payload `is_admin` flag. |
+| `test_admin.py` (16 tests) | Admin auth enforcement (401/403), delete room cascade (messages, events, RSVPs, members) + WebSocket `room_closed` broadcast, game CRUD with `force` flag. |
+| `test_admin_edges.py` (2 tests) | Admin edge cases: trimmed game name, force-delete game WS notifications across multiple rooms, broad WS connection handling. |
 | `test_users.py` (11 tests) | Username validation unit tests (stoplist, profanity, format codes), `PATCH /users/me` (success, idempotent, bad format, profane, duplicate conflict, unauthenticated). |
 | `test_cleanup.py` (2 tests) | Expired room pruning via `get_rooms_payload`: removes expired rooms + messages, preserves valid rooms. |
-| `test_helpers.py` (8 tests) | Unit tests for module-level helpers: `_parse_admin_addresses`, `is_admin_address` case-insensitivity, `hash_nonce` stability, `_iso` datetime formatting, `_members_payload` shape, `_msg_dict` shape, `ConnectionManager`/`RoomChatManager` stale socket cleanup. |
+| `test_helpers.py` (9 tests) | Unit tests for module-level helpers: `_parse_admin_addresses`, `is_admin_address` case-insensitivity, `hash_nonce` stability, `_iso` datetime formatting, `_members_payload` shape, `_msg_dict` shape, `ConnectionManager`/`RoomChatManager` stale socket cleanup. |
 | `test_migrations.py` (1 test) | Alembic smoke test: applies all migrations to empty SQLite in a temp directory, asserts all 8 tables exist, asserts room columns (`description`, `communicator_link`, `requirements`) and roomevent columns (`starts_at`, `ends_at`, `created_by`, `updated_at`). |
 
 ### WebSocket Coverage

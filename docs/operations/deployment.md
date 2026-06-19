@@ -180,11 +180,11 @@ The single workflow `.github/workflows/cicd.yml` runs on push to `main` and pull
 | `frontend-lint` | `ubuntu-latest` | — | push/PR to main | `bun install --frozen-lockfile`, `bun run lint`, `bun x prettier --check .` |
 | `frontend-test` | `ubuntu-latest` | — | push/PR to main | `bun install --frozen-lockfile`, `bun run test -- --coverage` |
 | `build-test` | `ubuntu-latest` | — | push/PR to main | `docker compose build` (verifies images compile) |
-| `deploy` | `ubuntu-latest` | All 5 preceding jobs | push to main ONLY | Tailscale connect, SSH into production, write `.env` from secrets/vars, `git pull`, `docker compose up --build -d` |
+| `deploy` | `ubuntu-latest` | backend-lint, backend-test, backend-migrations, frontend-lint, build-test | push to main ONLY | Tailscale connect, SSH into production, write `.env` from secrets/vars, `git pull`, `docker compose up --build -d` |
 
 ### Deployment details (auto-deploy on merge to main)
 
-The `deploy` job runs only when all preceding jobs pass AND the trigger is a `push` event on `refs/heads/main`.
+The `deploy` job runs only when the five jobs in its `needs` list pass (note: `frontend-test` is **not** among them) AND the trigger is a `push` event on `refs/heads/main`.
 
 - Establishes a Tailscale connection using `${{ secrets.TS_AUTHKEY }}`.
 - Connects to the production server via SSH (`appleboy/ssh-action@v1`) authenticated with `${{ secrets.SERVER_SSH_KEY }}`.
