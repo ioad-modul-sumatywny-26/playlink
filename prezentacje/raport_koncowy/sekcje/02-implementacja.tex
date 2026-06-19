@@ -1,0 +1,127 @@
+% =====================================================================
+\section{Projekt i implementacja rozwiązania}
+\label{sec:impl}
+
+\subsection{Stopień realizacji wymagań}
+
+Prototyp PlayLink osiągnął poziom \textbf{wersji zaawansowanej ($\geq$90\%)}. Wszystkie
+15 wymagań funkcjonalnych z tab.~\ref{sec:wf} oraz wszystkie 12 wymagań niefunkcjonalnych
+z tab.~\ref{sec:wnf} zostały zrealizowane i wdrożone na środowisku produkcyjnym
+(\url{https://playlink.bartek.monster}). Aplikacja jest w pełni działająca:
+uwierzytelnianie BIP39, tworzenie/dołączanie/opuszczanie pokojów, czat realtime z
+podpisami, kalendarz i RSVP, wyszukiwanie i filtrowanie, panel administratora oraz
+automatyczne czyszczenie wygasłych pokojów.
+
+Zastosowano aktualne standardy projektowe: typowanie statyczne w całym stosie
+(TypeScript + Pydantic/SQLModel), automatyczną walidację żądań, migracje bazy
+(Alembic) oraz w pełni zautomatyzowany pipeline CI/CD (rozdz.~\ref{sec:zarz}).
+
+\subsection{Projekt graficznego interfejsu użytkownika}
+\label{sec:gui}
+
+Interfejs zaprojektowano w estetyce inspirowanej przeglądarką lobby z gry
+\textit{Diablo~II: Resurrected} — ciemna, gotycka paleta złoto-brązowa i
+minimalistyczny układ. Frontend zbudowano w SvelteKit~2 / Svelte~5 (runes) z Tailwind
+CSS; UI reaguje natychmiast na zdarzenia WebSocket. Poniżej wybrane widoki aplikacji.
+
+\begin{figure}[H]
+  \centering
+  \begin{subfigure}[t]{0.48\textwidth}
+    \includegraphics[width=\textwidth]{prez-slide25.png}
+    \caption{Strona startowa („Enter realm”).}
+  \end{subfigure}\hfill
+  \begin{subfigure}[t]{0.48\textwidth}
+    \includegraphics[width=\textwidth]{d2-rooms-v1.png}
+    \caption{Przeglądarka pokojów (lista lobby).}
+  \end{subfigure}
+
+  \vspace{0.7em}
+  \begin{subfigure}[t]{0.48\textwidth}
+    \includegraphics[width=\textwidth]{smoke-form-filled.png}
+    \caption{Formularz tworzenia pokoju.}
+  \end{subfigure}\hfill
+  \begin{subfigure}[t]{0.48\textwidth}
+    \includegraphics[width=\textwidth]{smoke-detail-with-metadata.png}
+    \caption{Szczegóły pokoju z metadanymi.}
+  \end{subfigure}
+
+  \vspace{0.7em}
+  \begin{subfigure}[t]{0.48\textwidth}
+    \includegraphics[width=\textwidth]{prez-slide29.png}
+    \caption{Widok pokoju: uczestnicy, wydarzenie z RSVP, czat.}
+  \end{subfigure}\hfill
+  \begin{subfigure}[t]{0.48\textwidth}
+    \includegraphics[width=\textwidth]{prez-slide35.png}
+    \caption{Moderacja: zdarzenie systemowe o wyrzuceniu uczestnika.}
+  \end{subfigure}
+  \caption{Wybrane widoki graficznego interfejsu PlayLink.}
+  \label{fig:gui}
+\end{figure}
+
+\subsection{Aspekty AI/ML}
+\label{sec:aiml}
+
+W uzgodnieniu z opiekunem projektu (mgr inż. Bartłomiej Jencz) zespół świadomie
+zrezygnował z komponentu AI/ML na rzecz \textbf{rozszerzonego, dopracowanego modelu
+bezpieczeństwa danych} (rozdz.~\ref{sec:bezp}). Decyzja wynika z charakteru produktu:
+kluczową wartością PlayLink jest natychmiastowy, bezpieczny i prywatny dostęp
+(tożsamość niepowiernicza BIP39, weryfikowalne autorstwo wiadomości), a nie
+rekomendacje oparte na uczeniu maszynowym. Dobór pingu odbywa się deterministycznie
+na podstawie odległości geograficznej lobby (metryka Haversine), bez modelu ML.
+
+\subsection{Aspekty bezpieczeństwa danych}
+\label{sec:bezp}
+
+Bezpieczeństwo jest centralnym filarem PlayLink. Przyjęto zasadę \emph{non-custodial}:
+klucz prywatny nigdy nie opuszcza przeglądarki, a backend wyłącznie weryfikuje dowody
+kryptograficzne. Poniżej uzgodnione aspekty bezpieczeństwa — wszystkie zrealizowane
+(pokrycie $\geq$90\%).
+
+\paragraph{1. Tożsamość bezhasłowa (BIP39 + ECDSA).}
+Konto reprezentuje 12-słowna fraza mnemoniczna BIP39 (standard z Bitcoina, 2013;
+2048-wyrazowy słownik daje 132 bity entropii). Z frazy derywowany jest klucz
+secp256k1, a publiczny adres EIP-55 stanowi identyfikator konta. Eliminuje to e-mail,
+numer telefonu i hasło — a tym samym wektor ataku „reset hasła”.
+
+\paragraph{2. Uwierzytelnianie challenge-response i ochrona przed replay.}
+Logowanie wykorzystuje jednorazowy \emph{nonce}: backend wydaje wyzwanie, klient
+podpisuje je (EIP-191 \code{personal_sign}), a backend odtwarza adres z podpisu
+(ECDSA recovery). Zabezpieczenia:
+\begin{itemize}
+  \item nonce jest \textbf{jednorazowy} (flaga \code{used}) i \textbf{krótkożyciowy} (TTL 5~min);
+  \item w bazie przechowywany jest wyłącznie \textbf{skrót SHA-256} wartości nonce —
+        surowa wartość nigdy nie trafia na dysk;
+  \item ponowne wydanie nonce unieważnia poprzedni — co blokuje ataki powtórzeniowe.
+\end{itemize}
+
+\paragraph{3. Izolacja tokenu sesji (wzorzec BFF, hardening XSS).}
+Token JWT (HS256) jest przechowywany w ciasteczku \code{httpOnly},
+\code{sameSite=strict}, ustawianym przez serwer SvelteKit. Token \textbf{nigdy nie jest
+dostępny dla JavaScriptu klienta}, co znacząco ogranicza skutki ewentualnego XSS.
+
+\paragraph{4. Weryfikowalne autorstwo wiadomości.}
+Wiadomości czatu są podpisywane kluczem derywowanym z BIP39 (EIP-191). Serwer
+rekonstruuje kanoniczną postać wiadomości i weryfikuje podpis, a znaczniki czasu
+dryfujące ponad \code{CHAT_SIGNATURE_SKEW_SECONDS} są odrzucane — co ogranicza
+powtórzenia. Autorstwo jest weryfikowalne \emph{end-to-end}, a nie tylko na podstawie JWT.
+
+\paragraph{5. Autoryzacja administratora bez eskalacji.}
+Uprawnienia administratora wynikają wyłącznie z listy adresów w zmiennej środowiskowej
+\code{ADMIN_ADDRESSES} — w bazie nie istnieje kolumna \code{is_admin}. Uniemożliwia to
+eskalację uprawnień przez modyfikację danych; sfałszowane roszczenie o admina jest
+odrzucane (zob.\ testy bezpieczeństwa, rozdz.~\ref{sec:testy}).
+
+\paragraph{6. Ograniczanie nadużyć (rate limiting) i higiena treści.}
+REST jest limitowany przez slowapi (domyślnie 10/min), a czat — przesuwnym oknem
+per-adres. Edycja nazwy użytkownika przechodzi przez filtr wulgaryzmów (stoplist).
+
+\paragraph{7. Bezpieczeństwo sieci i wdrożenia.}
+Cały ruch szyfrowany jest TLS~1.3 (HTTPS + WSS, certyfikaty Let's Encrypt). Wdrożenie
+jest self-hosted: transfer artefaktów odbywa się prywatnym kanałem przez Tailscale
+(mesh VPN, WireGuard), publiczny SSH nie jest wystawiony (brak ataków brute-force na
+port~22), a baza PostgreSQL nie ma mapowania portu na hosta.
+
+\paragraph{Weryfikacja.}
+Wszystkie powyższe mechanizmy są pokryte automatycznymi testami bezpieczeństwa
+(replay nonce, wygasły nonce, sfałszowane roszczenie admina, zmanipulowane podpisy) —
+zob.\ rozdz.~\ref{sec:testy}.

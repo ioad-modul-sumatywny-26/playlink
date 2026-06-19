@@ -1,0 +1,30 @@
+@startuml sekwencja-auth
+' Sekwencja: bezhasłowe logowanie (challenge-response BIP39/ECDSA)
+skinparam backgroundColor #FFFFFF
+skinparam shadowing false
+skinparam sequence {
+  ArrowColor #5a4a2a
+  LifeLineBorderColor #8a6d3b
+  ParticipantBackgroundColor #f5ecd6
+  ParticipantBorderColor #8a6d3b
+}
+autonumber
+
+actor Użytkownik as U
+participant "Przeglądarka\n(Svelte)" as B
+participant "FastAPI" as API
+participant "SvelteKit BFF" as SK
+database "PostgreSQL" as DB
+
+U -> B : podaje 12-słowną frazę BIP39
+B -> B : derywacja klucza\n(klucz NIE opuszcza przeglądarki)
+B -> API : POST /auth/request-nonce { address }
+API -> DB : upsert user,\nzapis SHA-256(nonce), TTL 5 min
+API --> B : { nonce }
+B -> B : personal_sign("Sign in to Playlink\\nNonce: <uuid>")
+B -> API : POST /auth/verify { address, nonce, signature }
+API -> API : odtworzenie adresu z podpisu (ECDSA),\noznaczenie nonce jako użyty
+API --> B : { token (JWT HS256), username }
+B -> SK : POST /auth?/login (token)
+SK --> B : Set-Cookie session=<jwt>\n(httpOnly, sameSite=strict)
+@enduml

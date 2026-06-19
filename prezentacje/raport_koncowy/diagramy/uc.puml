@@ -1,0 +1,56 @@
+@startuml uc
+' Diagram przypadków użycia - PlayLink
+left to right direction
+skinparam backgroundColor #FFFFFF
+skinparam shadowing false
+skinparam packageStyle rectangle
+skinparam actorStyle awesome
+skinparam usecase {
+  BackgroundColor #f5ecd6
+  BorderColor #8a6d3b
+  ArrowColor #5a4a2a
+}
+
+actor "Gość" as Guest
+actor "Użytkownik" as User
+actor "Administrator" as Admin
+actor "System\n(scheduler)" as Sys
+
+User --|> Guest
+Admin --|> User
+
+rectangle "PlayLink" {
+  usecase "Przeglądanie listy pokojów" as UC_browse
+  usecase "Wyszukiwanie i filtrowanie\npokojów" as UC_search
+  usecase "Rejestracja / logowanie\n(BIP39 + ECDSA)" as UC_auth
+  usecase "Odzyskiwanie konta\n(import frazy)" as UC_recover
+  usecase "Edycja nazwy użytkownika" as UC_username
+  usecase "Tworzenie i konfiguracja\npokoju" as UC_create
+  usecase "Dołączanie / opuszczanie\npokoju" as UC_join
+  usecase "Czat w pokoju\n(podpisany EIP-191)" as UC_chat
+  usecase "Planowanie wydarzenia\ni RSVP" as UC_rsvp
+  usecase "Wyrzucenie uczestnika\n(kick)" as UC_kick
+  usecase "Zarządzanie kategoriami gier" as UC_games
+  usecase "Czyszczenie wygasłych\npokojów i wiadomości" as UC_cleanup
+}
+
+Guest --> UC_browse
+Guest --> UC_search
+Guest --> UC_auth
+
+User --> UC_create
+User --> UC_join
+User --> UC_chat
+User --> UC_rsvp
+User --> UC_username
+User --> UC_recover
+
+Admin --> UC_kick
+Admin --> UC_games
+
+Sys --> UC_cleanup
+Sys --> UC_auth : weryfikacja\nchallenge-response
+
+UC_chat ..> UC_join : <<include>>
+UC_rsvp ..> UC_join : <<include>>
+@enduml

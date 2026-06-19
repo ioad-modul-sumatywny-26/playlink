@@ -1,0 +1,174 @@
+% =====================================================================
+\section{Testowanie rozwiązania}
+\label{sec:testy}
+
+PlayLink jest pokryty obszernym, zautomatyzowanym zestawem testów: około
+\textbf{133 testy} po stronie backendu (pytest) oraz około \textbf{60 testów} po
+stronie frontendu (Vitest). Pod względem \emph{różnorodności} wyróżniono
+\textbf{sześć różnych rodzajów testów} (powyżej wymaganego minimum pięciu),
+zestawionych w tab.~\ref{tab:typy-testow}. W podrozdziale~\ref{sec:katalog} opisano
+ponadto \textbf{dziesięć reprezentatywnych przypadków testowych} (po kilka na rodzaj)
+wraz z celem, metodą i wynikiem.
+
+\paragraph{Uwaga terminologiczna (różnorodność vs.\ liczba).}
+Kryterium oceny dotyczy \emph{rodzajów} (typów) testów — wymaganych jest 5 różnych.
+Liczba opisanych przypadków (10) to inna oś: są to konkretne testy rozłożone na owe
+rodzaje (np.\ 2 na rodzaj). Oba wymagania są zatem spełnione jednocześnie: 6 rodzajów
+oraz 10 szczegółowo udokumentowanych przypadków.
+
+\renewcommand{\arraystretch}{1.3}
+\begin{table}[H]
+\centering\small
+\begin{tabularx}{\textwidth}{@{}p{0.21\textwidth}p{0.18\textwidth}Yc@{}}
+\toprule
+\textbf{Rodzaj testów} & \textbf{Narzędzie} & \textbf{Zakres} & \textbf{Liczba} \\
+\midrule
+Jednostkowe & pytest, Vitest & Funkcje pomocnicze, walidacja, store'y, metryka Haversine & $\sim$25 \\
+Integracyjne / API & FastAPI TestClient & Endpointy REST przez całą aplikację (SQLite in-memory) & $\sim$54 \\
+WebSocket / realtime & TestClient WS & Rozgłaszanie ramek czatu i zdarzeń (34 połączenia WS) & $\sim$45 \\
+Bezpieczeństwa & pytest + eth\_account & Replay, wygasły nonce, fałszywy admin, podrobione podpisy & $\sim$10 \\
+Migracji (smoke) & pytest + Alembic & Migracja do \code{head}, weryfikacja schematu; w CI round-trip na Postgresie & 1 (+CI) \\
+Kontraktowe (frontend) & Vitest & Server-loadery i akcje SvelteKit (\code{+page.server.ts}) & $\sim$20 \\
+\bottomrule
+\end{tabularx}
+\caption{Sześć rodzajów testów w projekcie PlayLink.}
+\label{tab:typy-testow}
+\end{table}
+
+\subsection{Charakterystyka rodzajów testów}
+
+\paragraph{Testy jednostkowe.} Weryfikują izolowaną logikę bez bazy i sieci: parsowanie
+listy adresów administratorów, funkcję \code{hash_nonce}, walidację nazw użytkownika,
+a we frontendzie — podpisywanie, store'y oraz obliczanie odległości lobby (Haversine).
+Narzędzia: pytest, Vitest + jsdom.
+
+\paragraph{Testy integracyjne / API.} Uruchamiają żądania HTTP przez całą aplikację
+FastAPI z użyciem \code{TestClient} i bazy SQLite in-memory (fixture nadpisuje
+\code{get_session}). Pokrywają uwierzytelnianie, pełny cykl życia pokoju, panel
+administratora i akcję kick — sprawdzając kody statusu oraz stan w bazie.
+
+\paragraph{Testy WebSocket / realtime.} Wykorzystują \code{TestClient.websocket_connect}
+(34 połączenia WS) do weryfikacji rozgłaszania ramek: \emph{event-update},
+\emph{rsvp-update}, \emph{roster-update}, \emph{room-closed}, \emph{kick}.
+
+\paragraph{Testy bezpieczeństwa.} Najważniejszy rodzaj dla profilu projektu —
+scenariusze ataków (replay, wygasły nonce, eskalacja uprawnień, podrobione podpisy
+EIP-191), z realnym podpisywaniem kluczem (\code{eth_account}).
+
+\paragraph{Testy migracji (smoke).} Aplikują pełny łańcuch Alembic
+(\code{alembic upgrade head}) i sprawdzają obecność wszystkich ośmiu tabel; w CI
+powtarzane na realnym PostgreSQL z round-tripem downgrade/upgrade i \code{alembic check}.
+
+\paragraph{Testy kontraktowe frontendu.} Importują server-loadery i akcje SvelteKit
+z zamockowanymi \code{fetch}/\code{cookies}, weryfikując przekierowania, strażników
+autoryzacji i walidację formularzy.
+
+\subsection{Katalog wybranych przypadków testowych}
+\label{sec:katalog}
+
+Poniżej opisano dziesięć reprezentatywnych przypadków testowych w jednolitym formacie
+(rodzaj, cel, metoda/narzędzie, dane/kroki, oczekiwany wynik, rezultat). Wszystkie
+przechodzą pomyślnie w pipeline CI; zespół może dołączyć do każdego zrzut ekranu
+z wynikiem (np.\ raport pytest/Vitest lub log CI).
+
+\newcommand{\tc}[7]{%
+  \par\vspace{0.5em}\noindent\textbf{#1}\par\nopagebreak\vspace{0.2em}
+  \noindent\begin{tabular}{@{}>{\itshape}p{0.20\textwidth}p{0.74\textwidth}@{}}
+  Rodzaj & #2 \\
+  Cel & #3 \\
+  Metoda / narzędzie & #4 \\
+  Dane / kroki & #5 \\
+  Oczekiwany wynik & #6 \\
+  Rezultat & #7 \\
+  \end{tabular}\par\vspace{0.3em}\noindent\rule{\textwidth}{0.4pt}}
+
+\tc{TC-01: Parsowanie adresów administratorów}
+{Jednostkowy}
+{Sprawdzić poprawne wczytanie i normalizację listy adresów z \code{ADMIN_ADDRESSES}.}
+{pytest (\code{test_helpers.py}, \code{_parse_admin_addresses}).}
+{Wejście \code{" 0xABC , 0xdef "} (spacje, różna wielkość liter).}
+{Zbiór znormalizowanych adresów małymi literami: \code{{0xabc, 0xdef}}.}
+{PASS}
+
+\tc{TC-02: Hashowanie wartości nonce}
+{Jednostkowy}
+{Zapewnić, że nonce jest deterministycznie hashowany (SHA-256) przed zapisem.}
+{pytest (\code{hash_nonce}).}
+{Ten sam nonce hashowany dwukrotnie oraz dwa różne nonce.}
+{Identyczny skrót dla identycznego wejścia; różne skróty dla różnych wejść.}
+{PASS}
+
+\tc{TC-03: Obliczanie odległości lobby (Haversine)}
+{Jednostkowy (frontend)}
+{Zweryfikować dobór pingu na podstawie odległości geograficznej lobby.}
+{Vitest (\code{lobbyLocations.test.ts}).}
+{Pary współrzędnych o znanej odległości.}
+{Odległość w granicach tolerancji; właściwy przedział pingu.}
+{PASS}
+
+\tc{TC-04: Pełny przepływ logowania (challenge-response)}
+{Integracyjny / API}
+{Zweryfikować ścieżkę request-nonce $\rightarrow$ verify $\rightarrow$ wydanie JWT.}
+{FastAPI \code{TestClient} (\code{test_auth.py}), podpis \code{eth_account}.}
+{\code{POST /auth/request-nonce}, podpis nonce, \code{POST /auth/verify}.}
+{HTTP 200 oraz poprawny token JWT i nazwa użytkownika w odpowiedzi.}
+{PASS}
+
+\tc{TC-05: Cykl życia pokoju i limit aktywnych pokojów}
+{Integracyjny / API}
+{Sprawdzić tworzenie, dołączanie, opuszczanie oraz limit 3 aktywnych pokojów.}
+{FastAPI \code{TestClient} (\code{test_rooms_lifecycle.py}).}
+{Sekwencja create/join/leave; próba utworzenia 4.\ pokoju.}
+{Operacje 1--3 kończą się sukcesem; 4.\ pokój odrzucony błędem walidacji.}
+{PASS}
+
+\tc{TC-06: Rozgłaszanie wiadomości i ramek w czacie}
+{WebSocket / realtime}
+{Potwierdzić, że klienci otrzymują aktualizacje w czasie rzeczywistym.}
+{\code{TestClient.websocket_connect} (\code{test_chat.py}, \code{test_room_events.py}).}
+{Dwa połączenia WS w jednym pokoju; wysłanie wiadomości i zmiana RSVP.}
+{Obaj klienci otrzymują ramki \emph{message}, \emph{rsvp-update}, \emph{roster-update}.}
+{PASS}
+
+\tc{TC-07: Odrzucenie ataku powtórzeniowego (replay)}
+{Bezpieczeństwa}
+{Uniemożliwić ponowne użycie tego samego nonce.}
+{pytest (\code{test_verify_signature_rejects_replayed_nonce}).}
+{Poprawna weryfikacja, a następnie ponowna z tym samym nonce/podpisem.}
+{Pierwsza weryfikacja: 200; druga: odrzucenie (nonce oznaczony jako użyty).}
+{PASS}
+
+\tc{TC-08: Brak eskalacji uprawnień administratora}
+{Bezpieczeństwa}
+{Sfałszowane roszczenie o rolę admina nie może dawać dostępu.}
+{pytest (\code{test_forged_admin_claim_does_not_grant_admin_access}).}
+{Token/żądanie konta spoza \code{ADMIN_ADDRESSES} próbuje akcji administracyjnej.}
+{HTTP 403; operacja administracyjna nie zostaje wykonana.}
+{PASS}
+
+\tc{TC-09: Migracja schematu bazy (smoke)}
+{Migracji}
+{Zapewnić, że pełny łańcuch migracji buduje poprawny schemat.}
+{pytest + Alembic (\code{test_migrations.py}); w CI na PostgreSQL.}
+{\code{alembic upgrade head} na świeżej bazie; inspekcja schematu.}
+{Obecnych wszystkie 8 tabel i kluczowe kolumny; brak dryfu (\code{alembic check}).}
+{PASS}
+
+\tc{TC-10: Strażnik autoryzacji trasy (frontend)}
+{Kontraktowy (frontend)}
+{Niezalogowany użytkownik nie ma dostępu do tras chronionych.}
+{Vitest (\code{rooms.name.page.server.test.ts}), zamockowane \code{cookies}/\code{fetch}.}
+{Wywołanie \code{load} bez ważnej sesji.}
+{Przekierowanie HTTP 303 do \code{/rooms}; brak ujawnienia danych chronionych.}
+{PASS}
+
+\subsection{Dokumentacja procesu i automatyzacja (CI)}
+Proces testowy jest opisany w repozytorium (\code{docs/operations/testing.md} — tabele
+pokrycia per plik, opis fixture'ów i kanałów WS). Konfiguracja: \code{pyproject.toml}
+(\code{[tool.pytest.ini_options]}, pytest-cov), \code{vite.config.js} (Vitest, jsdom,
+coverage-v8). Pipeline GitHub Actions (\code{.github/workflows/cicd.yml}) uruchamia
+zadania: \code{backend-lint}, \code{backend-test} (z bramką \code{--cov-fail-under=80}),
+\code{backend-migrations}, \code{frontend-lint}, \code{frontend-test} (z pokryciem) oraz
+\code{build-test}. Zielony wynik wszystkich testów jest warunkiem wdrożenia
+(\code{deploy}) oraz scalenia PR do \code{main}, co stanowi ciągłą, weryfikowalną
+dokumentację wyników testowania.

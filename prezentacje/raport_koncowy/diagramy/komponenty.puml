@@ -1,0 +1,43 @@
+@startuml komponenty
+' Diagram komponentów - PlayLink
+skinparam backgroundColor #FFFFFF
+skinparam shadowing false
+skinparam componentStyle rectangle
+skinparam component {
+  BackgroundColor #f5ecd6
+  BorderColor #8a6d3b
+}
+skinparam database {
+  BackgroundColor #e8dcc0
+  BorderColor #8a6d3b
+}
+skinparam node {
+  BackgroundColor #faf6ec
+  BorderColor #8a6d3b
+}
+
+actor "Użytkownik" as user
+
+node "Przeglądarka" as browser {
+  component "Svelte 5 (klient)\nethers / viem\npodpisywanie BIP39" as spa
+}
+
+node "Serwer aplikacyjny\n(self-hosted, Docker Compose)" as server {
+  component "Nginx\nreverse proxy + TLS 1.3\nLet's Encrypt" as nginx
+  component "SvelteKit BFF\nadapter-node :3000\nhttpOnly session cookie" as bff
+  component "FastAPI :8000\nREST + WebSocket\nslowapi rate limiting" as api
+  component "Zadanie w tle\nczyszczenie pokojów" as cleanup
+  database "PostgreSQL 18\n(SQLModel / Alembic)" as db
+}
+
+cloud "Tailscale (mesh VPN)\nCI/CD deploy przez SSH" as tailscale
+
+user --> spa
+spa --> nginx : HTTPS / WSS
+nginx --> bff : akcje formularzy\n(login, mutacje)
+nginx --> api : REST + WebSocket\n(odczyty, czat, lista pokojów)
+bff --> api : server-side fetch\n(JWT w nagłówku)
+api --> db : SQLModel / SQLAlchemy
+cleanup --> db : prune expired
+tailscale ..> server : deploy (GitHub Actions)
+@enduml

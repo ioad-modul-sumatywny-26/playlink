@@ -1,0 +1,164 @@
+\documentclass[12pt,a4paper]{article}
+
+% ---- Język i kodowanie ----
+\usepackage[polish]{babel}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage{indentfirst}
+
+% ---- Układ strony ----
+\usepackage{geometry}
+\geometry{margin=2.5cm}
+\usepackage{microtype}
+\setlength{\parskip}{0.4em}
+
+% ---- Grafika i tabele ----
+\usepackage{graphicx}
+\usepackage{float}
+\usepackage{caption}
+\usepackage{subcaption}
+\captionsetup{font=small,labelfont=bf}
+\usepackage{booktabs}
+\usepackage{tabularx}
+\usepackage{longtable}
+\usepackage{array}
+\usepackage{makecell}
+\usepackage{multirow}
+\usepackage{enumitem}
+\setlist{nosep,leftmargin=1.4em}
+
+% ---- Kolory i symbole ----
+\usepackage{xcolor}
+\definecolor{gold}{HTML}{8A6D3B}
+\definecolor{darkgold}{HTML}{5A4A2A}
+\definecolor{okgreen}{HTML}{2E7D32}
+\usepackage{pifont}
+\newcommand{\done}{\textcolor{okgreen}{\ding{51}}}
+\newcommand{\na}{\textcolor{gray}{\ding{55}}}
+
+% ---- Listingi / kod ----
+\usepackage{listings}
+\lstset{
+  basicstyle=\ttfamily\small,
+  breaklines=true,
+  columns=fullflexible,
+  keepspaces=true,
+  frame=single,
+  rulecolor=\color{gold!60},
+  backgroundcolor=\color{gold!5},
+  literate=%
+    {ą}{{\k a}}1 {ć}{{\'c}}1 {ę}{{\k e}}1 {ł}{{\l}}1 {ń}{{\'n}}1
+    {ó}{{\'o}}1 {ś}{{\'s}}1 {ż}{{\.z}}1 {ź}{{\'z}}1
+    {Ą}{{\k A}}1 {Ć}{{\'C}}1 {Ę}{{\k E}}1 {Ł}{{\L}}1 {Ń}{{\'N}}1
+    {Ó}{{\'O}}1 {Ś}{{\'S}}1 {Ż}{{\.Z}}1 {Ź}{{\'Z}}1
+}
+\newcommand{\code}[1]{\texttt{\detokenize{#1}}}
+
+% ---- Tytuły sekcji ----
+\usepackage{titlesec}
+\titleformat{\section}{\Large\bfseries\color{darkgold}}{\thesection}{0.6em}{}
+\titleformat{\subsection}{\large\bfseries\color{gold}}{\thesubsection}{0.6em}{}
+
+% ---- Hiperłącza ----
+\usepackage[hidelinks]{hyperref}
+\hypersetup{colorlinks=true,linkcolor=darkgold,urlcolor=gold,citecolor=darkgold}
+
+% ---- Skróty ----
+\newcolumntype{Y}{>{\raggedright\arraybackslash}X}
+\graphicspath{{obrazy/}{diagramy/}}
+
+\title{
+    \large Moduł sumatywny IOAD 2025/2026 \\[0.3em]
+    \Huge \textbf{Raport końcowy} \\[0.3em]
+    \LARGE Platforma PlayLink \\
+    \large \textit{Looking-For-Group dla gier niszowych, retro i mniej popularnych}
+}
+
+\author{
+    Bartosz Kołaciński, nr indeksu: 251554 \\
+    Mateusz Kosowski, nr indeksu: 251558 \\
+    Nikodem Nowak, nr indeksu: 251598 \\
+    Jakub Rosiak, nr indeksu: 251620 \\
+    Jakub Rusek, nr indeksu: 247774 \\[0.6em]
+    \normalsize Opiekun projektu: mgr inż. Bartłomiej Jencz
+}
+
+\date{\today}
+
+\begin{document}
+
+\maketitle
+\begin{center}
+\small
+Repozytorium: \url{https://github.com/ioad-modul-sumatywny-26/playlink} \\
+Demo: \url{https://playlink.bartek.monster} \quad\textbullet\quad
+API: \url{https://playlink-backend.bartek.monster/docs}
+\end{center}
+\newpage
+
+\tableofcontents
+\newpage
+
+% =====================================================================
+\section{Lista wykonanych punktów}
+\label{sec:lista}
+
+Poniższa tabela zestawia wszystkie kryteria oceny modułu sumatywnego ze stanem ich
+realizacji w projekcie PlayLink. Symbol \done{} oznacza punkt zrealizowany,
+a \na{} — punkt świadomie pominięty (zob.\ przypis).
+
+\renewcommand{\arraystretch}{1.25}
+\begin{longtable}{@{}p{0.86\textwidth}c@{}}
+\toprule
+\textbf{Kryterium} & \textbf{Wyk.} \\
+\midrule
+\endhead
+\multicolumn{2}{@{}l}{\textit{Analiza problemu}} \\
+Analiza istniejących rozwiązań (min.\ 3) wraz z oceną zalet i wad (min.\ po 2) & \done \\
+Określenie wymagań funkcjonalnych (min.\ 10) & \done \\
+Określenie wymagań niefunkcjonalnych (min.\ 5) i ich miar & \done \\
+Zidentyfikowanie przypadków użycia wraz ze scenariuszami & \done \\
+Diagramy przypadków użycia & \done \\
+Wstępna architektura rozwiązania & \done \\
+Diagram komponentów & \done \\
+Wstępny model rozwiązania (warstwa danych i warstwa logiki) & \done \\
+\addlinespace
+\multicolumn{2}{@{}l}{\textit{Projekt i implementacja}} \\
+Prototyp w wersji podstawowej (min.\ 50\% wymagań funkc.\ i niefunkc.) & \done \\
+Prototyp w wersji zaawansowanej (min.\ 70\% wymagań funkc.\ i niefunkc.) & \done \\
+Prototyp w wersji zaawansowanej (min.\ 90\% wymagań funkc.\ i niefunkc.) & \done \\
+Projekt graficznego interfejsu użytkownika & \done \\
+Uwzględnienie wybranych aspektów AI/ML\,$^{\dagger}$ & \na \\
+Uwzględnienie co najmniej 90\% aspektów AI/ML\,$^{\dagger}$ & \na \\
+Uwzględnienie wybranych aspektów bezpieczeństwa danych & \done \\
+Uwzględnienie co najmniej 90\% aspektów bezpieczeństwa danych & \done \\
+\addlinespace
+\multicolumn{2}{@{}l}{\textit{Testowanie}} \\
+Przeprowadzenie 3 różnych rodzajów testów + dokumentacja & \done \\
+Przeprowadzenie 4 różnych rodzajów testów + dokumentacja & \done \\
+Przeprowadzenie 5 różnych rodzajów testów + dokumentacja & \done \\
+\addlinespace
+\multicolumn{2}{@{}l}{\textit{Zarządzanie projektem}} \\
+Przygotowanie opisu celów i zakresu projektu & \done \\
+Określenie podziału ról i zadań w zespole & \done \\
+Sporządzenie raportu końcowego ze wszystkimi wymaganymi elementami & \done \\
+Harmonogram realizacji projektu z kamieniami milowymi & \done \\
+Szczegółowy harmonogram z kamieniami milowymi i KPI & \done \\
+\bottomrule
+\end{longtable}
+
+\noindent\footnotesize $^{\dagger}$ Aspekty AI/ML zostały — w uzgodnieniu z opiekunem projektu
+(mgr inż. Bartłomiej Jencz) — świadomie zastąpione rozszerzonym naciskiem na
+bezpieczeństwo danych (tożsamość bezhasłowa BIP39, podpisy ECDSA/EIP-191,
+ochrona przed atakami powtórzeniowymi). Uzasadnienie w rozdziale~\ref{sec:bezp}.
+\normalsize
+\newpage
+
+% =====================================================================
+\input{sekcje/01-analiza}
+\input{sekcje/02-implementacja}
+\input{sekcje/03-testowanie}
+\input{sekcje/04-zarzadzanie}
+
+\end{document}
