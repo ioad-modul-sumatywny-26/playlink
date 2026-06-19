@@ -242,7 +242,10 @@
 		closePending = true;
 		closeError = null;
 		try {
-			const response = await fetch('?/closeRoom', { method: 'POST' });
+			const response = await fetch('?/closeRoom', {
+				method: 'POST',
+				body: new FormData()
+			});
 			const result = deserialize(await response.text()) as
 				| { type: 'success' }
 				| { type: 'failure'; data?: { error?: string } }

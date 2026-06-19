@@ -47,6 +47,23 @@ describe('room page load', () => {
 });
 
 describe('room actions', () => {
+	it('closes a room through the admin backend endpoint', async () => {
+		const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+			ok: true
+		} as Response);
+
+		const result = await actions.closeRoom({
+			cookies: cookies(),
+			params: { name: 'Lobby 2' }
+		} as any);
+
+		expect(fetchMock).toHaveBeenCalledWith('http://localhost:8000/rooms/Lobby%202', {
+			method: 'DELETE',
+			headers: { Authorization: 'Bearer token' }
+		});
+		expect(result).toEqual({ success: true, closed: true });
+	});
+
 	it('rejects missing auth', async () => {
 		const result = await actions.setRsvp({
 			cookies: cookies(undefined),
