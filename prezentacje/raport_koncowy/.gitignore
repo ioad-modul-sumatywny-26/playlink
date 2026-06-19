@@ -1,0 +1,2 @@
+# Build intermediates for the merged technical-docs PDF (rendered mermaid + staged markdown)
+.merged-src/

@@ -65,7 +65,7 @@ erDiagram
 
     RoomEvent {
         int id PK
-        int room_id FK, UQ
+        int room_id FK "unique"
         datetime starts_at
         datetime ends_at
         string created_by
