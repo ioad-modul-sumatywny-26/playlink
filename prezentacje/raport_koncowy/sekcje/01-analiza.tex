@@ -403,7 +403,7 @@ WebSocket. Najważniejsze elementy:
         (co \code{ROOM_CLEANUP_INTERVAL_SECONDS}).
 \end{itemize}
 
-Stan połączeń realtime utrzymują dwie klasy menedżerów (singletony w \code{main.py}):
+Stan połączeń realtime utrzymują dwie klasy menedżerów (singletony w module \code{backend/ws/managers.py}):
 \code{ConnectionManager} (rejestr połączeń kanału listy pokojów) oraz
 \code{RoomChatManager} (rejestr połączeń czatu per pokój, z mapowaniem gniazdo$\rightarrow$adres).
 Diagram klas (rys.~\ref{fig:klasy}) zestawia encje warstwy danych z tymi menedżerami

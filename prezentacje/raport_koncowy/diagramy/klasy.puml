@@ -71,7 +71,7 @@ package "Warstwa danych (models.py)" {
   }
 }
 
-package "Warstwa logiki (main.py)" {
+package "Warstwa logiki (backend/ws, routers)" {
   class ConnectionManager {
     -active_connections: list<WebSocket>
     +connect(ws)
