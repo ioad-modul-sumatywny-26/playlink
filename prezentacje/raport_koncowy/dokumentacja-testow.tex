@@ -1,0 +1,62 @@
+% Standalone — Dokumentacja testów PlayLink.
+% Treść 1:1 z rozdziałem "Testowanie rozwiązania" raportu końcowego (sekcje/03-testowanie.tex).
+\documentclass[12pt,a4paper]{article}
+
+\usepackage[polish]{babel}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage{indentfirst}
+\usepackage{geometry}
+\geometry{margin=2.5cm}
+\usepackage{microtype}
+\setlength{\parskip}{0.4em}
+
+\usepackage{graphicx}
+\usepackage{float}
+\usepackage{caption}
+\captionsetup{font=small,labelfont=bf}
+\usepackage{booktabs}
+\usepackage{tabularx}
+\usepackage{longtable}
+\usepackage{array}
+\usepackage{makecell}
+\usepackage{enumitem}
+\setlist{nosep,leftmargin=1.4em}
+
+\usepackage{xcolor}
+\definecolor{gold}{HTML}{8A6D3B}
+\definecolor{darkgold}{HTML}{5A4A2A}
+
+\newcommand{\code}[1]{\texttt{\detokenize{#1}}}
+\usepackage{seqsplit}
+\newcommand{\bpath}[1]{\texttt{\expandafter\seqsplit\expandafter{\detokenize{#1}}}}
+
+\usepackage{titlesec}
+\titleformat{\section}{\Large\bfseries\color{darkgold}}{\thesection}{0.6em}{}
+\titleformat{\subsection}{\large\bfseries\color{gold}}{\thesubsection}{0.6em}{}
+
+\usepackage[hidelinks]{hyperref}
+\hypersetup{colorlinks=true,linkcolor=darkgold,urlcolor=gold}
+
+\newcolumntype{Y}{>{\raggedright\arraybackslash}X}
+
+\title{
+    \large PlayLink — Moduł sumatywny IOAD 2025/2026 \\[0.3em]
+    \Huge \textbf{Dokumentacja testów} \\[0.3em]
+    \large \textit{Załącznik B do raportu końcowego}
+}
+\author{Zespół PlayLink}
+\date{\today}
+
+\begin{document}
+\maketitle
+\begin{center}\small
+Treść niniejszego dokumentu jest tożsama z rozdziałem „Testowanie rozwiązania''
+raportu końcowego.
+\end{center}
+\vspace{1em}
+
+\input{sekcje/03-testowanie}
+
+\end{document}

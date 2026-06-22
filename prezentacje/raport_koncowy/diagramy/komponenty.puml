@@ -1,0 +1,47 @@
+@startuml komponenty
+' Diagram komponentów - PlayLink (zgodny z docker-compose.yml: db, backend, frontend)
+skinparam backgroundColor #FFFFFF
+skinparam shadowing false
+skinparam componentStyle rectangle
+skinparam component {
+  BackgroundColor #f5ecd6
+  BorderColor #8a6d3b
+}
+skinparam database {
+  BackgroundColor #e8dcc0
+  BorderColor #8a6d3b
+}
+skinparam node {
+  BackgroundColor #faf6ec
+  BorderColor #8a6d3b
+}
+
+actor "Użytkownik" as user
+
+node "Przeglądarka" as browser {
+  component "Svelte 5 (klient)\nethers / viem\npodpisywanie BIP39" as spa
+}
+
+node "Serwer produkcyjny\n(self-hosted, Docker Compose)" as server {
+  component "frontend\nSvelteKit BFF (adapter-node)\n:3000, httpOnly session cookie" as bff
+  component "backend\nFastAPI :8000\nREST + WebSocket\nslowapi rate limiting" as api
+  component "zadanie w tle\nczyszczenie wygasłych pokojów" as cleanup
+  database "db\nPostgreSQL 18\n(SQLModel / Alembic)" as db
+}
+
+cloud "Tailscale (mesh VPN)\nCI/CD: SSH deploy" as tailscale
+
+user --> spa
+spa --> bff : HTTPS\nlogin, akcje formularzy (BFF)
+spa --> api : HTTPS / WSS\nREST + WebSocket (odczyty, czat, lista pokojów)
+bff --> api : server-side fetch\n(JWT w nagłówku)
+api --> db : SQLModel / SQLAlchemy
+cleanup --> db : prune expired
+tailscale ..> server : deploy (GitHub Actions)
+
+note bottom of server
+  TLS/HTTPS terminowane na brzegu hosta produkcyjnego.
+  W repozytorium wystawione porty: frontend :3000, backend :8000;
+  baza danych bez mapowania portu (tylko sieć wewnętrzna Dockera).
+end note
+@enduml

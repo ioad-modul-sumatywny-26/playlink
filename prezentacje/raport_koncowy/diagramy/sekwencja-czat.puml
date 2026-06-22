@@ -1,0 +1,33 @@
+@startuml sekwencja-czat
+' Sekwencja: wysłanie podpisanej wiadomości na czacie (EIP-191)
+skinparam backgroundColor #FFFFFF
+skinparam shadowing false
+skinparam sequence {
+  ArrowColor #5a4a2a
+  LifeLineBorderColor #8a6d3b
+  ParticipantBackgroundColor #f5ecd6
+  ParticipantBorderColor #8a6d3b
+}
+autonumber
+
+actor Użytkownik as U
+participant "Przeglądarka\n(Svelte)" as B
+participant "FastAPI\n/ws/rooms/<name>/chat" as API
+participant "RoomChatManager" as M
+database "PostgreSQL" as DB
+participant "Inni członkowie\npokoju" as O
+
+U -> B : wpisuje treść wiadomości
+B -> B : personal_sign(content + sent_at) [EIP-191]
+B -> API : {content, sent_at, signature} (WebSocket)
+API -> API : kontrola członkostwa + rate limit (10 / 10 s)
+API -> API : _verify_chat_signature\n(odtworzenie adresu, skew <= 120 s)
+alt podpis poprawny i świeży
+  API -> DB : zapis Message (z signature)
+  API -> M : broadcast(room, {type: "message"})
+  M -> O : ramka "message"
+  M -> B : ramka "message"
+else podpis błędny lub przeterminowany
+  API -> B : {type: "error", detail: "signature_invalid"}
+end
+@enduml

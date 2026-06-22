@@ -1,0 +1,118 @@
+% =====================================================================
+\section{Zarządzanie projektem}
+\label{sec:zarz}
+
+\subsection{Cele i zakres projektu}
+
+\textbf{Cel.} Stworzenie aplikacji webowej PlayLink umożliwiającej szybkie tworzenie i
+wyszukiwanie sesji do wspólnej gry w niszowe, retro oraz mniej popularne tytuły
+multiplayer.
+
+\textbf{Zakres.} Projekt obejmuje: interfejs użytkownika, backend obsługujący sesje i
+komunikację w czasie rzeczywistym oraz funkcje tworzenia, przeglądania, dołączania i
+opuszczania sesji, czat w obrębie pokoju, bezhasłowe uwierzytelnianie (BIP39),
+kalendarz/RSVP, panel administratora oraz pełną automatyzację wdrożenia (CI/CD).
+
+\textbf{Co osiągnięto.} Zrealizowano wszystkie zaplanowane wymagania funkcjonalne i
+niefunkcjonalne; aplikacja działa na środowisku produkcyjnym, ze szczególnym
+naciskiem na bezpieczeństwo danych.
+
+\subsection{Podział ról i zadań w zespole}
+
+\renewcommand{\arraystretch}{1.3}
+\begin{table}[H]
+\centering\small
+\begin{tabularx}{\textwidth}{@{}llY@{}}
+\toprule
+\textbf{Osoba (nr indeksu)} & \textbf{Rola} & \textbf{Wykonywane zadania} \\
+\midrule
+Jakub Rusek (247774) & Backend \& DevOps & Architektura backendu, autoryzacja, automatyzacja CI/CD (GitHub Actions), strategia wdrożeń, stabilność i dostępność. \\
+Nikodem Nowak (251598) & Backend Developer & Logika serwerowa, implementacja API, komunikacja realtime (WebSocket), zarządzanie sesjami i bazą danych. \\
+Bartosz Kołaciński (251554) & Frontend Developer & Budowa interfejsu użytkownika (UI/UX), integracja frontendu z backendem. \\
+Mateusz Kosowski (251558) & Solution Architect & Projektowanie architektury rozwiązania, spójność decyzji technicznych, koordynacja integracji komponentów. \\
+Jakub Rosiak (251620) & QA \& Documentation & Scenariusze testowe, walidacja kluczowych funkcji MVP, utrzymanie dokumentacji projektowej. \\
+\bottomrule
+\end{tabularx}
+\caption{Podział ról i zadań w zespole projektowym.}
+\label{tab:role}
+\end{table}
+
+\subsection{Harmonogram realizacji i kamienie milowe}
+
+Projekt realizowano w sześciu etapach. Zestawienie etapów wraz z terminami i kamieniami
+milowymi przedstawia tab.~\ref{tab:harmonogram}.
+
+\renewcommand{\arraystretch}{1.3}
+\begin{longtable}{@{}cp{0.16\textwidth}p{0.40\textwidth}p{0.24\textwidth}@{}}
+\caption{Harmonogram realizacji projektu z kamieniami milowymi.}\label{tab:harmonogram}\\
+\toprule
+\textbf{Etap} & \textbf{Termin} & \textbf{Zakres prac} & \textbf{Kamień milowy} \\
+\midrule
+\endfirsthead
+\toprule
+\textbf{Etap} & \textbf{Termin} & \textbf{Zakres prac} & \textbf{Kamień milowy} \\
+\midrule
+\endhead
+1 & Tydzień 3 & Analiza i założenia: cele i zakres, analiza rozwiązań, wymagania, podział ról, harmonogram, porządek repozytorium. & Zakończenie dokumentacji wstępnej. \\
+2 & Tygodnie 4–5 & Projektowanie: architektura, struktura frontendu i backendu, główne widoki (user flow), lista zadań w Issues. & Gotowość do implementacji. \\
+3 & Tygodnie 6–8 & Implementacja MVP: lista i tworzenie sesji, logika dołączania/opuszczania, integracja frontend–backend. & Działające MVP. \\
+4 & Tygodnie 9–10 & Rozszerzenia i realtime: czat, WebSocket, dynamiczna aktualizacja listy pokojów. & Pełna wersja funkcjonalna. \\
+5 & Do pocz.\ czerwca & Testy i poprawki: scenariusze użytkownika, walidacja formularzy, poprawki UI i stabilności, dokumentacja. & Gotowość na termin wstępny. \\
+6 & Pocz.–poł.\ czerwca & Finalizacja: ostatnie poprawki, domknięcie zadań, wersja końcowa, przygotowanie do prezentacji. & Oddanie wersji końcowej. \\
+\bottomrule
+\end{longtable}
+
+\paragraph{Podsumowanie kamieni milowych.}
+(1)~Tydzień~3 — dokumentacja wstępna; (2)~Tydzień~5 — projekt rozwiązania;
+(3)~Tydzień~8 — MVP; (4)~Tydzień~10 — pełna wersja funkcjonalna;
+(5)~początek czerwca — gotowość na termin wstępny; (6)~połowa czerwca — wersja końcowa.
+
+\subsection{Szczegółowy harmonogram: kluczowe wskaźniki efektywności (KPI)}
+
+Dla każdego etapu zdefiniowano mierzalne KPI; zestawienie globalne przedstawia
+tab.~\ref{tab:kpi}.
+
+\renewcommand{\arraystretch}{1.3}
+\begin{table}[H]
+\centering\small
+\begin{tabularx}{\textwidth}{@{}Yc@{}}
+\toprule
+\textbf{Wskaźnik (KPI)} & \textbf{Cel} \\
+\midrule
+Liczba przeanalizowanych rozwiązań konkurencyjnych & $\geq$ 3 \\
+Liczba wymagań funkcjonalnych & $\geq$ 10 \\
+Liczba wymagań niefunkcjonalnych & $\geq$ 5 \\
+Procent ukończonych funkcji MVP (etap 4) & $\geq$ 90\% \\
+Liczba działających funkcji realtime & $\geq$ 3 \\
+Czas aktualizacji danych (realtime) & $<$ 1000~ms \\
+Pokrycie testami backendu (bramka CI) & $\geq$ 80\% \\
+Liczba otwartych błędów krytycznych przed oddaniem & 0 \\
+Procent zamkniętych zadań (Issues) do połowy czerwca & $\geq$ 95\% \\
+Czas wdrożenia (od \code{push} do live) & $\approx$ 3~min \\
+\bottomrule
+\end{tabularx}
+\caption{Globalne kluczowe wskaźniki efektywności (KPI) projektu.}
+\label{tab:kpi}
+\end{table}
+
+\paragraph{Wybrane KPI etapowe.}
+\begin{itemize}
+  \item \textbf{Etap 2:} architektura systemu 100\%; liczba opisanych głównych widoków
+        $\geq$~4; liczba zadań implementacyjnych $\geq$~10.
+  \item \textbf{Etap 3:} ukończone funkcje podstawowe $\geq$~70\%; zamknięte Issues
+        $\geq$~60\% zaplanowanych; liczba błędów krytycznych $\leq$~5.
+  \item \textbf{Etap 5:} przetestowane główne funkcje $\geq$~90\%; otwarte błędy
+        krytyczne~0; czas reakcji na zgłoszony błąd $\leq$~2~dni.
+  \item \textbf{Etap 6:} ukończone zadania projektowe $\geq$~95\%; otwarte zadania
+        wysokiego priorytetu $\leq$~2.
+\end{itemize}
+
+\subsection{Narzędzia i proces pracy zespołowej}
+
+Pracę zorganizowano w oparciu o GitHub: \textbf{Issues} (planowanie i podział zadań),
+\textbf{Projects} z tablicą \textbf{Kanban} (przepływ \emph{Todo} $\rightarrow$
+\emph{Awaiting Review} $\rightarrow$ \emph{Done}) oraz \textbf{Milestones} (kamienie
+milowe). Obowiązywały zasady współpracy (\code{CONTRIBUTING.md}): rozwój na gałęziach
+funkcyjnych, obowiązkowy przegląd Pull Requestów oraz konwencja komunikatów commitów.
+Każdy PR musiał przejść zielony pipeline CI (lint + testy + build) przed scaleniem do
+\code{main}, co zapewniało ciągłą jakość i czytelność dokumentacji projektowej.

@@ -1,0 +1,99 @@
+@startuml er
+' Model danych (ERD) - PlayLink
+skinparam backgroundColor #FFFFFF
+skinparam shadowing false
+skinparam linetype ortho
+hide circle
+skinparam class {
+  BackgroundColor #f5ecd6
+  BorderColor #8a6d3b
+  ArrowColor #5a4a2a
+}
+
+entity "user" as user {
+  *id : int <<PK>>
+  --
+  identity_address : str <<UK>>
+  username : str <<UK>>
+  created_at : datetime
+  last_login : datetime
+}
+
+entity "nonce" as nonce {
+  *id : int <<PK>>
+  --
+  identity_address : str
+  value : str <<UK, SHA-256>>
+  expires_at : datetime
+  used : bool
+  user_id : int <<FK>>
+}
+
+entity "room" as room {
+  *id : int <<PK>>
+  --
+  name : str <<UK>>
+  game : str
+  lobby_location : str
+  players_max : int
+  description : str
+  communicator_link : str
+  requirements : str
+  created_by : str
+  created_at : datetime
+  expires_at : datetime
+}
+
+entity "roommember" as rm {
+  *room_id : int <<PK, FK>>
+  *user_id : int <<PK, FK>>
+  --
+  joined_at : datetime
+}
+
+entity "message" as msg {
+  *id : int <<PK>>
+  --
+  room_id : int <<FK>>
+  sender_address : str
+  content : str
+  created_at : datetime
+  signature : str <<EIP-191>>
+  sent_at : str
+}
+
+entity "roomevent" as ev {
+  *id : int <<PK>>
+  --
+  room_id : int <<FK, UQ>>
+  starts_at : datetime
+  ends_at : datetime
+  created_by : str
+  created_at : datetime
+  updated_at : datetime
+}
+
+entity "roomeventrsvp" as rsvp {
+  *id : int <<PK>>
+  --
+  event_id : int <<FK>>
+  user_id : int <<FK>>
+  status : present|absent|maybe
+  updated_at : datetime
+}
+
+entity "game" as game {
+  *id : int <<PK>>
+  --
+  name : str <<UK>>
+  sort_order : int
+}
+
+user ||--o{ nonce
+room ||--o{ rm
+user ||--o{ rm
+room ||--o{ msg
+room ||--|| ev
+ev ||--o{ rsvp
+user ||--o{ rsvp
+@enduml

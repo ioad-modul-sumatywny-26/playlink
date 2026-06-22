@@ -185,7 +185,7 @@ app.add_middleware(
 )
 ```
 
-- **allow_credentials**: `True` — necessary for the `session` cookie used by the frontend BFF (see [API Reference](api-reference.md#authentication-flow)).
+- **allow_credentials**: `True` — necessary for the `session` cookie used by the frontend BFF (see [API Reference](api-reference.md#authentication)).
 - **allow_methods**: `["*"]` — all HTTP methods permitted.
 - **allow_headers**: `["*"]` — all HTTP headers permitted.
 - No `expose_headers` is set; the default set applies.
@@ -258,8 +258,8 @@ def validate_username(name: str) -> str | None:
 | Return value | Meaning | HTTP status (in endpoint) |
 |---|---|---|
 | `None` | Valid | 200 (success) |
-| `"invalid_format"` | Regex failed | 422 (see [API Reference](api-reference.md#patch-usersme)) |
-| `"profane"` | Stoplist match | 422 |
+| `"invalid_format"` | Regex failed | 400 (see [API Reference](api-reference.md#patch-usersme)) |
+| `"profane"` | Stoplist match | 400 |
 
 Duplicate usernames produce a 409 Conflict, detected via SQL `IntegrityError` on the `user.username` unique index.
 
