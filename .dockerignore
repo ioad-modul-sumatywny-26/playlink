@@ -1,0 +1,15 @@
+.git
+.github
+docs
+prezentacje
+node_modules
+.venv
+__pycache__
+*.pyc
+.env
+.env.*
+!.env.example
+frontend/.svelte-kit
+frontend/build
+frontend/node_modules
+backend/.venv

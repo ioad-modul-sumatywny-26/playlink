@@ -39,7 +39,7 @@ done
 cd /app/backend
 
 echo "[backend] Running database migrations (alembic upgrade head)..."
-alembic upgrade head
+python3 -m alembic upgrade head
 
 echo "[backend] Starting Uvicorn on 0.0.0.0:8000..."
-exec uvicorn main:app --host 0.0.0.0 --port 8000
+exec python3 -m uvicorn main:app --host 0.0.0.0 --port 8000
