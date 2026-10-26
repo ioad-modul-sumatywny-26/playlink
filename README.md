@@ -62,14 +62,41 @@ Services:
 
 - Frontend — `http://localhost:3000`
 - Backend (OpenAPI docs at `/docs`) — `http://localhost:8000`
-- PostgreSQL — `localhost:5432`
+- PostgreSQL — internal to Docker network (`app-network`)
 
 For running each service outside Docker, see [`backend/README.md`](backend/README.md) and [`frontend/README.md`](frontend/README.md).
+
+## All-in-One Appliance Container
+
+In addition to Docker Compose, Playlink can be run as a self-contained, unified single container (`Dockerfile.allinone`) housing PostgreSQL, the FastAPI backend, SvelteKit frontend, and a Cloudflare Tunnel connector managed by Supervisord.
+
+Use the launcher script [`run-playlink.sh`](run-playlink.sh):
+
+```bash
+# Make script executable (if needed)
+chmod +x run-playlink.sh
+
+# Run locally with exposed ports:
+./run-playlink.sh --build --expose-ports
+
+# Run with Cloudflare Zero Trust tunnel:
+./run-playlink.sh -t "<CLOUDFLARE_TUNNEL_TOKEN>" -o "https://playlink.domain.com" -b "api.playlink.domain.com"
+
+# Common lifecycle commands:
+./run-playlink.sh --logs      # Follow container logs
+./run-playlink.sh --restart   # Restart appliance container
+./run-playlink.sh --stop      # Stop and remove container
+```
+
+For detailed configuration flags and production multi-server architecture recommendations, see [`docs/operations/deployment.md`](docs/operations/deployment.md).
 
 ## Project Organization
 
 - `backend/` — FastAPI service, SQLModel schemas, Alembic migrations, authentication and rooms logic.
 - `frontend/` — SvelteKit application and identity management UI.
+- `docker/allinone/` — Process startup scripts and Supervisord configuration for the unified container.
+- `Dockerfile.allinone` — Unified multi-stage container build definition.
+- `run-playlink.sh` — Parameterized launcher and lifecycle management script.
 - `prezentacje/` — Project documentation and presentation materials.
 - `docker-compose.yml` — Multi-container orchestration configuration.
 - `CONTRIBUTING.md` — Workflow, branching, and quality standards.

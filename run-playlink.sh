@@ -348,7 +348,7 @@ fi
 DOCKER_ARGS+=("$IMAGE_NAME")
 
 echo "Starting Playlink appliance container..."
-"${DOCKER_ARGS[@]}"
+docker "${DOCKER_ARGS[@]}"
 
 echo ""
 echo "=== Playlink container started successfully! ==="
