@@ -1,0 +1,103 @@
+# ==============================================================================
+# Playlink All-in-One Appliance Dockerfile
+# Combines PostgreSQL, FastAPI Backend, SvelteKit Frontend, and Cloudflare Tunnel.
+# Ultra-lightweight multi-stage build without compilation bloat in final runtime.
+# ==============================================================================
+
+# ------------------------------------------------------------------------------
+# Stage 1: Build Frontend (SvelteKit with Bun)
+# ------------------------------------------------------------------------------
+FROM oven/bun:1-slim AS frontend-builder
+WORKDIR /build/frontend
+
+# Install dependencies with frozen lockfile
+COPY frontend/package.json frontend/bun.lock ./
+RUN bun install --frozen-lockfile
+
+# Copy frontend source and compile production build
+COPY frontend/ .
+RUN bun run build
+
+# Install production-only dependencies for minimal runtime footprint
+RUN rm -rf node_modules && bun install --production --frozen-lockfile
+
+# ------------------------------------------------------------------------------
+# Stage 2: Build Backend (FastAPI with uv)
+# ------------------------------------------------------------------------------
+FROM ghcr.io/astral-sh/uv:python3.14-bookworm-slim AS backend-builder
+WORKDIR /build/backend
+
+ENV UV_COMPILE_BYTECODE=1
+ENV UV_LINK_MODE=copy
+
+# Install backend dependencies cached via uv mount
+RUN --mount=type=cache,target=/root/.cache/uv \
+    --mount=type=bind,source=backend/uv.lock,target=uv.lock \
+    --mount=type=bind,source=backend/pyproject.toml,target=pyproject.toml \
+    uv sync --frozen --no-install-project --no-dev
+
+# Copy backend source and sync project
+COPY backend/ .
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --no-dev
+
+# ------------------------------------------------------------------------------
+# Stage 3: Extract Cloudflare Tunnel agent binary
+# ------------------------------------------------------------------------------
+FROM cloudflare/cloudflared:latest AS cloudflared-bin
+
+# ------------------------------------------------------------------------------
+# Stage 4: Production Runtime Environment
+# ------------------------------------------------------------------------------
+FROM ghcr.io/astral-sh/uv:python3.14-bookworm-slim AS runtime
+
+# Install PostgreSQL, supervisor, and process utilities
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        postgresql \
+        postgresql-contrib \
+        gosu \
+        supervisor \
+        ca-certificates \
+        curl \
+    && rm -rf /var/lib/apt/lists/* \
+    && rm -rf /var/lib/postgresql/15/main /etc/postgresql/15/main
+
+# Add PostgreSQL binaries to PATH (Debian bookworm uses PostgreSQL 15 by default)
+ENV PATH="/usr/lib/postgresql/15/bin:/usr/lib/postgresql/16/bin:/usr/lib/postgresql/17/bin:$PATH"
+
+# Copy Bun and Cloudflared static binaries
+COPY --from=frontend-builder /usr/local/bin/bun /usr/local/bin/bun
+COPY --from=cloudflared-bin /usr/local/bin/cloudflared /usr/local/bin/cloudflared
+
+# Copy compiled frontend application
+WORKDIR /app/frontend
+COPY --from=frontend-builder /build/frontend/package.json /build/frontend/bun.lock ./
+COPY --from=frontend-builder /build/frontend/node_modules ./node_modules
+COPY --from=frontend-builder /build/frontend/build ./build
+COPY --from=frontend-builder /build/frontend/static ./static
+
+# Copy compiled backend application and pre-built virtualenv
+WORKDIR /app/backend
+COPY --from=backend-builder /build/backend /app/backend
+COPY --from=backend-builder /build/backend/.venv /app/.venv
+
+# Copy supervisor configuration and helper scripts
+COPY docker/allinone/supervisord.conf /etc/supervisor/supervisord.conf
+COPY docker/allinone/ /app/docker/allinone/
+
+# Fix Windows CRLF line endings if present and set executable permissions
+RUN sed -i 's/\r$//' /app/docker/allinone/*.sh && \
+    chmod +x /app/docker/allinone/*.sh
+
+# Base environment configuration
+ENV PGDATA=/var/lib/postgresql/data
+ENV PATH="/app/.venv/bin:/usr/lib/postgresql/15/bin:/usr/lib/postgresql/16/bin:/usr/lib/postgresql/17/bin:$PATH"
+
+# Expose ports for local or intranet access (Cloudflare routes internally to localhost)
+EXPOSE 3000 8000
+
+# Persistent volume for PostgreSQL data
+VOLUME ["/var/lib/postgresql/data"]
+
+WORKDIR /app
+ENTRYPOINT ["/app/docker/allinone/entrypoint.sh"]

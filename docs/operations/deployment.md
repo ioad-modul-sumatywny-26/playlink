@@ -209,6 +209,66 @@ Typical deploy duration: 30 s – 5 min depending on image cache state and netwo
 
 ---
 
+## All-in-One Appliance Container (`Dockerfile.allinone`)
+
+The project provides an ultra-lightweight, single-container appliance packaging the entire stack:
+- **PostgreSQL 15** (built-in, automatic cluster initialization and Alembic migrations)
+- **FastAPI Backend** (Python 3.14 + Uvicorn)
+- **SvelteKit Frontend** (Bun runtime + `@sveltejs/adapter-node`)
+- **Cloudflare Tunnel Agent (`cloudflared`)** (outbound tunnel to Cloudflare Zero Trust)
+- **Supervisord** process manager
+
+### Startup Script (`run-playlink.sh`)
+
+A parameterized launcher script handles secrets, database persistence, and optional interactive setup:
+
+```bash
+# Launch with Cloudflare Tunnel:
+./run-playlink.sh \
+  --cloudflare-token "eyJh..." \
+  --origin "https://playlink.bartek.monster" \
+  --public-backend "api.playlink.bartek.monster"
+
+# Launch locally with exposed ports:
+./run-playlink.sh --build --expose-ports
+
+# Manage lifecycle:
+./run-playlink.sh --logs      # follow container logs
+./run-playlink.sh --stop      # stop and delete container
+./run-playlink.sh --restart   # restart container
+```
+
+---
+
+## Multi-Server Architecture Recommendations
+
+When scaling Playlink horizontally across multiple servers:
+
+1. **State & Database**:
+   - Move PostgreSQL out of single-node storage into a managed PostgreSQL cluster (e.g., Supabase, Neon, AWS RDS) or a self-hosted HA cluster (Patroni + etcd).
+2. **Real-time WebSockets (`backend/ws/managers.py`)**:
+   - Replace the in-memory `ConnectionManager` and `RoomChatManager` with **Redis Pub/Sub** (or Valkey / Dragonfly / NATS).
+   - When rooms or chat frames mutate on one server, the event is published to Redis; all active backend instances broadcast to their locally connected WebSockets.
+3. **Ingress & Load Balancing**:
+   - Run `cloudflared` on every server with the *same* tunnel token (Cloudflare Tunnel Replicas). Cloudflare automatically balances incoming traffic across all healthy connectors with Anycast routing and automatic failover.
+
+---
+
+## CI/CD Without Tailscale SSH (Modern Alternatives)
+
+The legacy deployment uses push-based SSH over Tailscale (`cicd.yml`), which compiles code on the destination VPS. Recommended alternatives for multi-server setups:
+
+1. **Pull-based GitOps (GHCR + Watchtower - Recommended)**:
+   - GitHub Actions builds multi-arch Docker image and pushes to GitHub Container Registry (`ghcr.io/<org>/playlink:latest`).
+   - Each server runs [Watchtower](https://containrrr.dev/watchtower/) to automatically pull new image layers and restart the container cleanly without downtime.
+   - Eliminates SSH keys in GitHub Secrets, requires zero incoming ports, and scales to $N$ servers effortlessly.
+2. **Authenticated Webhook behind Cloudflare Tunnel**:
+   - GHA sends an authenticated HTTP POST request to an internal webhook endpoint (`adnanh/webhook`) on each server via Cloudflare Tunnel.
+3. **PaaS / Cluster Orchestration**:
+   - Docker Swarm rolling updates or K3s with ArgoCD / Keel.
+
+---
+
 ## Related Documentation
 
 - [Configuration](../backend/configuration.md) — all backend env var definitions and validation
