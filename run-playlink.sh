@@ -81,6 +81,18 @@ generate_secret() {
     fi
 }
 
+clean_cloudflare_token() {
+    local raw="$1"
+    raw=$(echo "$raw" | tr -d '\r' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' -e "s/^['\"]//" -e "s/['\"]$//")
+    if echo "$raw" | grep -q -- '--token'; then
+        raw=$(echo "$raw" | sed -E 's/.*--token[[:space:]=]+//')
+    elif echo "$raw" | grep -q 'service install'; then
+        raw=$(echo "$raw" | sed -E 's/.*service install[[:space:]]+//')
+    fi
+    raw=$(echo "$raw" | tr -d '\r' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' -e "s/^['\"]//" -e "s/['\"]$//")
+    echo "$raw"
+}
+
 # ------------------------------------------------------------------------------
 # Load existing env file if present
 # ------------------------------------------------------------------------------
@@ -233,6 +245,23 @@ if [ -t 0 ] && [ -z "$CLOUDFLARE_TUNNEL_TOKEN" ] && [ "$EXPOSE_PORTS" = false ];
     else
         echo "No tunnel token entered. Ports 3000 and 8000 will be exposed locally."
         EXPOSE_PORTS=true
+    fi
+fi
+
+# Sanitize and validate Cloudflare Tunnel Token if provided
+if [ -n "$CLOUDFLARE_TUNNEL_TOKEN" ]; then
+    CLEANED=$(clean_cloudflare_token "$CLOUDFLARE_TUNNEL_TOKEN")
+    if [ "$CLEANED" != "$CLOUDFLARE_TUNNEL_TOKEN" ]; then
+        echo "Note: Cleaned and extracted Cloudflare token from input."
+        CLOUDFLARE_TUNNEL_TOKEN="$CLEANED"
+    fi
+    if [ "${#CLOUDFLARE_TUNNEL_TOKEN}" -eq 36 ] && echo "$CLOUDFLARE_TUNNEL_TOKEN" | grep -qE '^[0-9a-fA-F-]{36}$'; then
+        echo ""
+        echo "WARNING: The value passed for Cloudflare token ($CLOUDFLARE_TUNNEL_TOKEN) looks like a Tunnel UUID, NOT a Tunnel Token!"
+        echo "In Cloudflare Zero Trust (Networks -> Tunnels), copy the base64 token string starting with 'eyJh...'."
+        echo ""
+    elif [[ ! "$CLOUDFLARE_TUNNEL_TOKEN" =~ ^eyJh ]]; then
+        echo "Note: Cloudflare Tunnel tokens typically start with 'eyJh...'. Prefix provided: '${CLOUDFLARE_TUNNEL_TOKEN:0:8}...'"
     fi
 fi
 
