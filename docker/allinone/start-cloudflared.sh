@@ -44,7 +44,7 @@ TOKEN_LEN=${#TOKEN}
 echo "[cloudflared] Starting Cloudflare Tunnel agent (token length: $TOKEN_LEN, prefix: ${TOKEN_PREFIX}...)..."
 
 set +e
-cloudflared tunnel --no-autoupdate run --token "$TOKEN"
+cloudflared tunnel --no-autoupdate --metrics localhost:2020 run --token "$TOKEN"
 err=$?
 set -e
 

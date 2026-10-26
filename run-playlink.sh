@@ -106,6 +106,9 @@ elif [ -f ".env" ]; then
     . ".env"
 fi
 
+# Allow CLOUDFLARE_TOKEN as an alias for CLOUDFLARE_TUNNEL_TOKEN in env files
+CLOUDFLARE_TUNNEL_TOKEN="${CLOUDFLARE_TUNNEL_TOKEN:-$CLOUDFLARE_TOKEN}"
+
 # ------------------------------------------------------------------------------
 # Parse Command Line Arguments
 # ------------------------------------------------------------------------------

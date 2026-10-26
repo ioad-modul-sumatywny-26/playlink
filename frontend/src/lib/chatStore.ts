@@ -1,5 +1,5 @@
 import { browser } from '$app/environment';
-import { env } from '$env/dynamic/public';
+import { getWsUrl } from '$lib/urls';
 import { writable, type Readable } from 'svelte/store';
 import { signChatMessage, type ChatSigner } from '$lib/signing';
 
@@ -267,9 +267,9 @@ export function createChatStore(
 	}
 
 	function connect() {
-		const wsUrl = env.PUBLIC_WS_URL;
+		const wsUrl = getWsUrl();
 		if (!wsUrl) {
-			console.error('Missing PUBLIC_WS_URL');
+			console.error('Missing WebSocket URL');
 			return;
 		}
 		const url =

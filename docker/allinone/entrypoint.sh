@@ -18,6 +18,12 @@ if ! grep -q "frontend" /etc/hosts 2>/dev/null; then
     echo "127.0.0.1 frontend backend" >> /etc/hosts 2>/dev/null || true
 fi
 
+# Ensure localhost resolves to 127.0.0.1 (removes ::1 localhost so IPv6 is not preferred by cloudflared)
+if grep -q "::1.*localhost" /etc/hosts 2>/dev/null; then
+    sed 's/::1[[:space:]]*localhost/::1/' /etc/hosts > /tmp/hosts && cat /tmp/hosts > /etc/hosts 2>/dev/null || true
+    rm -f /tmp/hosts
+fi
+
 # Remove any stale lock files from previous unclean shutdowns
 rm -f /var/run/supervisord.pid "$PGDATA/postmaster.pid" /var/run/postgresql/.s.PGSQL.5432*
 

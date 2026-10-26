@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount, untrack } from 'svelte';
 	import { roomsStore, type RoomSummary } from '$lib/roomsStore';
-	import { env } from '$env/dynamic/public';
+	import { getBackendUrl } from '$lib/urls';
 	import { enhance, deserialize } from '$app/forms';
 	import { goto, invalidateAll } from '$app/navigation';
 	import type { PageProps } from './$types';
@@ -40,7 +40,7 @@
 	async function measurePing() {
 		const start = performance.now();
 		try {
-			const baseUrl = env.PUBLIC_BACKEND_URL || 'http://localhost:8000';
+			const baseUrl = getBackendUrl();
 			await fetch(`${baseUrl}/`);
 			const end = performance.now();
 			currentPing = Math.round(end - start);

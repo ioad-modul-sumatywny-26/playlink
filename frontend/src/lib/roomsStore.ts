@@ -1,5 +1,5 @@
 import { browser } from '$app/environment';
-import { env } from '$env/dynamic/public';
+import { getWsUrl } from '$lib/urls';
 import { writable, type Readable } from 'svelte/store';
 
 export interface RoomSummary {
@@ -51,9 +51,9 @@ function createRoomsStore(): Readable<RoomSummary[]> & { destroy(): void } {
 	let isTornDown = false;
 
 	function connect() {
-		const wsUrl = env.PUBLIC_WS_URL;
+		const wsUrl = getWsUrl();
 		if (!wsUrl) {
-			console.error('Missing PUBLIC_WS_URL');
+			console.error('Missing WebSocket URL');
 			return;
 		}
 
