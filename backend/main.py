@@ -16,6 +16,7 @@ This module only assembles them.
 
 import asyncio
 import logging
+import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
@@ -100,6 +101,9 @@ origins = [
     "http://localhost:5173",
     "http://127.0.0.1:5173",
 ]
+env_origin = os.getenv("ORIGIN")
+if env_origin and env_origin not in origins:
+    origins.append(env_origin)
 
 app.add_middleware(
     CORSMiddleware,

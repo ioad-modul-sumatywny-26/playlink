@@ -80,7 +80,7 @@ chmod +x run-playlink.sh
 ./run-playlink.sh --build --expose-ports
 
 # Run with Cloudflare Zero Trust tunnel:
-./run-playlink.sh -t "<CLOUDFLARE_TUNNEL_TOKEN>" -o "https://playlink.domain.com" -b "api.playlink.domain.com"
+./run-playlink.sh -t "<CLOUDFLARE_TUNNEL_TOKEN>" -o "https://playlink.bartek.monster" -b "playlink-backend.bartek.monster"
 
 # Common lifecycle commands:
 ./run-playlink.sh --logs      # Follow container logs

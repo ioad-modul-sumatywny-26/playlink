@@ -40,7 +40,7 @@ Usage:
 Options:
   -t, --cloudflare-token <TOKEN>  Cloudflare Tunnel Token (from Zero Trust dashboard)
   -o, --origin <URL>              Frontend public Origin URL (e.g. https://playlink.domain.com)
-  -b, --public-backend <HOST|URL> Backend domain or URL (e.g. api.playlink.domain.com)
+  -b, --public-backend <HOST|URL> Backend domain or URL (e.g. playlink-backend.domain.com)
   -s, --jwt-secret <SECRET>       Secret for JWT tokens (auto-generated if omitted)
   -p, --postgres-password <PASS>  PostgreSQL password (auto-generated if omitted)
   -u, --postgres-user <USER>      PostgreSQL username (default: playlink)
@@ -61,7 +61,7 @@ Options:
 
 Examples:
   # Run with Cloudflare Tunnel:
-  ./run-playlink.sh -t "eyJh..." -o "https://playlink.bartek.monster" -b "api.playlink.bartek.monster"
+  ./run-playlink.sh -t "eyJh..." -o "https://playlink.bartek.monster" -b "playlink-backend.bartek.monster"
 
   # Run locally with exposed ports and interactive prompts:
   ./run-playlink.sh --build --expose-ports
@@ -286,6 +286,11 @@ elif [ -z "$PUBLIC_BACKEND_URL" ]; then
     if [[ "$ORIGIN" =~ ^https?://localhost(:[0-9]+)?$ ]]; then
         PUBLIC_BACKEND_URL="http://localhost:8000"
         PUBLIC_WS_URL="ws://localhost:8000"
+    elif [[ "$ORIGIN" =~ https?://playlink\.(.*) ]]; then
+        # Default to playlink-backend.<domain> (standard Playlink topology)
+        DOMAIN_REST="${BASH_REMATCH[1]}"
+        PUBLIC_BACKEND_URL="https://playlink-backend.$DOMAIN_REST"
+        PUBLIC_WS_URL="wss://playlink-backend.$DOMAIN_REST"
     else
         # Guess api.<domain> if origin is provided
         HOST_PART=$(echo "$ORIGIN" | sed -E 's|^https?://||' | sed -E 's|:[0-9]+$||')

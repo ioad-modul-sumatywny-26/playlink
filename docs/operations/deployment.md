@@ -227,7 +227,7 @@ A parameterized launcher script handles secrets, database persistence, and optio
 ./run-playlink.sh \
   --cloudflare-token "eyJh..." \
   --origin "https://playlink.bartek.monster" \
-  --public-backend "api.playlink.bartek.monster"
+  --public-backend "playlink-backend.bartek.monster"
 
 # Launch locally with exposed ports:
 ./run-playlink.sh --build --expose-ports

@@ -13,6 +13,11 @@ mkdir -p "$PGDATA" /var/run/postgresql /var/log/supervisor /var/run
 chown -R postgres:postgres "$PGDATA" /var/run/postgresql
 chmod 0700 "$PGDATA"
 
+# Map frontend and backend to localhost in /etc/hosts for compatibility with compose-style tunnel configs
+if ! grep -q "frontend" /etc/hosts 2>/dev/null; then
+    echo "127.0.0.1 frontend backend" >> /etc/hosts 2>/dev/null || true
+fi
+
 # Remove any stale lock files from previous unclean shutdowns
 rm -f /var/run/supervisord.pid "$PGDATA/postmaster.pid" /var/run/postgresql/.s.PGSQL.5432*
 
