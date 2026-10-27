@@ -151,7 +151,10 @@ export function redirectToRegion(id: RegionId, regions: RegionConfig[] = REGIONS
 		const current = new URL(window.location.href);
 		if (target.host === current.host) return false;
 
-		const destination = new URL(window.location.pathname + window.location.search, region.frontend);
+		// Pin the origin: resolving a path like `//evil.example` would change the host.
+		const destination = new URL(target);
+		destination.pathname = window.location.pathname.replace(/^\/+/, '/');
+		destination.search = window.location.search;
 		window.location.replace(destination.toString());
 		return true;
 	} catch {
