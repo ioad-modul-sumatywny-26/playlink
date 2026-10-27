@@ -48,7 +48,9 @@ See [configuration](configuration.md) for environment variable details.
 
 | Method | Path | Auth | Description |
 |---|---|---|---|
-| `GET` | `/` | — | Health check |
+| `GET` | `/` | — | Backwards-compatible health check |
+| `GET` | `/healthz` | — | Liveness probe with region/version (not rate-limited) |
+| `GET` | `/readyz` | — | Readiness probe with database check (not rate-limited) |
 | `POST` | `/auth/request-nonce` | — | Request a one-time authentication nonce |
 | `POST` | `/auth/verify` | — | Verify signature and issue JWT |
 | `GET` | `/users/me` | JWT | Get the authenticated user's profile |
@@ -85,6 +87,34 @@ Basic health check. No authentication required.
 {
   "status": "ok",
   "service": "playlink-auth"
+}
+```
+
+### `GET /healthz`
+
+Cheap liveness probe used by the region chooser and container health checks. It does not touch the database and is intentionally **not** rate-limited. The response is `Cache-Control: no-store`.
+
+**Response `200 OK`**
+
+```json
+{
+  "status": "ok",
+  "region": "eu",
+  "version": "v0.1.0",
+  "commit": "abc1234"
+}
+```
+
+### `GET /readyz`
+
+Readiness probe that executes `SELECT 1` against PostgreSQL. Returns `503` when the database is unavailable. Used by the Compose healthcheck; the browser region probe should use `/healthz` instead.
+
+**Response `200 OK`**
+
+```json
+{
+  "status": "ready",
+  "region": "eu"
 }
 ```
 

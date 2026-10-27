@@ -2,7 +2,7 @@
 
 This document describes how to run and interpret the test suites for both the backend (Python/FastAPI) and frontend (SvelteKit/TypeScript) components of Playlink.
 
-> **Source:** `backend/tests/conftest.py`, `backend/tests/test_*.py`, `backend/pyproject.toml`, `frontend/vite.config.js`, `frontend/package.json`, `frontend/src/test/*.test.ts`, `.github/workflows/cicd.yml`
+> **Source:** `backend/tests/conftest.py`, `backend/tests/test_*.py`, `backend/pyproject.toml`, `frontend/vite.config.js`, `frontend/package.json`, `frontend/src/test/*.test.ts`, `.github/workflows/ci.yml`
 
 ---
 
