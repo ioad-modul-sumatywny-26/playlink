@@ -1,5 +1,5 @@
 #cloud-config
-# Region VM bootstrap used by deploy/azure-vm.sh (__REGION__ and __REPO__ are
+# Region VM bootstrap used by deploy/azure-vm.sh (__REGION__, __REPO__, __REF__ are
 # substituted there). Installs Docker, clones the repository and enables the
 # timer that deploys new releases. No inbound port is needed.
 package_update: true
@@ -37,6 +37,6 @@ runcmd:
   # 1 GiB RAM: swap keeps Postgres, Python and Bun from being OOM-killed.
   - fallocate -l 2G /swapfile && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile
   - echo '/swapfile none swap sw 0 0' >> /etc/fstab
-  - git clone https://github.com/__REPO__.git /opt/playlink
+  - git clone --branch __REF__ https://github.com/__REPO__.git /opt/playlink
   - systemctl daemon-reload
   - systemctl enable --now playlink-update.timer
