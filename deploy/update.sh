@@ -41,12 +41,14 @@ main() {
 	echo "Updating $region: ${current:-none} -> $latest"
 	git fetch --quiet --tags --force origin
 	git -c advice.detachedHead=false checkout --quiet "$latest"
-	if bash deploy/deploy.sh "$region" "$latest"; then
+	local status=0
+	bash deploy/deploy.sh "$region" "$latest" || status=$?
+	if [ "$status" -eq 0 ]; then
 		rm -f ".run/$region.failed"
-	else
+	elif [ "$status" -ne 3 ]; then
 		echo "$latest" >".run/$region.failed"
-		return 1
 	fi
+	return "$status"
 }
 
 # Everything runs inside main() so the checkout above cannot change the lines

@@ -72,7 +72,9 @@ else
 	if [ -n "${GHCR_TOKEN:-}" ]; then
 		echo "$GHCR_TOKEN" | docker login ghcr.io -u "${GHCR_USER:-github}" --password-stdin
 	fi
-	"${compose[@]}" pull
+	# Exit 3: images unavailable (e.g. private package). The stack is untouched,
+	# so update.sh retries instead of marking the release as failed.
+	"${compose[@]}" pull || exit 3
 fi
 
 echo "Starting $REGION ($TAG)..."
