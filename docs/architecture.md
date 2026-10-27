@@ -1,8 +1,8 @@
 # Architecture Overview
 
-Playlink is a full-stack **LFG (Looking-For-Group)** web application for organizing short-lived multiplayer game sessions ("rooms") for niche, retro, and less popular titles. It pairs a single-module **FastAPI** backend with a **SvelteKit** Backend-for-Frontend (BFF) and a **PostgreSQL** database, orchestrated with Docker Compose. Identity is **non-custodial**: every user is a BIP39 mnemonic whose derived key proves ownership via an ECDSA (EIP-191) signature challenge.
+Playlink is a full-stack **LFG (Looking-For-Group)** web application for organizing short-lived multiplayer game sessions ("rooms") for niche, retro, and less popular titles. It pairs a single-module **FastAPI** backend with a **SvelteKit** Backend-for-Frontend (BFF) and a **PostgreSQL** database, orchestrated with Docker Compose. It runs as two independent regional stacks (EU and US) behind Cloudflare Tunnel. Identity is **non-custodial**: every user is a BIP39 mnemonic whose derived key proves ownership via an ECDSA (EIP-191) signature challenge.
 
-> **Source:** `backend/main.py`, `backend/models.py`, `frontend/src/`, `docker-compose.yml`, `backend/docs/auth-flow.md`
+> **Source:** `backend/main.py`, `backend/models.py`, `frontend/src/`, `compose.yaml`, `backend/docs/auth-flow.md`
 
 ## System Topology
 
@@ -34,7 +34,11 @@ The browser talks to the backend **directly** for most reads and for both WebSoc
 | Realtime         | FastAPI WebSockets                           | —            |
 | Auth             | BIP39 identity + ECDSA (eth_account), JWT HS256 | —         |
 | Rate limiting    | slowapi (REST) + per-address sliding window (chat WS) | —    |
-| Orchestration    | Docker Compose (db, backend, frontend)       | Docker       |
+| Orchestration    | Docker Compose (db, backend, frontend, cloudflared) per region | Docker |
+
+### Multi-region topology
+
+Each region has its own VM, database, backend, frontend, and Cloudflare Tunnel connector, started as the compose project `playlink-eu` or `playlink-us` by `deploy/deploy.sh`. Hostnames are derived from `PLAYLINK_DOMAIN` and stay one level below the domain: the entry host (`playlink.<domain>`) renders the region chooser, while `playlink-eu.<domain>` / `playlink-us.<domain>` render the application and `playlink-<region>-api.<domain>` serve the API. The frontend image is shared. Without a domain both regions run on localhost (EU 3000/8000, US 3001/8001). The chooser probes both `/healthz` endpoints and redirects to the faster live region; the choice is stored in a cookie. Sessions and signing keys are per origin, so switching regions asks for the same 12 words again. See [the multi-region runbook](operations/runbook-regions.md).
 
 ## Repository Layout
 
@@ -53,7 +57,10 @@ The browser talks to the backend **directly** for most reads and for both WebSoc
 │       ├── lib/        Client logic: auth, signing, stores, contexts, UI kit
 │       ├── routes/     Pages + server loaders/actions
 │       └── hooks.server.ts  Session-cookie decode hook
-├── docker-compose.yml  db + backend + frontend services
+├── compose.yaml        db + backend + frontend + cloudflared (one region)
+├── compose.build.yaml  build from the working tree
+├── compose.ports.yaml  localhost ports (local mode)
+├── deploy/             deploy.sh, update.sh, azure-vm.sh, cloud-init.yaml, config.env
 └── docs/               This documentation set
 ```
 

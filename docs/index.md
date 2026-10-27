@@ -31,18 +31,19 @@ This is the developer documentation set. Start with the [architecture overview](
 | Document | Contents |
 | -------- | -------- |
 | [Testing](operations/testing.md) | Backend pytest and frontend vitest suites, fixtures, and run commands. |
-| [Deployment](operations/deployment.md) | Docker Compose services, Dockerfiles, container startup, and CI/CD. |
+| [Deployment](operations/deployment.md) | `deploy.sh`, Docker Compose services, Dockerfiles, container startup, and CI/release. |
+| [Multi-region runbook](operations/runbook-regions.md) | Local/public mode, Cloudflare tunnels, Azure VMs, pull-based release rollout, rollback, failure drills. |
 
 ## Quick Start
 
 ```bash
-cp .env.example .env
-cp frontend/.env.example frontend/.env
-docker compose up --build
+deploy/deploy.sh eu    # builds from the working tree, local mode
+deploy/deploy.sh us    # optional second region
 ```
 
-Services:
+Services (EU; US uses ports 3001 / 8001):
 
+- Chooser — `http://127.0.0.1:3000`
 - Frontend — `http://localhost:3000`
 - Backend (OpenAPI docs at `/docs`) — `http://localhost:8000`
 - PostgreSQL — internal to the Docker network (no host port mapping by design)

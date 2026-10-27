@@ -1,39 +1,55 @@
 # Deployment & Operations
 
-Reference for local development, Docker infrastructure, container startup, and CI/CD pipeline for the Playlink project.
+Reference for local development, Docker infrastructure, container startup, and the CI/release pipeline for the Playlink project.
 
-> **Source:** `docker-compose.yml`, `backend/Dockerfile`, `backend/entrypoint.sh`, `frontend/Dockerfile`, `.github/workflows/cicd.yml`, `.env.example`, `frontend/.env.example`, `backend/database.py`
+> **Source:** `compose.yaml`, `compose.build.yaml`, `compose.ports.yaml`, `backend/Dockerfile`, `backend/entrypoint.sh`, `frontend/Dockerfile`, `.github/workflows/ci.yml`, `.github/workflows/release.yml`, `deploy/`, `.env.example`, `frontend/.env.example`, `backend/database.py`
 
 ## Local Development Quick Start
 
 ```bash
-# 1. Copy environment files
-cp .env.example .env
-cp frontend/.env.example frontend/.env
+# EU stack, built from the working tree (local mode)
+deploy/deploy.sh eu
 
-# 2. Build and launch all services
-docker compose up --build
+# optional: US stack next to it
+deploy/deploy.sh us
 ```
 
-After startup:
+Without `PLAYLINK_DOMAIN` in `deploy/site.env` the script runs in local mode: dev secrets, ports published on `127.0.0.1`, no tunnel. After startup:
 
 | Service | URL | Notes |
 |---------|-----|-------|
-| Frontend (SvelteKit) | `http://localhost:3000` | Dev server via `@sveltejs/adapter-node` |
-| Backend (FastAPI) | `http://localhost:8000` | API root; OpenAPI docs at `/docs` |
+| Chooser | `http://127.0.0.1:3000` | Entry host in local mode (served by the EU stack) |
+| Frontend EU / US (SvelteKit) | `http://localhost:3000` / `http://localhost:3001` | `@sveltejs/adapter-node` build |
+| Backend EU / US (FastAPI) | `http://localhost:8000` / `http://localhost:8001` | OpenAPI docs at `/docs`; probes at `/healthz` and `/readyz` |
 | Postgres 18 | `db:5432` (internal) | No host port mapping — see rationale below |
+
+### `deploy/deploy.sh <eu|us> [tag]`
+
+| Step | Behaviour |
+|------|-----------|
+| Config | Loads `deploy/config.env` (shared, non-secret) then `deploy/site.env` (gitignored; see `site.env.example`) |
+| Mode | No `PLAYLINK_DOMAIN`: local mode (`compose.ports.yaml`). With `PLAYLINK_DOMAIN` + `TUNNEL_TOKEN_<REGION>`: public via Cloudflare Tunnel, no published ports. `JWT_SECRET` and `POSTGRES_PASSWORD` are then required |
+| Env file | Generates `.run/<region>.env` (mode 0600): shared settings, `PUBLIC_*` URLs, `CORS_ORIGINS`, secrets. The tunnel token goes only to `cloudflared` |
+| Images | No tag: builds from the working tree (`compose.build.yaml`). With a tag: pulls `ghcr.io` images (logs in when `GHCR_TOKEN` is set) |
+| Start | `docker compose -p playlink-<region> up -d --wait`; project names `playlink-eu` / `playlink-us` let both regions share one machine |
+| Rollback | On failed health, redeploys the previous tag from `.run/<region>.tag` and exits non-zero |
 
 ### Database port visibility
 
-The `db` service in `docker-compose.yml` deliberately omits a `ports:` directive. Docker's iptables rules bypass UFW and similar host firewalls, so even a guarded `5432:5432` would expose Postgres to the public internet. The database is reachable only on the internal bridge network (`app-network`).
+The `db` service in `compose.yaml` deliberately omits a `ports:` directive. Docker's iptables rules bypass UFW and similar host firewalls, so even a guarded `5432:5432` would expose Postgres to the public internet. The database is reachable only on the project's internal compose network.
 
 ---
 
 ## Docker Compose Breakdown
 
-### Network: `app-network`
+`compose.yaml` describes one regional stack. Extra files are added by `deploy.sh`:
 
-Single bridge network shared by all three services. No external connectivity required — inter-service communication uses service names as hostnames (e.g. `http://backend:8000`).
+| File | Added when | Effect |
+|------|------------|--------|
+| `compose.build.yaml` | no tag | Builds `backend` and `frontend` from `./backend` and `./frontend` |
+| `compose.ports.yaml` | no `PLAYLINK_DOMAIN` | Publishes `127.0.0.1:${BACKEND_PORT}:8000` and `127.0.0.1:${FRONTEND_PORT}:3000` |
+
+All services read the env file named by `APP_ENV_FILE` (`.run/<region>.env`). Service addressing uses compose service names on the project's default network (e.g. `http://backend:8000`); there are no static container IPs.
 
 ### Volume: `postgres_data`
 
@@ -44,37 +60,46 @@ Named Docker volume mounted at `/var/lib/postgresql` inside the `db` container. 
 | Field | Value |
 |-------|-------|
 | Image | `postgres:18-alpine` |
-| Env file | `.env` (root) |
 | Ports | None — see security rationale above |
 | Volume | `postgres_data:/var/lib/postgresql` |
-| Network | `app-network` |
-| Healthcheck | `pg_isready -U $POSTGRES_USER -d $POSTGRES_DB` — interval 10s, timeout 5s, retries 5 |
+| Limits | `mem_limit: 320m`, tuned `shared_buffers` / `max_connections` |
+| Healthcheck | `pg_isready -U $POSTGRES_USER -d $POSTGRES_DB` — interval 10s, timeout 5s, retries 10, start_period 20s |
 
 ### `backend` (FastAPI)
 
 | Field | Value |
 |-------|-------|
-| Build | `./backend/Dockerfile` |
-| Ports | `8000:8000` |
-| Env file | `.env` (root) |
+| Image | `ghcr.io/ioad-modul-sumatywny-26/playlink-backend:${IMAGE_TAG:-local}` |
+| Ports | Only in local mode: `127.0.0.1:${BACKEND_PORT}:8000` |
 | Depends on | `db` condition: `service_healthy` |
-| Network | `app-network` |
-| Healthcheck | Python `urllib` GET `http://localhost:8000/` — interval 10s, timeout 5s, retries 5, start_period 5s |
+| Limits | `mem_limit: 320m` |
+| Healthcheck | Python `urllib` GET `http://127.0.0.1:8000/readyz` — interval 10s, timeout 5s, retries 10, start_period 30s |
 
 ### `frontend` (SvelteKit)
 
 | Field | Value |
 |-------|-------|
-| Build | `./frontend/Dockerfile` |
-| Ports | `3000:3000` |
-| Env file | `frontend/.env` |
-| Environment | `BACKEND_INTERNAL_URL=http://backend:8000`, `ORIGIN` (default `http://localhost:3000`) |
+| Image | `ghcr.io/ioad-modul-sumatywny-26/playlink-frontend:${IMAGE_TAG:-local}` |
+| Ports | Only in local mode: `127.0.0.1:${FRONTEND_PORT}:3000` |
+| Environment | `BACKEND_INTERNAL_URL=http://backend:8000`, `PROTOCOL_HEADER=x-forwarded-proto`; the host comes from the original `Host` header |
 | Depends on | `backend` condition: `service_healthy` |
-| Network | `app-network` |
+| Limits | `mem_limit: 256m` |
+| Healthcheck | `bun -e "fetch('http://127.0.0.1:3000/healthz')"` — interval 10s, timeout 5s, retries 10 |
 
-**`BACKEND_INTERNAL_URL`** — used by SvelteKit server-side `load` functions and form actions for in-cluster calls to the FastAPI backend. Browser-side code uses `PUBLIC_BACKEND_URL` / `PUBLIC_WS_URL` from the frontend `.env`.
+**`BACKEND_INTERNAL_URL`** — used by SvelteKit server-side `load` functions and form actions for in-cluster calls to the FastAPI backend. Browser-side code uses `PUBLIC_BACKEND_URL` / `PUBLIC_WS_URL`.
 
-**`ORIGIN`** — required by `@sveltejs/adapter-node` for its CSRF check. The value must match the URL the browser navigates to. Defaults to `http://localhost:3000` for local development; override in the production `.env`.
+**Do not set `ORIGIN`** on a frontend container that serves both the entry host and a regional hostname. `@sveltejs/adapter-node` takes the scheme from `X-Forwarded-Proto` and the host from the original `Host` header (which cloudflared preserves); a fixed `ORIGIN` would make `playlink.<domain>` and `playlink-eu.<domain>` indistinguishable. Plain-http localhost has no proxy header, so `frontend/svelte.config.js` lists `http://localhost:3000` and `http://localhost:3001` as CSRF trusted origins.
+
+### `cloudflared` (Cloudflare Tunnel)
+
+| Field | Value |
+|-------|-------|
+| Image | `cloudflare/cloudflared:2025.10.0` |
+| Command | `tunnel --no-autoupdate run` |
+| Environment | `TUNNEL_TOKEN` (`TUNNEL_TOKEN_<REGION>` from `site.env`) — never on the command line |
+| Profile | `tunnel` — enabled by `deploy.sh` when a token is set; skipped in local mode |
+| Depends on | `frontend` healthy |
+| Routes | Configured in the tunnel on Cloudflare: frontend hosts -> `http://frontend:3000`, API hosts -> `http://backend:8000` |
 
 ---
 
@@ -166,46 +191,25 @@ When the backend detects it is NOT running inside a Docker container (no `/.dock
 
 ---
 
-## CI/CD Pipeline
+## CI/Release Pipeline
 
-The single workflow `.github/workflows/cicd.yml` runs on push to `main` and pull requests targeting `main`.
+Releases are tag-based and pull-based. Full operating instructions live in [runbook-regions.md](runbook-regions.md).
 
-### Jobs
+| Workflow | Trigger | Purpose |
+| --- | --- | --- |
+| `ci.yml` | PR / push to `main`, or called by Release | Lint, tests, Alembic round-trip/drift check, Compose validation, shellcheck of `deploy/*.sh`, no-push image build |
+| `release.yml` | `vX.Y.Z` tag (or manual ref) | Run CI, build and push backend/frontend images to GHCR, create the GitHub Release |
 
-| Job | Runner | Dependencies | Trigger Condition | Key Steps |
-|-----|--------|--------------|-------------------|-----------|
-| `backend-lint` | `ubuntu-latest` | — | push/PR to main | `uv` setup, `ruff check .`, `ruff format --check .` |
-| `backend-test` | `ubuntu-latest` | — | push/PR to main | `uv` setup, `pytest --cov=... --cov-fail-under=80` with `DATABASE_URL=sqlite:///` and `JWT_SECRET=ci-test-secret-at-least-thirty-two-chars` |
-| `backend-migrations` | `ubuntu-latest` | Postgres service container | push/PR to main | `uv` setup, `alembic upgrade head`, `alembic downgrade -1 && alembic upgrade head` (round-trip), `alembic check` (drift detection) |
-| `frontend-lint` | `ubuntu-latest` | — | push/PR to main | `bun install --frozen-lockfile`, `bun run lint`, `bun x prettier --check .` |
-| `frontend-test` | `ubuntu-latest` | — | push/PR to main | `bun install --frozen-lockfile`, `bun run test -- --coverage` |
-| `build-test` | `ubuntu-latest` | — | push/PR to main | `docker compose build` (verifies images compile) |
-| `deploy` | `ubuntu-latest` | backend-lint, backend-test, backend-migrations, frontend-lint, build-test | push to main ONLY | Tailscale connect, SSH into production, write `.env` from secrets/vars, `git pull`, `docker compose up --build -d` |
+There are no deploy workflows. Each region VM runs a systemd timer (every 2 minutes, installed by `deploy/cloud-init.yaml`) that executes `deploy/update.sh <region>`:
 
-### Deployment details (auto-deploy on merge to main)
+1. Resolves the latest GitHub Release, or `PLAYLINK_TAG` from `site.env` if set.
+2. Skips if that tag is already running or previously failed (`.run/<region>.tag`, `.run/<region>.failed`).
+3. US only: waits until EU's `/healthz` reports the same version, so a broken release stops at EU.
+4. Checks out the tag and runs `deploy/deploy.sh <region> <tag>`, which pulls the images and rolls back on failed health.
 
-The `deploy` job runs only when the five jobs in its `needs` list pass (note: `frontend-test` is **not** among them) AND the trigger is a `push` event on `refs/heads/main`.
+The VMs never build images. No GitHub secrets are needed for deploys; GHCR packages must be public, or `GHCR_USER` / `GHCR_TOKEN` set in `site.env`. Rollback is a tag change, not a rebuild.
 
-- Establishes a Tailscale connection using `${{ secrets.TS_AUTHKEY }}`.
-- Connects to the production server via SSH (`appleboy/ssh-action@v1`) authenticated with `${{ secrets.SERVER_SSH_KEY }}`.
-- Writes a fresh `.env` to `~/playlink/.env` using GitHub Actions `secrets` (sensitive values) and `vars` (non-sensitive defaults), plus a separate `frontend/.env` with `PUBLIC_WS_URL` and `PUBLIC_BACKEND_URL`.
-- Runs `git pull origin main`, then `docker compose up --build -d` with `DOCKER_BUILDKIT=1`.
-
-Typical deploy duration: 30 s – 5 min depending on image cache state and network latency.
-
-### Environment variables injected at deploy time
-
-**Root `.env`** (production):
-- `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`, `POSTGRES_HOST=db`, `POSTGRES_PORT=5432`
-- `DATABASE_URL=postgresql+psycopg://<user>:<password>@db:5432/<db>`
-- `JWT_SECRET`, `JWT_ALGORITHM`
-- `NONCE_EXPIRATION_MINUTES`, `JWT_EXPIRATION_MINUTES`
-- `ORIGIN=https://playlink.bartek.monster`
-- `ADMIN_ADDRESSES`
-
-**Frontend `.env`** (production):
-- `PUBLIC_WS_URL=wss://<backend-domain>`
-- `PUBLIC_BACKEND_URL=https://<backend-domain>`
+Region VMs are created with `deploy/azure-vm.sh` (no inbound ports; see the runbook).
 
 ---
 
