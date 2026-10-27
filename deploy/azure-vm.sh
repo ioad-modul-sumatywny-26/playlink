@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Create one region VM on Azure and hand it deploy/site.env. Needs `az login`.
-#   deploy/azure-vm.sh eu germanywestcentral
-#   deploy/azure-vm.sh us eastus
+#   deploy/azure-vm.sh eu polandcentral
+#   deploy/azure-vm.sh us spaincentral   # Azure for Students allows EU regions only
 # Delete a region with: az group delete -n playlink-<region>
 set -euo pipefail
 

@@ -62,9 +62,17 @@ Switching to another domain (for example a teammate's) means changing `PLAYLINK_
 Prerequisites: `az login`, and `PLAYLINK_DOMAIN`, the region's tunnel token, `JWT_SECRET`, and `POSTGRES_PASSWORD` in local `deploy/site.env`.
 
 ```bash
-deploy/azure-vm.sh eu germanywestcentral
-deploy/azure-vm.sh us eastus
+deploy/azure-vm.sh eu polandcentral
+deploy/azure-vm.sh us spaincentral
 ```
+
+Azure for Students restricts deployments to `polandcentral`, `germanywestcentral`, `francecentral`, `denmarkeast` and `spaincentral` (policy "Allowed resource deployment regions"), so the second region is a distant EU region rather than the US. `Standard_B2ats_v2` has no capacity in Germany West Central and France Central for this subscription; check with:
+
+```bash
+az vm list-skus -l <location> --size Standard_B2ats_v2 --all --query "[].restrictions[].type"
+```
+
+A `Location` restriction means unavailable; `Zone` only rules out some zones (the script creates non-zonal VMs).
 
 Per region the script creates resource group `playlink-<region>` with one `Standard_B2ats_v2` VM (Ubuntu 24.04, 64 GB Premium P6 disk) and **no inbound NSG rules at all**. `cloud-init.yaml` installs Docker, adds a 2 GB swap file, clones the repository to `/opt/playlink`, and enables `playlink-update.timer`. The script then pushes `site.env` to the VM with `az vm run-command` and triggers the first update.
 
