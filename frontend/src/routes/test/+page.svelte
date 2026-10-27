@@ -1,15 +1,16 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { env } from '$env/dynamic/public';
 	import InnerPanel from '$lib/components/chrome/InnerPanel.svelte';
 	import SectionTitle from '$lib/components/chrome/SectionTitle.svelte';
 	import PipMeter from '$lib/components/chrome/PipMeter.svelte';
 	import { getHintsState } from '$lib/hintsContext.svelte';
+	import { getBackendUrl } from '$lib/urls';
 
 	let data = $state<unknown>(null);
 	let error = $state<string | null>(null);
 	let loading = $state(true);
 	let latency = $state<number | null>(null);
+	const backendLabel = $derived(getBackendUrl() || '—');
 
 	const hintsState = getHintsState();
 	$effect(() => {
@@ -24,12 +25,12 @@
 		error = null;
 		const start = performance.now();
 		try {
-			const backendUrl = env.PUBLIC_BACKEND_URL;
+			const backendUrl = getBackendUrl();
 			if (!backendUrl) {
-				throw new Error('Missing PUBLIC_BACKEND_URL');
+				throw new Error('Missing backend URL');
 			}
 
-			const response = await fetch(`${backendUrl}/`);
+			const response = await fetch(`${backendUrl}/healthz`);
 			if (!response.ok) {
 				throw new Error(`Error: ${response.status}`);
 			}
@@ -67,7 +68,7 @@
 		<div class="probe">
 			<div class="probe-row">
 				<span class="probe-label">SHARD</span>
-				<span class="probe-value">{env.PUBLIC_BACKEND_URL ?? '—'}</span>
+				<span class="probe-value">{backendLabel}</span>
 			</div>
 			<div class="probe-row">
 				<span class="probe-label">STATUS</span>
