@@ -21,6 +21,8 @@ if env_path.exists():
 JWT_SECRET = os.getenv("JWT_SECRET")
 if not JWT_SECRET:
     raise RuntimeError("JWT_SECRET environment variable is not set")
+if len(JWT_SECRET) < 32:
+    raise RuntimeError("JWT_SECRET must be at least 32 characters")
 
 JWT_ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
 NONCE_EXPIRATION_MINUTES = int(os.getenv("NONCE_EXPIRATION_MINUTES", "5"))
@@ -31,6 +33,31 @@ ROOM_CLEANUP_INTERVAL_SECONDS = int(os.getenv("ROOM_CLEANUP_INTERVAL_SECONDS", "
 
 # --- HTTP rate limiting ---
 DEFAULT_RATE_LIMIT = os.getenv("DEFAULT_RATE_LIMIT", "10/minute")
+
+# --- Deployment / region ---
+# Surfaced by /healthz and logs so a probe can tell which stack answered.
+REGION = os.getenv("REGION", "local")
+APP_VERSION = os.getenv("APP_VERSION", "dev")
+GIT_SHA = os.getenv("GIT_SHA", "unknown")
+
+
+def _parse_origins(raw: str | None) -> list[str]:
+    """Parse a comma-separated list of browser origins."""
+    if not raw:
+        return []
+    return [part.strip().rstrip("/") for part in raw.split(",") if part.strip()]
+
+
+# Browser origins allowed to call the API directly. Production deployments set
+# this to the entry host plus both regional frontends; local dev falls back
+# to the localhost entries when the variable is absent.
+_DEFAULT_CORS_ORIGINS = [
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+]
+CORS_ORIGINS = _parse_origins(os.getenv("CORS_ORIGINS")) or _DEFAULT_CORS_ORIGINS
 
 # --- WebSocket chat rate limiting (per-identity sliding window) ---
 WS_LIMITS: defaultdict[str, list[float]] = defaultdict(list)
