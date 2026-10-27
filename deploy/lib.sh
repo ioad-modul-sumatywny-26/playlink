@@ -1,3 +1,4 @@
+# shellcheck shell=bash
 # Helpers shared by deploy.sh and update.sh. Sourced, not executed.
 
 load_config() {
