@@ -1,0 +1,42 @@
+#cloud-config
+# Region VM bootstrap used by deploy/azure-vm.sh (__REGION__ and __REPO__ are
+# substituted there). Installs Docker, clones the repository and enables the
+# timer that deploys new releases. No inbound port is needed.
+package_update: true
+packages:
+  - ca-certificates
+  - curl
+  - git
+  - jq
+
+write_files:
+  - path: /etc/systemd/system/playlink-update.service
+    content: |
+      [Unit]
+      Description=Deploy the latest PlayLink release (__REGION__)
+      After=docker.service network-online.target
+      Wants=network-online.target
+
+      [Service]
+      Type=oneshot
+      ExecStart=/bin/bash /opt/playlink/deploy/update.sh __REGION__
+  - path: /etc/systemd/system/playlink-update.timer
+    content: |
+      [Unit]
+      Description=Check for new PlayLink releases
+
+      [Timer]
+      OnBootSec=1min
+      OnUnitActiveSec=2min
+
+      [Install]
+      WantedBy=timers.target
+
+runcmd:
+  - curl -fsSL https://get.docker.com | sh
+  # 1 GiB RAM: swap keeps Postgres, Python and Bun from being OOM-killed.
+  - fallocate -l 2G /swapfile && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile
+  - echo '/swapfile none swap sw 0 0' >> /etc/fstab
+  - git clone https://github.com/__REPO__.git /opt/playlink
+  - systemctl daemon-reload
+  - systemctl enable --now playlink-update.timer
