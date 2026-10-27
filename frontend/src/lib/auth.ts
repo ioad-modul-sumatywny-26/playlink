@@ -1,6 +1,6 @@
 import { ethers, Mnemonic, HDNodeWallet } from 'ethers';
-import { env } from '$env/dynamic/public';
 import { saveSigningKey } from '$lib/signingKey';
+import { getBackendUrl } from '$lib/urls';
 
 /**
  * Derives a cryptographic identity (private/public key pair) from a 12-word mnemonic.
@@ -33,9 +33,9 @@ export async function signMessage(identity: HDNodeWallet, message: string): Prom
  * Full authentication flow.
  */
 export async function authenticate(mnemonicPhrase: string) {
-	const backendUrl = env.PUBLIC_BACKEND_URL;
+	const backendUrl = getBackendUrl();
 	if (!backendUrl) {
-		throw new Error('Missing PUBLIC_BACKEND_URL');
+		throw new Error('Missing backend URL');
 	}
 
 	const identity = getIdentityFromMnemonic(mnemonicPhrase);

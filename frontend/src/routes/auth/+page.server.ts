@@ -35,7 +35,7 @@ export const load: PageServerLoad = async ({ cookies }) => {
 };
 
 export const actions: Actions = {
-	login: async ({ request, cookies }) => {
+	login: async ({ request, cookies, url }) => {
 		const data = await request.formData();
 		const token = data.get('token');
 
@@ -46,8 +46,10 @@ export const actions: Actions = {
 		cookies.set('session', token, {
 			path: '/',
 			httpOnly: true,
-			sameSite: 'strict',
-			secure: process.env.NODE_ENV === 'production',
+			// Lax keeps deep links from Discord working; the cookie is host-only
+			// and never shared with the other regional frontend.
+			sameSite: 'lax',
+			secure: url?.protocol === 'https:',
 			maxAge: 60 * 60
 		});
 

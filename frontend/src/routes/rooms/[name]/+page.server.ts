@@ -1,14 +1,9 @@
 import type { Actions, PageServerLoad } from './$types';
-import { env } from '$env/dynamic/public';
-import { env as privateEnv } from '$env/dynamic/private';
 import { fail, redirect } from '@sveltejs/kit';
 import { jwtDecode } from 'jwt-decode';
+import { backendFetch } from '$lib/server/backend';
 import { lobbyLocationLabel, FALLBACK_LOBBY_LOCATIONS } from '$lib/lobbyLocations';
 import type { RoomEventState, RoomMember } from '$lib/chatStore';
-
-function backendBase(): string {
-	return privateEnv.BACKEND_INTERNAL_URL || env.PUBLIC_BACKEND_URL || 'http://localhost:8000';
-}
 
 interface SessionTokenClaims {
 	sub?: string;
@@ -32,7 +27,8 @@ interface RoomDetail {
 	event: RoomEventState | null;
 }
 
-export const load: PageServerLoad = async ({ params, cookies }) => {
+export const load: PageServerLoad = async (event) => {
+	const { params, cookies } = event;
 	const session = cookies.get('session');
 	if (!session) throw redirect(303, '/auth');
 
@@ -49,10 +45,9 @@ export const load: PageServerLoad = async ({ params, cookies }) => {
 	}
 	if (!address) throw redirect(303, '/auth');
 
-	const baseUrl = backendBase();
 	let roomDetail: RoomDetail | null = null;
 	try {
-		const res = await fetch(`${baseUrl}/rooms/${encodeURIComponent(params.name)}`);
+		const res = await backendFetch(event, `/rooms/${encodeURIComponent(params.name)}`);
 		if (res.ok) {
 			roomDetail = (await res.json()) as RoomDetail;
 		}
@@ -105,13 +100,13 @@ function localInputToIsoUtc(value: string): string | null {
 }
 
 export const actions: Actions = {
-	closeRoom: async ({ cookies, params }) => {
+	closeRoom: async (event) => {
+		const { cookies, params } = event;
 		const session = cookies.get('session');
 		if (!session) return fail(401, { error: 'Not authenticated' });
 
-		const baseUrl = backendBase();
 		try {
-			const res = await fetch(`${baseUrl}/rooms/${encodeURIComponent(params.name)}`, {
+			const res = await backendFetch(event, `/rooms/${encodeURIComponent(params.name)}`, {
 				method: 'DELETE',
 				headers: { Authorization: `Bearer ${session}` }
 			});
@@ -125,7 +120,8 @@ export const actions: Actions = {
 		}
 	},
 
-	kickMember: async ({ request, cookies, params }) => {
+	kickMember: async (event) => {
+		const { request, cookies, params } = event;
 		const session = cookies.get('session');
 		if (!session) return fail(401, { error: 'Not authenticated' });
 
@@ -135,10 +131,10 @@ export const actions: Actions = {
 			return fail(400, { error: 'Missing member address' });
 		}
 
-		const baseUrl = backendBase();
 		try {
-			const res = await fetch(
-				`${baseUrl}/rooms/${encodeURIComponent(params.name)}/members/${encodeURIComponent(memberAddress)}/kick`,
+			const res = await backendFetch(
+				event,
+				`/rooms/${encodeURIComponent(params.name)}/members/${encodeURIComponent(memberAddress)}/kick`,
 				{
 					method: 'POST',
 					headers: { Authorization: `Bearer ${session}` }
@@ -154,7 +150,8 @@ export const actions: Actions = {
 		}
 	},
 
-	scheduleEvent: async ({ request, cookies, params }) => {
+	scheduleEvent: async (event) => {
+		const { request, cookies, params } = event;
 		const session = cookies.get('session');
 		if (!session) return fail(401, { error: 'Not authenticated' });
 
@@ -170,9 +167,8 @@ export const actions: Actions = {
 			return fail(400, { error: 'Invalid start or end time' });
 		}
 
-		const baseUrl = backendBase();
 		try {
-			const res = await fetch(`${baseUrl}/rooms/${encodeURIComponent(params.name)}/event`, {
+			const res = await backendFetch(event, `/rooms/${encodeURIComponent(params.name)}/event`, {
 				method: 'PUT',
 				headers: {
 					'Content-Type': 'application/json',
@@ -190,13 +186,13 @@ export const actions: Actions = {
 		}
 	},
 
-	cancelEvent: async ({ cookies, params }) => {
+	cancelEvent: async (event) => {
+		const { cookies, params } = event;
 		const session = cookies.get('session');
 		if (!session) return fail(401, { error: 'Not authenticated' });
 
-		const baseUrl = backendBase();
 		try {
-			const res = await fetch(`${baseUrl}/rooms/${encodeURIComponent(params.name)}/event`, {
+			const res = await backendFetch(event, `/rooms/${encodeURIComponent(params.name)}/event`, {
 				method: 'DELETE',
 				headers: { Authorization: `Bearer ${session}` }
 			});
@@ -210,7 +206,8 @@ export const actions: Actions = {
 		}
 	},
 
-	setRsvp: async ({ request, cookies, params }) => {
+	setRsvp: async (event) => {
+		const { request, cookies, params } = event;
 		const session = cookies.get('session');
 		if (!session) return fail(401, { error: 'Not authenticated' });
 
@@ -220,16 +217,19 @@ export const actions: Actions = {
 			return fail(400, { error: 'Invalid RSVP status' });
 		}
 
-		const baseUrl = backendBase();
 		try {
-			const res = await fetch(`${baseUrl}/rooms/${encodeURIComponent(params.name)}/event/rsvp`, {
-				method: 'PUT',
-				headers: {
-					'Content-Type': 'application/json',
-					Authorization: `Bearer ${session}`
-				},
-				body: JSON.stringify({ status })
-			});
+			const res = await backendFetch(
+				event,
+				`/rooms/${encodeURIComponent(params.name)}/event/rsvp`,
+				{
+					method: 'PUT',
+					headers: {
+						'Content-Type': 'application/json',
+						Authorization: `Bearer ${session}`
+					},
+					body: JSON.stringify({ status })
+				}
+			);
 			if (!res.ok) {
 				const result = await res.json().catch(() => ({}));
 				return fail(res.status, { error: result.detail || 'Failed to set RSVP' });
