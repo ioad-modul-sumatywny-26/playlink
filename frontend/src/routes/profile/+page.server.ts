@@ -1,11 +1,6 @@
 import type { Actions, PageServerLoad } from './$types';
-import { env } from '$env/dynamic/public';
-import { env as privateEnv } from '$env/dynamic/private';
 import { fail, redirect } from '@sveltejs/kit';
-
-function backendBase(): string {
-	return privateEnv.BACKEND_INTERNAL_URL || env.PUBLIC_BACKEND_URL || 'http://localhost:8000';
-}
+import { backendFetch } from '$lib/server/backend';
 
 interface Profile {
 	identity_address: string;
@@ -14,13 +9,14 @@ interface Profile {
 	last_login: string | null;
 }
 
-export const load: PageServerLoad = async ({ cookies }) => {
+export const load: PageServerLoad = async (event) => {
+	const { cookies } = event;
 	const session = cookies.get('session');
 	if (!session) {
 		throw redirect(303, '/auth');
 	}
 
-	const res = await fetch(`${backendBase()}/users/me`, {
+	const res = await backendFetch(event, '/users/me', {
 		headers: { Authorization: `Bearer ${session}` }
 	});
 
@@ -41,7 +37,8 @@ export const load: PageServerLoad = async ({ cookies }) => {
 };
 
 export const actions: Actions = {
-	update: async ({ request, cookies }) => {
+	update: async (event) => {
+		const { request, cookies } = event;
 		const session = cookies.get('session');
 		if (!session) return fail(401, { error: 'Not authenticated' });
 
@@ -52,7 +49,7 @@ export const actions: Actions = {
 		}
 
 		try {
-			const res = await fetch(`${backendBase()}/users/me`, {
+			const res = await backendFetch(event, '/users/me', {
 				method: 'PATCH',
 				headers: {
 					'Content-Type': 'application/json',

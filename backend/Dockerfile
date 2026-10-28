@@ -35,5 +35,13 @@ RUN groupadd --system --gid 999 nonroot \
     && useradd --system --gid 999 --uid 999 --create-home nonroot
 USER nonroot
 
+ARG APP_VERSION=dev
+ARG GIT_SHA=unknown
+ENV APP_VERSION=$APP_VERSION \
+    GIT_SHA=$GIT_SHA
+LABEL org.opencontainers.image.title="playlink-backend" \
+      org.opencontainers.image.version=$APP_VERSION \
+      org.opencontainers.image.revision=$GIT_SHA
+
 # Run migrations then start the app
 CMD ["/app/entrypoint.sh"]
