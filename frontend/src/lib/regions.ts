@@ -105,6 +105,28 @@ export async function probeAll(regions: RegionConfig[] = REGIONS): Promise<Probe
 	return Promise.all(regions.map((region) => probeRegion(region)));
 }
 
+/** Sorted live probe results, fastest first. */
+export function liveRegionsSorted(results: ProbeResult[]): ProbeResult[] {
+	return results
+		.filter((result) => result.ok && result.ms !== null)
+		.sort((a, b) => (a.ms ?? Number.POSITIVE_INFINITY) - (b.ms ?? Number.POSITIVE_INFINITY));
+}
+
+/**
+ * True when `candidate` is clearly faster than `baseline`.
+ * Used to decide whether to *propose* a switch (never auto-switch for speed alone).
+ */
+export function isMeaningfullyFaster(
+	candidateMs: number | null,
+	baselineMs: number | null,
+	{ minDeltaMs = 25, minRatio = 0.85 }: { minDeltaMs?: number; minRatio?: number } = {}
+): boolean {
+	if (candidateMs === null || baselineMs === null) return false;
+	if (!(candidateMs < baselineMs)) return false;
+	const delta = baselineMs - candidateMs;
+	return delta >= minDeltaMs || candidateMs <= baselineMs * minRatio;
+}
+
 const REGION_COOKIE = 'playlink.region';
 
 export function readSavedRegion(): RegionId | null {

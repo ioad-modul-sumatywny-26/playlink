@@ -8,6 +8,7 @@
 	import HintBar from '$lib/components/chrome/HintBar.svelte';
 	import Hint from '$lib/components/chrome/Hint.svelte';
 	import RegionChooser from '$lib/components/RegionChooser.svelte';
+	import RegionProposalBanner from '$lib/components/RegionProposalBanner.svelte';
 	import { page } from '$app/state';
 	import { otherRegion } from '$lib/regions';
 	import { provideHints } from '$lib/hintsContext.svelte';
@@ -73,6 +74,10 @@
 			{/if}
 			<Tab href="/about">About</Tab>
 		</Tabs>
+
+		{#if data?.region}
+			<RegionProposalBanner currentRegion={data.region} {other} />
+		{/if}
 
 		<main class="page-main anim-content-in">
 			{@render children()}

@@ -1,9 +1,10 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import type { ProbeResult, RegionConfig } from '$lib/regions';
+	import type { ProbeResult, RegionConfig, RegionId } from '$lib/regions';
 	import {
+		isMeaningfullyFaster,
+		liveRegionsSorted,
 		probeAll,
-		probeRegion,
 		readSavedRegion,
 		redirectToRegion,
 		saveRegion
@@ -15,9 +16,11 @@
 
 	let { regions }: { regions: RegionConfig[] } = $props();
 
-	let status = $state<'probing' | 'redirecting' | 'failed'>('probing');
+	let status = $state<'probing' | 'redirecting' | 'propose' | 'failed'>('probing');
 	let message = $state('Measuring both regions…');
 	let results = $state<ProbeResult[]>([]);
+	let savedRegion = $state<RegionConfig | null>(null);
+	let proposedRegion = $state<RegionConfig | null>(null);
 
 	async function select(region: RegionConfig) {
 		saveRegion(region.id);
@@ -27,6 +30,16 @@
 			status = 'failed';
 			message = `You are already on the ${region.label} host. Open the lobby manually.`;
 		}
+	}
+
+	function keepSaved() {
+		if (!savedRegion) return;
+		void select(savedRegion);
+	}
+
+	function acceptProposal() {
+		if (!proposedRegion) return;
+		void select(proposedRegion);
 	}
 
 	onMount(async () => {
@@ -39,26 +52,47 @@
 			}
 		}
 
-		const saved = readSavedRegion();
-		if (saved) {
-			const region = regions.find((candidate) => candidate.id === saved);
-			if (region) {
-				message = `Checking saved region ${region.label}…`;
-				const result = await probeRegion(region);
-				results = [result];
-				if (result.ok) {
-					await select(region);
-					return;
-				}
-			}
-		}
-
 		message = 'Measuring both regions…';
 		results = await probeAll(regions);
-		const live = results
-			.filter((result) => result.ok && result.ms !== null)
-			.sort((a, b) => (a.ms ?? Number.POSITIVE_INFINITY) - (b.ms ?? Number.POSITIVE_INFINITY));
+		const live = liveRegionsSorted(results);
 
+		const savedId: RegionId | null = readSavedRegion();
+		const saved = savedId ? (regions.find((candidate) => candidate.id === savedId) ?? null) : null;
+		const savedProbe = saved
+			? results.find((result) => result.region.id === saved.id)
+			: undefined;
+
+		// Saved region is silent -> fail over to the fastest live region.
+		if (saved && savedProbe && !savedProbe.ok) {
+			if (live.length === 0) {
+				status = 'failed';
+				message = 'Saved region is offline and no fallback is responding.';
+				return;
+			}
+			message = `Saved region ${saved.label} is offline — opening ${live[0].region.label}…`;
+			await select(live[0].region);
+			return;
+		}
+
+		// Saved region is live: stay there unless another region is clearly faster,
+		// in which case only *propose* a change (do not auto-switch).
+		if (saved && savedProbe?.ok) {
+			savedRegion = saved;
+			const faster = live.find((result) => result.region.id !== saved.id);
+			if (
+				faster &&
+				isMeaningfullyFaster(faster.ms, savedProbe.ms ?? null)
+			) {
+				proposedRegion = faster.region;
+				status = 'propose';
+				message = `${faster.region.label} looks faster (${Math.round(faster.ms ?? 0)} ms vs ${Math.round(savedProbe.ms ?? 0)} ms). Stay on ${saved.label}, or switch?`;
+				return;
+			}
+			await select(saved);
+			return;
+		}
+
+		// First visit (no saved region): open the fastest live one.
 		if (live.length === 0) {
 			status = 'failed';
 			message = 'Neither region is responding. You can still try a direct link below.';
@@ -85,9 +119,24 @@
 
 	<InnerPanel title="REGION SELECT">
 		<div class="status">
-			<span class="status-dot" class:failed={status === 'failed'}></span>
+			<span
+				class="status-dot"
+				class:failed={status === 'failed'}
+				class:propose={status === 'propose'}
+			></span>
 			<span>{message}</span>
 		</div>
+
+		{#if status === 'propose' && savedRegion && proposedRegion}
+			<div class="propose-actions">
+				<OrnateButton variant="primary" size="sm" onclick={keepSaved}>
+					Stay on {savedRegion.label}
+				</OrnateButton>
+				<OrnateButton variant="secondary" size="sm" onclick={acceptProposal}>
+					Switch to {proposedRegion.label}
+				</OrnateButton>
+			</div>
+		{/if}
 
 		<div class="region-list">
 			{#each regions as region (region.id)}
@@ -112,7 +161,8 @@
 		<SectionTitle title="Notes" size="small" tone="gold" />
 		<ul class="notes">
 			<li>Your first visit measures both regions and opens the faster live one.</li>
-			<li>The choice is remembered for this browser. You can switch anytime.</li>
+			<li>The choice is remembered. A faster second region is only a proposal — never forced.</li>
+			<li>Auto-switch happens only when the saved region does not respond.</li>
 			<li>
 				Each region has its own session — switching requires signing in with the same 12 words.
 			</li>
@@ -190,6 +240,18 @@
 	.status-dot.failed {
 		background: var(--blood-bright);
 		box-shadow: 0 0 6px var(--blood-bright);
+	}
+
+	.status-dot.propose {
+		background: var(--gold-base);
+		box-shadow: 0 0 6px var(--gold-base);
+	}
+
+	.propose-actions {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.6rem;
+		margin: -0.35rem 0 1rem;
 	}
 
 	.region-list {

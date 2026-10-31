@@ -1,18 +1,21 @@
 #Requires -Version 5.1
 <#
 .SYNOPSIS
-  Starts Playlink locally with Docker and seeds demo data if the DB is empty.
+  Starts Playlink locally (no Cloudflare) and seeds demo data if rooms are empty.
 
 .DESCRIPTION
-  - Ensures .env files exist
-  - Starts docker compose (db + backend + frontend)
-  - Waits for backend health
-  - Seeds a demo user + sample rooms ONLY when /rooms is empty
-  - Never wipes existing data
+  Uses the same regional recipe as production: deploy/deploy.sh via Git Bash.
+  By default starts EU only. Pass -Both to also start the US stack on :3001/:8001.
+  Seed runs only when GET /rooms returns an empty list - never wipes existing data.
 
 .EXAMPLE
   .\start-local.ps1
+  .\start-local.ps1 -Both
 #>
+
+param(
+    [switch]$Both
+)
 
 $ErrorActionPreference = "Stop"
 $Root = $PSScriptRoot
@@ -23,16 +26,61 @@ function Write-Step([string]$Message) {
     Write-Host "==> $Message" -ForegroundColor Cyan
 }
 
-function Ensure-EnvFile([string]$Example, [string]$Target) {
-    if (Test-Path $Target) {
-        Write-Host "  keep existing $Target"
-        return
+function Find-Bash {
+    $candidates = @(
+        "C:\Program Files\Git\bin\bash.exe",
+        "C:\Program Files\Git\usr\bin\bash.exe",
+        (Get-Command bash -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source)
+    ) | Where-Object { $_ -and (Test-Path $_) }
+    if (-not $candidates) {
+        throw "Git Bash not found. Install Git for Windows so deploy/deploy.sh can run."
     }
-    if (-not (Test-Path $Example)) {
-        throw "Missing example env file: $Example"
+    return $candidates[0]
+}
+
+function Start-Region([string]$Bash, [string]$Region) {
+    Write-Step "Starting region $Region (deploy/deploy.sh $Region)"
+    & $Bash "deploy/deploy.sh" $Region
+    if ($LASTEXITCODE -ne 0) {
+        throw "deploy/deploy.sh $Region failed with exit $LASTEXITCODE"
     }
-    Copy-Item $Example $Target
-    Write-Host "  created $Target from $(Split-Path $Example -Leaf)"
+}
+
+function Wait-Backend([string]$Url, [int]$Attempts = 60) {
+    for ($i = 1; $i -le $Attempts; $i++) {
+        try {
+            $resp = Invoke-WebRequest -Uri $Url -UseBasicParsing -TimeoutSec 3
+            if ($resp.StatusCode -eq 200) { return }
+        } catch {
+            Start-Sleep -Seconds 2
+        }
+    }
+    throw "Backend did not become healthy: $Url"
+}
+
+function Invoke-Seed([string]$ApiBase, [string]$Project) {
+    Write-Step "Seeding demo data on $ApiBase (skip if rooms already exist)"
+    $seedScript = Join-Path $Root "scripts\seed_local.py"
+    if (-not (Test-Path $seedScript)) {
+        throw "Missing seed script: $seedScript"
+    }
+
+    # Seed from inside the region backend container (eth_account is available there).
+    Get-Content -Raw $seedScript |
+        docker compose -p $Project -f compose.yaml exec -T `
+            -e PLAYLINK_BASE_URL=http://localhost:8000 `
+            backend python -
+    if ($LASTEXITCODE -ne 0) {
+        throw "Seed failed for $ApiBase"
+    }
+
+    $sql = @"
+UPDATE room
+SET expires_at = NOW() + INTERVAL '7 days'
+WHERE name IN ('q3-fragfest', 'd2-baal-runs', 'sc-broodwar');
+"@
+    docker compose -p $Project -f compose.yaml exec -T db `
+        psql -U playlink -d playlink -c $sql | Out-Null
 }
 
 Write-Step "Checking Docker"
@@ -42,74 +90,40 @@ if ($LASTEXITCODE -ne 0) {
 }
 Write-Host "  Docker OK"
 
-Write-Step "Preparing env files"
-Ensure-EnvFile (Join-Path $Root ".env.example") (Join-Path $Root ".env")
-Ensure-EnvFile (Join-Path $Root "frontend\.env.example") (Join-Path $Root "frontend\.env")
-
-Write-Step "Starting stack (docker compose up --build -d)"
-docker compose up --build -d
-if ($LASTEXITCODE -ne 0) {
-    throw "docker compose up failed"
+# Local mode: no PLAYLINK_DOMAIN / no tunnel. deploy.sh writes .run/<region>.env.
+if (Test-Path (Join-Path $Root "deploy\site.env")) {
+    Write-Host "  note: deploy/site.env exists - if PLAYLINK_DOMAIN is set this is public mode"
 }
 
-Write-Step "Waiting for backend health"
-$ready = $false
-for ($i = 1; $i -le 60; $i++) {
-    try {
-        $resp = Invoke-WebRequest -Uri "http://localhost:8000/" -UseBasicParsing -TimeoutSec 3
-        if ($resp.StatusCode -eq 200) {
-            $ready = $true
-            break
-        }
-    } catch {
-        Start-Sleep -Seconds 2
-    }
-}
-if (-not $ready) {
-    throw "Backend did not become healthy in time. Check: docker compose logs backend"
-}
-Write-Host "  backend healthy"
+$bash = Find-Bash
+Write-Host "  bash: $bash"
 
-Write-Step "Seeding demo data (skip if rooms already exist)"
-$seedScript = Join-Path $Root "scripts\seed_local.py"
-if (-not (Test-Path $seedScript)) {
-    throw "Missing seed script: $seedScript"
+Start-Region $bash "eu"
+if ($Both) {
+    Start-Region $bash "us"
 }
 
-# Run inside the backend container so eth_account is available.
-# localhost:8000 — same container that serves the API.
-Get-Content -Raw $seedScript |
-    docker compose exec -T `
-        -e PLAYLINK_BASE_URL=http://localhost:8000 `
-        backend python -
-if ($LASTEXITCODE -ne 0) {
-    throw "Seed failed"
-}
+Write-Step "Waiting for EU backend health"
+Wait-Backend "http://localhost:8000/healthz"
+Write-Host "  EU backend healthy"
 
-# Extend TTL of known demo rooms (no-op if they were not created this run).
-Write-Step "Extending demo room TTL (7 days), if present"
-$envFile = Join-Path $Root ".env"
-$pgUser = "postgres"
-$pgDb = "playlink"
-Get-Content $envFile | ForEach-Object {
-    if ($_ -match '^\s*POSTGRES_USER=(.+)$') { $pgUser = $Matches[1].Trim() }
-    if ($_ -match '^\s*POSTGRES_DB=(.+)$') { $pgDb = $Matches[1].Trim() }
-}
-$sql = @"
-UPDATE room
-SET expires_at = NOW() + INTERVAL '7 days'
-WHERE name IN ('q3-fragfest', 'd2-baal-runs', 'sc-broodwar');
-"@
-docker compose exec -T db psql -U $pgUser -d $pgDb -c $sql | Out-Null
+Invoke-Seed "http://localhost:8000" "playlink-eu"
 
 Write-Host ""
-Write-Host "Playlink is up." -ForegroundColor Green
-Write-Host "  Frontend : http://localhost:3000"
-Write-Host "  Rooms    : http://localhost:3000/rooms"
-Write-Host "  Backend  : http://localhost:8000/docs"
+Write-Host "Playlink is up (local mode, no Cloudflare)." -ForegroundColor Green
+Write-Host "  Chooser : http://127.0.0.1:3000"
+Write-Host "  EU app  : http://localhost:3000/rooms"
+Write-Host "  EU API  : http://localhost:8000/docs"
+if ($Both) {
+    Write-Host "  US app  : http://localhost:3001/rooms"
+    Write-Host "  US API  : http://localhost:8001/docs"
+}
 Write-Host ""
-Write-Host "Demo login (IDENTITY page) - paste this mnemonic:"
+Write-Host "Demo login (IDENTITY) - paste this mnemonic:"
 Write-Host "  test test test test test test test test test test test junk" -ForegroundColor Yellow
 Write-Host ""
-Write-Host "Stop with:  docker compose down"
-Write-Host "Wipe DB:    docker compose down -v"
+Write-Host "Stop EU:  docker compose -p playlink-eu -f compose.yaml down"
+if ($Both) {
+    Write-Host "Stop US:  docker compose -p playlink-us -f compose.yaml down"
+}
+Write-Host "Wipe DB:  add -v to the down command"
