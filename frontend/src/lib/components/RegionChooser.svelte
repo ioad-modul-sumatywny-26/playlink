@@ -63,9 +63,7 @@
 
 		const savedId: RegionId | null = readSavedRegion();
 		const saved = savedId ? (regions.find((candidate) => candidate.id === savedId) ?? null) : null;
-		const savedProbe = saved
-			? results.find((result) => result.region.id === saved.id)
-			: undefined;
+		const savedProbe = saved ? results.find((result) => result.region.id === saved.id) : undefined;
 
 		// Saved region is silent -> fail over to the fastest live region.
 		if (saved && savedProbe && !savedProbe.ok) {
@@ -85,8 +83,7 @@
 			savedRegion = saved;
 			const otherLive = live.find((result) => result.region.id !== saved.id);
 			const shouldPropose =
-				!!otherLive &&
-				(forcePropose || isMeaningfullyFaster(otherLive.ms, savedProbe.ms ?? null));
+				!!otherLive && (forcePropose || isMeaningfullyFaster(otherLive.ms, savedProbe.ms ?? null));
 			if (shouldPropose && otherLive) {
 				proposedRegion = otherLive.region;
 				status = 'propose';

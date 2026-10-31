@@ -61,8 +61,8 @@
 {#if visible && other}
 	<div class="banner" role="status">
 		<span class="text">
-			{other.label} looks faster ({Math.round(otherMs ?? 0)} ms vs {Math.round(currentMs ?? 0)} ms).
-			Saved region stays put unless you switch.
+			{other.label} looks faster ({Math.round(otherMs ?? 0)} ms vs {Math.round(currentMs ?? 0)} ms). Saved
+			region stays put unless you switch.
 		</span>
 		<div class="actions">
 			<OrnateButton variant="secondary" size="sm" onclick={dismiss}>Keep current</OrnateButton>

@@ -120,14 +120,12 @@ export function liveRegionsSorted(results: ProbeResult[]): ProbeResult[] {
 export function isMeaningfullyFaster(
 	candidateMs: number | null,
 	baselineMs: number | null,
-	{
-		minDeltaMs,
-		minRatio
-	}: { minDeltaMs?: number; minRatio?: number } = {}
+	{ minDeltaMs, minRatio }: { minDeltaMs?: number; minRatio?: number } = {}
 ): boolean {
 	if (candidateMs === null || baselineMs === null) return false;
 	if (!(candidateMs < baselineMs)) return false;
-	const localDemo = typeof window !== 'undefined' && /localhost|127\.0\.0\.1/.test(window.location.hostname);
+	const localDemo =
+		typeof window !== 'undefined' && /localhost|127\.0\.0\.1/.test(window.location.hostname);
 	const deltaNeed = minDeltaMs ?? (localDemo ? 5 : 25);
 	const ratioNeed = minRatio ?? (localDemo ? 0.98 : 0.85);
 	const delta = baselineMs - candidateMs;
