@@ -115,16 +115,23 @@ export function liveRegionsSorted(results: ProbeResult[]): ProbeResult[] {
 /**
  * True when `candidate` is clearly faster than `baseline`.
  * Used to decide whether to *propose* a switch (never auto-switch for speed alone).
+ * Localhost thresholds are looser so the proposal UI is reachable during lab demos.
  */
 export function isMeaningfullyFaster(
 	candidateMs: number | null,
 	baselineMs: number | null,
-	{ minDeltaMs = 25, minRatio = 0.85 }: { minDeltaMs?: number; minRatio?: number } = {}
+	{
+		minDeltaMs,
+		minRatio
+	}: { minDeltaMs?: number; minRatio?: number } = {}
 ): boolean {
 	if (candidateMs === null || baselineMs === null) return false;
 	if (!(candidateMs < baselineMs)) return false;
+	const localDemo = typeof window !== 'undefined' && /localhost|127\.0\.0\.1/.test(window.location.hostname);
+	const deltaNeed = minDeltaMs ?? (localDemo ? 5 : 25);
+	const ratioNeed = minRatio ?? (localDemo ? 0.98 : 0.85);
 	const delta = baselineMs - candidateMs;
-	return delta >= minDeltaMs || candidateMs <= baselineMs * minRatio;
+	return delta >= deltaNeed || candidateMs <= baselineMs * ratioNeed;
 }
 
 const REGION_COOKIE = 'playlink.region';

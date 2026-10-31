@@ -43,7 +43,12 @@
 	}
 
 	onMount(async () => {
-		const forced = new URLSearchParams(window.location.search).get('region');
+		const params = new URLSearchParams(window.location.search);
+		const forced = params.get('region');
+		// Lab helper: ?propose=1 keeps you on the chooser with a Stay/Switch prompt
+		// so week-5 screenshots are possible even when both regions are equally fast.
+		const forcePropose = params.get('propose') === '1';
+
 		if (forced === 'eu' || forced === 'us') {
 			const region = regions.find((candidate) => candidate.id === forced);
 			if (region) {
@@ -78,14 +83,19 @@
 		// in which case only *propose* a change (do not auto-switch).
 		if (saved && savedProbe?.ok) {
 			savedRegion = saved;
-			const faster = live.find((result) => result.region.id !== saved.id);
-			if (
-				faster &&
-				isMeaningfullyFaster(faster.ms, savedProbe.ms ?? null)
-			) {
-				proposedRegion = faster.region;
+			const otherLive = live.find((result) => result.region.id !== saved.id);
+			const shouldPropose =
+				!!otherLive &&
+				(forcePropose || isMeaningfullyFaster(otherLive.ms, savedProbe.ms ?? null));
+			if (shouldPropose && otherLive) {
+				proposedRegion = otherLive.region;
 				status = 'propose';
-				message = `${faster.region.label} looks faster (${Math.round(faster.ms ?? 0)} ms vs ${Math.round(savedProbe.ms ?? 0)} ms). Stay on ${saved.label}, or switch?`;
+				const otherLabel = otherLive.region.label;
+				const otherMs = Math.round(otherLive.ms ?? 0);
+				const savedMs = Math.round(savedProbe.ms ?? 0);
+				message = forcePropose
+					? `Demo proposal: switch to ${otherLabel}? (saved ${saved.label} stays unless you accept)`
+					: `${otherLabel} looks faster (${otherMs} ms vs ${savedMs} ms). Stay on ${saved.label}, or switch?`;
 				return;
 			}
 			await select(saved);
@@ -96,6 +106,16 @@
 		if (live.length === 0) {
 			status = 'failed';
 			message = 'Neither region is responding. You can still try a direct link below.';
+			return;
+		}
+
+		// No cookie yet but ?propose=1 — seed a fake "saved" as the slower of the two
+		// so the proposal screen is still reachable for the diary.
+		if (forcePropose && live.length >= 2) {
+			savedRegion = live[1].region;
+			proposedRegion = live[0].region;
+			status = 'propose';
+			message = `Demo proposal: ${proposedRegion.label} looks faster. Stay on ${savedRegion.label}, or switch?`;
 			return;
 		}
 

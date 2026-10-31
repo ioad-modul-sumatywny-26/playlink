@@ -90,6 +90,19 @@ if ($LASTEXITCODE -ne 0) {
 }
 Write-Host "  Docker OK"
 
+# Student gotcha: leftover local uvicorn/python often blocks :8000.
+foreach ($port in @(8000, 3000, 8001, 3001)) {
+    $owners = @(Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue |
+        Select-Object -ExpandProperty OwningProcess -Unique)
+    foreach ($procId in $owners) {
+        $proc = Get-Process -Id $procId -ErrorAction SilentlyContinue
+        if ($proc -and $proc.ProcessName -match 'python|uvicorn') {
+            Write-Host "  freeing :$port (killing $($proc.ProcessName) pid $procId)"
+            Stop-Process -Id $procId -Force -ErrorAction SilentlyContinue
+        }
+    }
+}
+
 # Local mode: no PLAYLINK_DOMAIN / no tunnel. deploy.sh writes .run/<region>.env.
 if (Test-Path (Join-Path $Root "deploy\site.env")) {
     Write-Host "  note: deploy/site.env exists - if PLAYLINK_DOMAIN is set this is public mode"
