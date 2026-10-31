@@ -56,6 +56,20 @@ Format z dokumentu wizji: zaplanowane / uruchomione / wynik / wniosek.
 | Wynik | Ręczny switch działa; odświeżenie nie zmienia regionu bez propozycji/akceptacji; cookie przeżywa reload |
 | Wniosek | Do odbioru tygodnia 6 wystarczą zrzuty choosera, banera i dwóch loginów (EU/US). F4 obciążenie = tydzień 7 |
 
+## Tydzień 7 — F4 eksperyment 1 vs 2 regiony
+
+| Pole | Treść |
+| --- | --- |
+| Zaplanowane | Wariant A (wszyscy → EU) vs B (wybór EU/US); scenariusze: lista, pokój, join, czat WS, update listy; tabela p50/p95 |
+| Uruchomione | `experiments/f4/` — `run-f4.ps1` / `run.py`; pomiary REST + WS |
+| Wynik | Pliki `experiments/f4/results/run-*.json` + `.md` (po lokalnym lub publicznym odpaleniu) |
+| Wniosek | Lokalnie metoda działa; sensowny Δ RTT dopiero na publicznych EU/US albo generatorach w dwóch lokalizacjach. Hipotezy H1/H2 z wizji uzupełnić po odczycie tabeli |
+
+```powershell
+.\start-local.ps1 -Both
+.\experiments\f4\run-f4.ps1
+```
+
 ## Jak odpalić lokalnie (bez Cloudflare)
 
 ```powershell
