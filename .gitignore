@@ -143,6 +143,8 @@ celerybeat.pid
 
 # Environments
 .env
+.run/
+deploy/site.env
 .venv
 env/
 venv/
@@ -264,3 +266,7 @@ AGENT.md
 /rooms-v1.png
 
 /frontend/coverage/
+
+# Local env files (examples stay tracked)
+/.env.*
+!/.env.example

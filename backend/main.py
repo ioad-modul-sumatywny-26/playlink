@@ -18,10 +18,11 @@ import asyncio
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from slowapi.errors import RateLimitExceeded
 from slowapi.extension import _rate_limit_exceeded_handler
+from sqlalchemy import text
 
 # ``DEFAULT_RATE_LIMIT`` is used below by ``read_root``; the remaining names are
 # backward-compatible re-exports. The test-suite reaches into ``main`` as a
@@ -30,12 +31,17 @@ from slowapi.extension import _rate_limit_exceeded_handler
 # resolving after the split. See ``__all__`` for the full re-exported surface.
 from config import (  # noqa: F401
     ADMIN_ADDRESSES,
+    APP_VERSION,
+    CORS_ORIGINS,
     DEFAULT_RATE_LIMIT,
+    GIT_SHA,
+    REGION,
     SYSTEM_SENDER_ADDRESS,
     _parse_admin_addresses,
     is_admin_address,
 )
 from database import get_session
+from dependencies import SessionDep
 from rate_limit import limiter
 from routers import auth, chat, events, games, rooms, users
 from security import hash_nonce  # noqa: F401
@@ -93,17 +99,9 @@ app = FastAPI(lifespan=lifespan)
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
-origins = [
-    "https://playlink.bartek.monster",
-    "http://localhost:3000",
-    "http://127.0.0.1:3000",
-    "http://localhost:5173",
-    "http://127.0.0.1:5173",
-]
-
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,
+    allow_origins=CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -114,6 +112,29 @@ app.add_middleware(
 @limiter.limit(DEFAULT_RATE_LIMIT)
 def read_root(request: Request):  # noqa: ARG001
     return {"status": "ok", "service": "playlink-auth"}
+
+
+@app.get("/healthz")
+def healthz(response: Response):
+    """Cheap liveness probe used by the region selector and container health."""
+    response.headers["Cache-Control"] = "no-store"
+    return {
+        "status": "ok",
+        "region": REGION,
+        "version": APP_VERSION,
+        "commit": GIT_SHA,
+    }
+
+
+@app.get("/readyz")
+def readyz(response: Response, session: SessionDep):
+    """Readiness probe that verifies the database connection."""
+    response.headers["Cache-Control"] = "no-store"
+    try:
+        session.connection().execute(text("SELECT 1"))
+    except Exception:
+        raise HTTPException(status_code=503, detail="database unavailable") from None
+    return {"status": "ready", "region": REGION}
 
 
 app.include_router(auth.router)

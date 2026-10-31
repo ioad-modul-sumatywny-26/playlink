@@ -1,0 +1,160 @@
+name: CI
+
+on:
+  pull_request:
+    paths-ignore:
+      - "docs/**"
+      - "prezentacje/**"
+      - "**/*.md"
+  push:
+    branches: [main]
+    paths-ignore:
+      - "docs/**"
+      - "prezentacje/**"
+      - "**/*.md"
+  workflow_call:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  backend-lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          version: "latest"
+          enable-cache: true
+      - name: Set up Python
+        run: uv python install 3.14
+      - name: Install dependencies
+        run: uv sync --dev
+        working-directory: backend
+      - name: Ruff check
+        run: uv run ruff check .
+        working-directory: backend
+      - name: Ruff format check
+        run: uv run ruff format --check .
+        working-directory: backend
+
+  backend-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          version: "latest"
+          enable-cache: true
+      - name: Set up Python
+        run: uv python install 3.14
+      - name: Install dependencies
+        run: uv sync --dev
+        working-directory: backend
+      - name: Run tests
+        run: uv run pytest --cov=main --cov=models --cov=database --cov=usernames --cov-report=term-missing:skip-covered --cov-fail-under=80
+        working-directory: backend
+        env:
+          DATABASE_URL: sqlite:///
+          JWT_SECRET: ci-test-secret-at-least-thirty-two-chars
+
+  backend-migrations:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_USER: playlink
+          POSTGRES_PASSWORD: playlink
+          POSTGRES_DB: playlink
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U playlink"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgresql+psycopg://playlink:playlink@localhost:5432/playlink
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          version: "latest"
+          enable-cache: true
+      - name: Set up Python
+        run: uv python install 3.14
+      - name: Install dependencies
+        run: uv sync --dev
+        working-directory: backend
+      - name: Apply migrations to a clean Postgres
+        run: uv run alembic upgrade head
+        working-directory: backend
+      - name: Round-trip last migration
+        run: uv run alembic downgrade -1 && uv run alembic upgrade head
+        working-directory: backend
+      - name: Detect model/migration drift
+        run: uv run alembic check
+        working-directory: backend
+
+  frontend-lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+        working-directory: frontend
+      - name: Lint
+        run: bun run lint
+        working-directory: frontend
+      - name: Format check
+        run: bun x prettier --check .
+        working-directory: frontend
+
+  frontend-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+        working-directory: frontend
+      - name: Run tests
+        run: bun run test
+        working-directory: frontend
+
+  compose-config:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Validate compose files
+        env:
+          APP_ENV_FILE: deploy/config.env
+          FRONTEND_PORT: "3000"
+          BACKEND_PORT: "8000"
+        run: |
+          docker compose -f compose.yaml --profile tunnel config -q
+          docker compose -f compose.yaml -f compose.build.yaml -f compose.ports.yaml config -q
+      - name: Lint deploy scripts
+        run: shellcheck -x deploy/*.sh
+
+  build-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Build images without pushing
+        env:
+          APP_ENV_FILE: deploy/config.env
+        run: docker compose -f compose.yaml -f compose.build.yaml build

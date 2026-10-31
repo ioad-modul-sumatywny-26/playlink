@@ -1,0 +1,8 @@
+# Local mode (no domain/tunnel): publish the region on localhost.
+services:
+  backend:
+    ports:
+      - "127.0.0.1:${BACKEND_PORT:?}:8000"
+  frontend:
+    ports:
+      - "127.0.0.1:${FRONTEND_PORT:?}:3000"

@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount, untrack } from 'svelte';
 	import { roomsStore, type RoomSummary } from '$lib/roomsStore';
-	import { env } from '$env/dynamic/public';
+	import { getBackendUrl } from '$lib/urls';
 	import { enhance, deserialize } from '$app/forms';
 	import { goto, invalidateAll } from '$app/navigation';
 	import type { PageProps } from './$types';
@@ -38,14 +38,22 @@
 	let currentPing = $state<number | string>('...');
 
 	async function measurePing() {
+		const baseUrl = getBackendUrl();
+		if (!baseUrl) {
+			currentPing = 'ERR';
+			return;
+		}
+
 		const start = performance.now();
+		const controller = new AbortController();
+		const timer = setTimeout(() => controller.abort(), 2500);
 		try {
-			const baseUrl = env.PUBLIC_BACKEND_URL || 'http://localhost:8000';
-			await fetch(`${baseUrl}/`);
-			const end = performance.now();
-			currentPing = Math.round(end - start);
+			await fetch(`${baseUrl}/healthz`, { cache: 'no-store', signal: controller.signal });
+			currentPing = Math.round(performance.now() - start);
 		} catch {
 			currentPing = 'ERR';
+		} finally {
+			clearTimeout(timer);
 		}
 	}
 

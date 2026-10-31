@@ -1,0 +1,87 @@
+# One regional stack. Started by deploy/deploy.sh, which generates the env file
+# and picks the extra compose files:
+#   compose.build.yaml  build images from the working tree instead of GHCR
+#   compose.ports.yaml  publish ports on 127.0.0.1 (local mode, no tunnel)
+name: playlink
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  db:
+    image: postgres:18-alpine
+    env_file: ${APP_ENV_FILE:?run deploy/deploy.sh}
+    command: postgres -c shared_buffers=96MB -c max_connections=30 -c work_mem=4MB
+    # No published port: Postgres is only reachable on the compose network.
+    volumes:
+      - postgres_data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    restart: unless-stopped
+    mem_limit: 320m
+    logging: *default-logging
+
+  backend:
+    image: ghcr.io/ioad-modul-sumatywny-26/playlink-backend:${IMAGE_TAG:-local}
+    env_file: ${APP_ENV_FILE:?run deploy/deploy.sh}
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/readyz')"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    restart: unless-stopped
+    mem_limit: 320m
+    logging: *default-logging
+
+  frontend:
+    image: ghcr.io/ioad-modul-sumatywny-26/playlink-frontend:${IMAGE_TAG:-local}
+    env_file: ${APP_ENV_FILE:?run deploy/deploy.sh}
+    environment:
+      BACKEND_INTERNAL_URL: http://backend:8000
+      # One container serves both the entry host and the regional host, so the
+      # origin comes from the Host header plus Cloudflare's X-Forwarded-Proto.
+      # Never set ORIGIN here.
+      PROTOCOL_HEADER: x-forwarded-proto
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "bun", "-e", "const r = await fetch('http://127.0.0.1:3000/healthz'); if (!r.ok) process.exit(1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    restart: unless-stopped
+    mem_limit: 256m
+    logging: *default-logging
+
+  # Outbound-only connector: the machine needs no open inbound port. Routes
+  # (hostname -> http://frontend:3000 / http://backend:8000) live in the
+  # tunnel's configuration on Cloudflare.
+  cloudflared:
+    image: cloudflare/cloudflared:2025.10.0
+    command: tunnel --no-autoupdate run
+    environment:
+      TUNNEL_TOKEN: ${TUNNEL_TOKEN:-}
+    depends_on:
+      frontend:
+        condition: service_healthy
+    restart: unless-stopped
+    mem_limit: 96m
+    logging: *default-logging
+    profiles:
+      - tunnel
+
+volumes:
+  postgres_data:

@@ -1,0 +1,8 @@
+# Build images from the working tree (deploy/deploy.sh <region> without a tag).
+services:
+  backend:
+    build:
+      context: ./backend
+  frontend:
+    build:
+      context: ./frontend
