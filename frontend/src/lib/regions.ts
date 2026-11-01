@@ -105,6 +105,33 @@ export async function probeAll(regions: RegionConfig[] = REGIONS): Promise<Probe
 	return Promise.all(regions.map((region) => probeRegion(region)));
 }
 
+/** Sorted live probe results, fastest first. */
+export function liveRegionsSorted(results: ProbeResult[]): ProbeResult[] {
+	return results
+		.filter((result) => result.ok && result.ms !== null)
+		.sort((a, b) => (a.ms ?? Number.POSITIVE_INFINITY) - (b.ms ?? Number.POSITIVE_INFINITY));
+}
+
+/**
+ * True when `candidate` is clearly faster than `baseline`.
+ * Used to decide whether to *propose* a switch (never auto-switch for speed alone).
+ * Localhost thresholds are looser so the proposal UI is reachable during lab demos.
+ */
+export function isMeaningfullyFaster(
+	candidateMs: number | null,
+	baselineMs: number | null,
+	{ minDeltaMs, minRatio }: { minDeltaMs?: number; minRatio?: number } = {}
+): boolean {
+	if (candidateMs === null || baselineMs === null) return false;
+	if (!(candidateMs < baselineMs)) return false;
+	const localDemo =
+		typeof window !== 'undefined' && /localhost|127\.0\.0\.1/.test(window.location.hostname);
+	const deltaNeed = minDeltaMs ?? (localDemo ? 5 : 25);
+	const ratioNeed = minRatio ?? (localDemo ? 0.98 : 0.85);
+	const delta = baselineMs - candidateMs;
+	return delta >= deltaNeed || candidateMs <= baselineMs * ratioNeed;
+}
+
 const REGION_COOKIE = 'playlink.region';
 
 export function readSavedRegion(): RegionId | null {
