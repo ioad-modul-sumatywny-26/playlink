@@ -31,8 +31,7 @@ step() { printf '\n==> %s\n' "$*"; }
 
 wait_health() {
 	local url="$1"
-	local i
-	for i in $(seq 1 60); do
+	for _ in $(seq 1 60); do
 		if curl -fsS "$url" >/dev/null 2>&1; then
 			return 0
 		fi

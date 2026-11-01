@@ -94,7 +94,7 @@ async def run_variant(
         for region, url in targets
     ]
 
-    print(f"\n=== Variant {variant}: {users} users → {[c.region for c in clients]} ===")
+    print(f"\n=== Variant {variant}: {users} users -> {[c.region for c in clients]} ===")
     # return_exceptions so one broken user does not cancel the rest
     results = await asyncio.gather(
         *[run_user_flow(c, iterations=iterations, pace_s=pace) for c in clients],
