@@ -1,5 +1,12 @@
 #!/usr/bin/env python3
-"""F4 experiment runner — variant A (all EU) vs B (split EU/US)."""
+"""F4 experiment runner — variant A (all EU) vs B (split EU/US).
+
+Run after stacks are up:
+  bash scripts/local-up.sh --both
+  cd experiments/f4 && python -m venv .venv && . .venv/bin/activate
+  pip install -r requirements.txt
+  python run.py
+"""
 
 from __future__ import annotations
 
@@ -11,7 +18,9 @@ import time
 from datetime import UTC, datetime
 from pathlib import Path
 
-from client import RegionClient, run_user_flow
+import httpx
+
+from client import RegionClient, run_user_flow, summarize
 from report import write_markdown
 
 ROOT = Path(__file__).resolve().parent
@@ -57,8 +66,6 @@ def parse_args() -> argparse.Namespace:
 
 
 async def health_ok(url: str) -> bool:
-    import httpx
-
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
             r = await client.get(f"{url.rstrip('/')}/healthz")
@@ -88,9 +95,14 @@ async def run_variant(
     ]
 
     print(f"\n=== Variant {variant}: {users} users → {[c.region for c in clients]} ===")
-    await asyncio.gather(
-        *[run_user_flow(c, iterations=iterations, pace_s=pace) for c in clients]
+    # return_exceptions so one broken user does not cancel the rest
+    results = await asyncio.gather(
+        *[run_user_flow(c, iterations=iterations, pace_s=pace) for c in clients],
+        return_exceptions=True,
     )
+    for i, result in enumerate(results):
+        if isinstance(result, BaseException):
+            print(f"  user {i} crashed: {result!r}", file=sys.stderr)
 
     all_samples = []
     for c in clients:
@@ -102,11 +114,9 @@ async def run_variant(
         for i in range(ws_samples):
             observer = RegionClient(region=region, base_url=base, variant=variant)
             actor = RegionClient(region=region, base_url=base, variant=variant)
-            try:
-                actor.login()
-                await observer.measure_rooms_ws_update(actor)
-            except Exception as exc:  # noqa: BLE001
-                print(f"  ws_update {region} #{i + 1} failed: {exc}")
+            async with observer, actor:
+                if await actor.login():
+                    await observer.measure_rooms_ws_update(actor)
             all_samples.extend(observer.samples)
             all_samples.extend(actor.samples)
             await asyncio.sleep(pace)
@@ -122,8 +132,6 @@ def build_report_payload(
     started_at: str,
     finished_at: str,
 ) -> dict:
-    from client import summarize
-
     by_variant: dict[str, list] = {}
     for s in samples:
         by_variant.setdefault(s.variant, []).append(s)
@@ -173,7 +181,7 @@ async def main_async() -> int:
 
     if not await health_ok(args.eu):
         print(f"ERROR: EU health failed at {args.eu}/healthz", file=sys.stderr)
-        print("Start stacks first: .\\start-local.ps1 -Both", file=sys.stderr)
+        print("Start stacks first: bash scripts/local-up.sh --both", file=sys.stderr)
         return 1
 
     variants = ["A", "B"] if args.variant == "both" else [args.variant]
@@ -182,7 +190,7 @@ async def main_async() -> int:
             f"ERROR: US health failed at {args.us}/healthz (needed for variant B)",
             file=sys.stderr,
         )
-        print("Run: .\\start-local.ps1 -Both", file=sys.stderr)
+        print("Run: bash scripts/local-up.sh --both", file=sys.stderr)
         return 1
 
     started_at = datetime.now(UTC).isoformat()
@@ -218,13 +226,15 @@ async def main_async() -> int:
     print(f"Elapsed {elapsed:.1f}s | samples={len(all_samples)}")
     for variant, table in payload["summary"].items():
         overall = table["__all_ok__"]
+        err_rate = overall.get("error_rate")
+        err_txt = f" errors={err_rate * 100:.1f}%" if err_rate is not None else ""
         if overall["p50_ms"] is not None and overall["p95_ms"] is not None:
             print(
-                f"  variant {variant}: ok={overall['ok']}/{overall['n']} "
+                f"  variant {variant}: ok={overall['ok']}/{overall['n']}{err_txt} "
                 f"p50={overall['p50_ms']:.1f}ms p95={overall['p95_ms']:.1f}ms"
             )
         else:
-            print(f"  variant {variant}: ok={overall['ok']}/{overall['n']}")
+            print(f"  variant {variant}: ok={overall['ok']}/{overall['n']}{err_txt}")
     return 0
 
 

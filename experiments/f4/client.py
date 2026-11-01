@@ -1,4 +1,8 @@
-"""Playlink F4 load client: auth + REST + WebSocket scenario timings."""
+"""Playlink F4 load client: auth + REST + WebSocket scenario timings.
+
+Uses httpx.AsyncClient so virtual users under asyncio.gather actually overlap.
+HTTP/WS failures (including 429) are recorded and do not abort the run.
+"""
 
 from __future__ import annotations
 
@@ -73,7 +77,22 @@ def summarize(samples: list[Sample], scenario: str | None = None) -> dict[str, A
     }
 
 
+def _http_error(resp: httpx.Response) -> str:
+    if resp.status_code == 429:
+        return "rate_limited"
+    detail = ""
+    try:
+        payload = resp.json()
+        if isinstance(payload, dict) and payload.get("detail") is not None:
+            detail = f": {payload['detail']}"
+    except Exception:  # noqa: BLE001
+        detail = ""
+    return f"HTTP {resp.status_code}{detail}"
+
+
 class RegionClient:
+    """One virtual user against a single regional API."""
+
     def __init__(self, region: str, base_url: str, variant: str, timeout: float = 15.0):
         self.region = region
         self.base_url = base_url.rstrip("/")
@@ -85,6 +104,22 @@ class RegionClient:
         self.address = self._private.address
         self.token: str | None = None
         self.samples: list[Sample] = []
+        self._http: httpx.AsyncClient | None = None
+
+    async def __aenter__(self) -> RegionClient:
+        self._http = httpx.AsyncClient(base_url=self.base_url, timeout=self.timeout)
+        return self
+
+    async def __aexit__(self, *_exc: object) -> None:
+        if self._http is not None:
+            await self._http.aclose()
+            self._http = None
+
+    @property
+    def http(self) -> httpx.AsyncClient:
+        if self._http is None:
+            raise RuntimeError("RegionClient must be used as 'async with'")
+        return self._http
 
     def _record(
         self,
@@ -106,54 +141,62 @@ class RegionClient:
         self.samples.append(sample)
         return sample
 
-    def login(self) -> None:
-        started = time.perf_counter()
-        try:
-            with httpx.Client(base_url=self.base_url, timeout=self.timeout) as client:
-                nonce_resp = client.post(
-                    "/auth/request-nonce",
-                    params={"address": self.address},
-                )
-                nonce_resp.raise_for_status()
-                nonce = nonce_resp.json()["nonce"]
-                message = encode_defunct(text=f"Sign in to Playlink\nNonce: {nonce}")
-                signature = self._private.sign_message(message).signature.hex()
-                if not signature.startswith("0x"):
-                    signature = f"0x{signature}"
-                verify = client.post(
-                    "/auth/verify",
-                    json={
-                        "address": self.address,
-                        "nonce": nonce,
-                        "signature": signature,
-                    },
-                )
-                verify.raise_for_status()
-                self.token = verify.json()["token"]
-            self._record("auth", True, started)
-        except Exception as exc:  # noqa: BLE001
-            self._record("auth", False, started, error=str(exc))
-            raise
-
     def _headers(self) -> dict[str, str]:
         if not self.token:
             raise RuntimeError("not logged in")
         return {"Authorization": f"Bearer {self.token}"}
 
-    def list_rooms(self) -> list[dict[str, Any]]:
+    async def login(self) -> bool:
         started = time.perf_counter()
         try:
-            with httpx.Client(base_url=self.base_url, timeout=self.timeout) as client:
-                resp = client.get("/rooms")
-                resp.raise_for_status()
-                rooms = resp.json()
+            nonce_resp = await self.http.post(
+                "/auth/request-nonce",
+                params={"address": self.address},
+            )
+            if nonce_resp.status_code != 200:
+                self._record("auth", False, started, error=_http_error(nonce_resp))
+                return False
+            nonce = nonce_resp.json()["nonce"]
+            message = encode_defunct(text=f"Sign in to Playlink\nNonce: {nonce}")
+            signature = self._private.sign_message(message).signature.hex()
+            if not signature.startswith("0x"):
+                signature = f"0x{signature}"
+            verify = await self.http.post(
+                "/auth/verify",
+                json={
+                    "address": self.address,
+                    "nonce": nonce,
+                    "signature": signature,
+                },
+            )
+            if verify.status_code != 200:
+                self._record("auth", False, started, error=_http_error(verify))
+                return False
+            self.token = verify.json()["token"]
+            self._record("auth", True, started)
+            return True
+        except Exception as exc:  # noqa: BLE001
+            self._record("auth", False, started, error=str(exc))
+            return False
+
+    async def list_rooms(self) -> list[dict[str, Any]]:
+        started = time.perf_counter()
+        try:
+            resp = await self.http.get("/rooms")
+            if resp.status_code != 200:
+                self._record("list_rooms", False, started, error=_http_error(resp))
+                return []
+            rooms = resp.json()
+            if not isinstance(rooms, list):
+                self._record("list_rooms", False, started, error="unexpected_payload")
+                return []
             self._record("list_rooms", True, started, count=len(rooms))
             return rooms
         except Exception as exc:  # noqa: BLE001
             self._record("list_rooms", False, started, error=str(exc))
-            raise
+            return []
 
-    def create_room(self, name: str | None = None) -> str:
+    async def create_room(self, name: str | None = None) -> str | None:
         room_name = name or f"f4-{self.region}-{uuid.uuid4().hex[:8]}"
         started = time.perf_counter()
         body = {
@@ -164,55 +207,95 @@ class RegionClient:
             "description": f"F4 experiment room ({self.variant}/{self.region})",
         }
         try:
-            with httpx.Client(base_url=self.base_url, timeout=self.timeout) as client:
-                resp = client.post("/rooms", json=body, headers=self._headers())
-                if resp.status_code == 429:
-                    raise RuntimeError("rate_limited")
-                resp.raise_for_status()
+            resp = await self.http.post("/rooms", json=body, headers=self._headers())
+            if resp.status_code == 429:
+                self._record(
+                    "create_room", False, started, error="rate_limited", room=room_name
+                )
+                return None
+            if resp.status_code not in (200, 201):
+                self._record(
+                    "create_room",
+                    False,
+                    started,
+                    error=_http_error(resp),
+                    room=room_name,
+                )
+                return None
             self._record("create_room", True, started, room=room_name)
             return room_name
         except Exception as exc:  # noqa: BLE001
-            self._record("create_room", False, started, error=str(exc), room=room_name)
-            raise
+            self._record(
+                "create_room", False, started, error=str(exc), room=room_name
+            )
+            return None
 
-    def join_room(self, room_name: str) -> None:
+    async def join_room(self, room_name: str) -> bool:
         started = time.perf_counter()
         try:
-            with httpx.Client(base_url=self.base_url, timeout=self.timeout) as client:
-                resp = client.post(
-                    f"/rooms/{room_name}/join",
-                    headers=self._headers(),
+            resp = await self.http.post(
+                f"/rooms/{room_name}/join",
+                headers=self._headers(),
+            )
+            if resp.status_code == 429:
+                self._record(
+                    "join_room", False, started, error="rate_limited", room=room_name
                 )
-                if resp.status_code == 429:
-                    raise RuntimeError("rate_limited")
-                # Already a member is fine for repeated iterations.
-                if resp.status_code not in (200, 400):
-                    resp.raise_for_status()
+                return False
+            # Already a member is fine for repeated iterations.
+            if resp.status_code not in (200, 400):
+                self._record(
+                    "join_room",
+                    False,
+                    started,
+                    error=_http_error(resp),
+                    room=room_name,
+                )
+                return False
             self._record("join_room", True, started, room=room_name)
+            return True
         except Exception as exc:  # noqa: BLE001
             self._record("join_room", False, started, error=str(exc), room=room_name)
-            raise
+            return False
 
-    def leave_room(self, room_name: str) -> None:
+    async def leave_room(self, room_name: str) -> bool:
         started = time.perf_counter()
         try:
-            with httpx.Client(base_url=self.base_url, timeout=self.timeout) as client:
-                resp = client.post(
-                    f"/rooms/{room_name}/leave",
-                    headers=self._headers(),
+            resp = await self.http.post(
+                f"/rooms/{room_name}/leave",
+                headers=self._headers(),
+            )
+            if resp.status_code == 429:
+                self._record(
+                    "leave_room", False, started, error="rate_limited", room=room_name
                 )
-                if resp.status_code == 429:
-                    raise RuntimeError("rate_limited")
-                if resp.status_code not in (200, 400):
-                    resp.raise_for_status()
+                return False
+            if resp.status_code not in (200, 400):
+                self._record(
+                    "leave_room",
+                    False,
+                    started,
+                    error=_http_error(resp),
+                    room=room_name,
+                )
+                return False
             self._record("leave_room", True, started, room=room_name)
+            return True
         except Exception as exc:  # noqa: BLE001
             self._record("leave_room", False, started, error=str(exc), room=room_name)
-            raise
+            return False
 
     async def chat_roundtrip(self, room_name: str) -> None:
         """Join chat WS, send one message, wait until we see our own broadcast."""
-        assert self.token
+        if not self.token:
+            self._record(
+                "chat_roundtrip",
+                False,
+                time.perf_counter(),
+                error="not_logged_in",
+                room=room_name,
+            )
+            return
         started = time.perf_counter()
         qs = urlencode({"token": self.token})
         uri = f"{self.ws_base}/ws/rooms/{room_name}/chat?{qs}"
@@ -245,23 +328,35 @@ class RegionClient:
                 room=room_name,
             )
         except Exception as exc:  # noqa: BLE001
-            self._record("chat_roundtrip", False, started, error=str(exc), room=room_name)
+            self._record(
+                "chat_roundtrip", False, started, error=str(exc), room=room_name
+            )
 
     async def measure_rooms_ws_update(self, actor: RegionClient) -> None:
         """Observer on /ws/rooms; actor creates a room; measure push latency."""
         started = time.perf_counter()
         uri = f"{self.ws_base}/ws/rooms"
         room_name = f"f4-ws-{self.region}-{uuid.uuid4().hex[:8]}"
+        create_started = started
         try:
             async with websockets.connect(uri, open_timeout=self.timeout) as ws:
                 # Initial snapshot.
                 _ = await asyncio.wait_for(ws.recv(), timeout=self.timeout)
                 create_started = time.perf_counter()
-                actor.create_room(room_name)
+                created = await actor.create_room(room_name)
+                if created is None:
+                    # create_room already recorded its own sample; mark WS probe too.
+                    self._record(
+                        "rooms_ws_update",
+                        False,
+                        create_started,
+                        error="create_failed",
+                        room=room_name,
+                    )
+                    return
                 deadline = time.perf_counter() + self.timeout
                 while time.perf_counter() < deadline:
                     raw = await asyncio.wait_for(ws.recv(), timeout=self.timeout)
-                    # Payload is the rooms list JSON (array or object with rooms).
                     if room_name in raw:
                         self._record(
                             "rooms_ws_update",
@@ -295,33 +390,39 @@ async def run_user_flow(
     iterations: int,
     pace_s: float,
 ) -> None:
-    """One virtual user: list → create → (joiner joins) → chat → leave."""
-    client.login()
-    await asyncio.sleep(pace_s)
+    """One virtual user: list → create → (joiner joins) → chat → leave.
 
-    for _ in range(iterations):
-        client.list_rooms()
+    Never raises: every failure is a sample so the report error rate is honest.
+    """
+    async with client:
+        if not await client.login():
+            return
         await asyncio.sleep(pace_s)
 
-        room = client.create_room()
-        await asyncio.sleep(pace_s)
-
-        # Separate identity joins the room (covers join_room metric).
-        joiner = RegionClient(
-            region=client.region,
-            base_url=client.base_url,
-            variant=client.variant,
-        )
-        try:
-            joiner.login()
+        for _ in range(iterations):
+            await client.list_rooms()
             await asyncio.sleep(pace_s)
-            joiner.join_room(room)
-            client.samples.extend(joiner.samples)
-        except Exception:  # noqa: BLE001
+
+            room = await client.create_room()
+            if room is None:
+                await asyncio.sleep(pace_s)
+                continue
+            await asyncio.sleep(pace_s)
+
+            # Separate identity joins the room (covers join_room metric).
+            joiner = RegionClient(
+                region=client.region,
+                base_url=client.base_url,
+                variant=client.variant,
+            )
+            async with joiner:
+                if await joiner.login():
+                    await asyncio.sleep(pace_s)
+                    await joiner.join_room(room)
             client.samples.extend(joiner.samples)
 
-        await client.chat_roundtrip(room)
-        await asyncio.sleep(pace_s)
+            await client.chat_roundtrip(room)
+            await asyncio.sleep(pace_s)
 
-        client.leave_room(room)
-        await asyncio.sleep(pace_s)
+            await client.leave_room(room)
+            await asyncio.sleep(pace_s)

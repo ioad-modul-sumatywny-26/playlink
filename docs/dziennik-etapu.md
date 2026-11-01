@@ -52,7 +52,7 @@ Format z dokumentu wizji: zaplanowane / uruchomione / wynik / wniosek.
 | Pole | Treść |
 | --- | --- |
 | Zaplanowane | Wejście „z EU i US”, ręczna zmiana, brak samoczynnego skoku lobby, czasy sondy, zapis po odświeżeniu |
-| Uruchomione | Lokalnie: `.\start-local.ps1 -Both`; publicznie: hosty z runbooka; link `→ USA` / `→ Europa` w layoutcie |
+| Uruchomione | Lokalnie: `bash scripts/local-up.sh --both`; publicznie: hosty z runbooka; link `→ USA` / `→ Europa` w layoutcie |
 | Wynik | Ręczny switch działa; odświeżenie nie zmienia regionu bez propozycji/akceptacji; cookie przeżywa reload |
 | Wniosek | Do odbioru tygodnia 6 wystarczą zrzuty choosera, banera i dwóch loginów (EU/US). F4 obciążenie = tydzień 7 |
 
@@ -61,20 +61,21 @@ Format z dokumentu wizji: zaplanowane / uruchomione / wynik / wniosek.
 | Pole | Treść |
 | --- | --- |
 | Zaplanowane | Wariant A (wszyscy → EU) vs B (wybór EU/US); scenariusze: lista, pokój, join, czat WS, update listy; tabela p50/p95 |
-| Uruchomione | `experiments/f4/` — `run-f4.ps1` / `run.py`; pomiary REST + WS |
+| Uruchomione | `experiments/f4/` — `python run.py` (AsyncClient, błędy/429 w raporcie); lokalny start: `scripts/local-up.sh` |
 | Wynik | Pliki `experiments/f4/results/run-*.json` + `.md` (po lokalnym lub publicznym odpaleniu) |
 | Wniosek | Lokalnie metoda działa; sensowny Δ RTT dopiero na publicznych EU/US albo generatorach w dwóch lokalizacjach. Hipotezy H1/H2 z wizji uzupełnić po odczycie tabeli |
 
-```powershell
-.\start-local.ps1 -Both
-.\experiments\f4\run-f4.ps1
+```bash
+bash scripts/local-up.sh --both --lab-limits
+cd experiments/f4 && python -m venv .venv && . .venv/bin/activate
+pip install -r requirements.txt && python run.py
 ```
 
 ## Jak odpalić lokalnie (bez Cloudflare)
 
-```powershell
-.\start-local.ps1          # tylko EU
-.\start-local.ps1 -Both    # EU + US
+```bash
+bash scripts/local-up.sh          # tylko EU
+bash scripts/local-up.sh --both   # EU + US
 ```
 
 - Chooser: http://127.0.0.1:3000
