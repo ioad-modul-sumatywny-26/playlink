@@ -4,7 +4,7 @@
 #   deploy/observability.sh up       start the stack (Grafana on 127.0.0.1:3300)
 #   deploy/observability.sh down     stop it; data is kept in volumes
 #   deploy/observability.sh logs     follow its logs
-# Needs OBS_PASSWORD in deploy/site.env. With TUNNEL_TOKEN_OBS set, the tunnel
+# Needs OBS_PASSWORD in deploy/site.env (CF_ACCESS_TEAM is optional). With TUNNEL_TOKEN_OBS set, the tunnel
 # connector starts too, so regions on other machines can push to it.
 set -euo pipefail
 
@@ -15,6 +15,10 @@ cd "$(dirname "$0")/.."
 load_config
 : "${OBS_PASSWORD:?OBS_PASSWORD is required in deploy/site.env}"
 export OBS_USER="${OBS_USER:-playlink}" OBS_PASSWORD TUNNEL_TOKEN_OBS="${TUNNEL_TOKEN_OBS:-}"
+# Team domain of Cloudflare Access (e.g. myteam.cloudflareaccess.com): Grafana
+# then trusts the Access login instead of asking for its own password.
+export CF_ACCESS_TEAM="${CF_ACCESS_TEAM:-}" GRAFANA_JWT=false
+[ -n "$CF_ACCESS_TEAM" ] && GRAFANA_JWT=true
 
 compose=(docker compose -f compose.observability.yaml)
 [ -n "$TUNNEL_TOKEN_OBS" ] && compose+=(--profile tunnel)
