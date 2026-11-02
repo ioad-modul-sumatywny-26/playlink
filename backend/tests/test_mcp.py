@@ -355,3 +355,43 @@ async def test_tool_error_room_not_found():
         await server.call_tool(
             "get_room_details", {"room_name": "missing-room", "region": "eu"}
         )
+
+
+@pytest.mark.anyio
+@respx.mock
+async def test_search_logs_and_query_metrics(monkeypatch):
+    monkeypatch.setenv("PLAYLINK_LOGS_URL", "http://logs:9428")
+    monkeypatch.setenv("PLAYLINK_METRICS_URL", "http://metrics:8428")
+    server = create_server()
+    logs = respx.get("http://logs:9428/select/logsql/query").mock(
+        return_value=httpx.Response(
+            200,
+            text='{"_msg":"room_created","level":"INFO","region":"us","_stream_id":"x"}\n',
+        )
+    )
+    respx.get("http://metrics:8428/api/v1/query").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "data": {"result": [{"metric": {"region": "eu"}, "value": [1, "0.5"]}]}
+            },
+        )
+    )
+
+    res = await server.call_tool("search_logs", {"query": "region:us", "limit": 5})
+    assert res.structured_content["result"] == [
+        {"_msg": "room_created", "level": "INFO", "region": "us"}
+    ]
+    assert "region:us" in logs.calls[0].request.url.params["query"]
+
+    res = await server.call_tool("query_metrics", {"query": "up"})
+    assert res.structured_content["result"] == [
+        {"metric": {"region": "eu"}, "value": "0.5"}
+    ]
+
+
+@pytest.mark.anyio
+async def test_log_tools_need_configuration(monkeypatch):
+    monkeypatch.delenv("PLAYLINK_LOGS_URL", raising=False)
+    with pytest.raises(ToolError, match="PLAYLINK_LOGS_URL"):
+        await create_server().call_tool("search_logs", {})

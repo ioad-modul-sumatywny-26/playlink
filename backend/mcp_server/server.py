@@ -6,6 +6,7 @@ import json
 import os
 import sys
 import time
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import httpx
@@ -171,6 +172,31 @@ async def _safe_http_client(region: str, entity: str | None = None):
             _raise_tool_error(exc, region, base_url, entity)
 
 
+HIDDEN_LOG_FIELDS = {"_stream", "_stream_id", "logger"}
+
+
+def _observability_url(env_name: str) -> str:
+    url = os.getenv(env_name, "").strip().rstrip("/")
+    if not url:
+        raise ToolError(
+            f"{env_name} is not configured (see docs/operations/observability.md)."
+        )
+    return url
+
+
+@contextlib.asynccontextmanager
+async def _observability_client():
+    auth = (
+        os.getenv("PLAYLINK_OBS_USER", "playlink"),
+        os.getenv("PLAYLINK_OBS_PASSWORD", ""),
+    )
+    async with httpx.AsyncClient(timeout=10.0, auth=auth) as client:
+        try:
+            yield client
+        except httpx.HTTPError as exc:
+            raise ToolError(f"Logs/metrics endpoint error: {exc}") from exc
+
+
 def create_server() -> MCPServer:
     """Create and configure the PlayLink MCPServer instance."""
     server = MCPServer(
@@ -263,6 +289,55 @@ def create_server() -> MCPServer:
                         "error": str(exc),
                     }
         return results
+
+    @server.tool()
+    async def search_logs(
+        query: str = "level:ERROR", minutes: int = 60, limit: int = 50
+    ) -> list[dict[str, Any]]:
+        """Search PlayLink logs of all regions (VictoriaLogs, LogsQL), newest first.
+
+        Fields: level, region, service, event, request_id, _msg. Examples:
+        'level:ERROR', 'region:us event:room_created', 'request_id:abc123'.
+
+        Args:
+            query: LogsQL filter.
+            minutes: How far back to search (1-1440).
+            limit: Maximum number of log lines (1-200).
+        """
+        base_url = _observability_url("PLAYLINK_LOGS_URL")
+        start = datetime.now(UTC) - timedelta(minutes=min(max(minutes, 1), 1440))
+        async with _observability_client() as client:
+            resp = await client.get(
+                f"{base_url}/select/logsql/query",
+                params={
+                    "query": f"{query} | sort by (_time desc)",
+                    "start": start.isoformat(),
+                    "limit": min(max(limit, 1), 200),
+                },
+            )
+            resp.raise_for_status()
+        rows = [json.loads(line) for line in resp.text.splitlines() if line]
+        return [
+            {k: v for k, v in r.items() if k not in HIDDEN_LOG_FIELDS} for r in rows
+        ]
+
+    @server.tool()
+    async def query_metrics(query: str) -> list[dict[str, Any]]:
+        """Run an instant PromQL query on the metrics of all regions.
+
+        Examples: 'sum by (region) (rate(playlink_http_requests_total[5m]))',
+        '100 * host_memory_used_bytes / host_memory_total_bytes',
+        'container_memory_working_set_bytes{container_label_com_docker_compose_service="backend"}'.
+
+        Args:
+            query: PromQL expression.
+        """
+        base_url = _observability_url("PLAYLINK_METRICS_URL")
+        async with _observability_client() as client:
+            resp = await client.get(f"{base_url}/api/v1/query", params={"query": query})
+            resp.raise_for_status()
+        result = resp.json()["data"]["result"]
+        return [{"metric": r["metric"], "value": r["value"][1]} for r in result[:100]]
 
     # --- Specific Region Resource Templates ---
 
