@@ -1,5 +1,6 @@
 import { jwtDecode } from 'jwt-decode';
-import type { Handle } from '@sveltejs/kit';
+import type { Handle, HandleServerError } from '@sveltejs/kit';
+import { logLine } from '$lib/server/log';
 
 interface SessionTokenClaims {
 	sub?: string;
@@ -30,4 +31,16 @@ export const handle: Handle = async ({ event, resolve }) => {
 	}
 
 	return await resolve(event);
+};
+
+export const handleError: HandleServerError = ({ error, event, status }) => {
+	const err = error instanceof Error ? error : new Error(String(error));
+	logLine('ERROR', 'server_error', {
+		event: 'server_error',
+		path: event.url.pathname,
+		status,
+		error: err.message,
+		stack: err.stack
+	});
+	return { message: 'Internal Error' };
 };
