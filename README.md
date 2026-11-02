@@ -6,6 +6,19 @@ The system is built with a FastAPI backend, a SvelteKit frontend, and a PostgreS
 
 **Project Kanban:** [GitHub Project Board](https://github.com/orgs/ioad-modul-sumatywny-26/projects/2)
 
+## Table of Contents
+
+- [Access](#access)
+- [Releases and Deployment](#releases-and-deployment)
+- [Features](#features)
+- [Technical Architecture](#technical-architecture)
+  - [Identity Authentication Flow](#identity-authentication-flow)
+- [Local Development](#local-development)
+- [Model Context Protocol (MCP)](#model-context-protocol-mcp)
+  - [Testing via npx](#testing-via-npx)
+  - [Assistant Configuration](#assistant-configuration)
+- [Project Organization](#project-organization)
+
 ## Access
 
 Public hostnames are derived from the configured `PLAYLINK_DOMAIN` (`<domain>`):
@@ -22,7 +35,7 @@ Without a domain the stack runs in local mode: EU on `http://localhost:3000` (AP
 
 The entry host measures both regions and redirects to the faster live one. Each region has its own session: switching regions requires signing in again with the same 12 words. Rooms are regional — a room created in EU does not exist in US.
 
-## Releases and deployment
+## Releases and Deployment
 
 Deployments use versioned container images; the VMs never build code. Everything is started by one command, `deploy/deploy.sh <eu|us> [tag]`.
 
@@ -40,7 +53,7 @@ Published images:
 - `ghcr.io/ioad-modul-sumatywny-26/playlink-backend:vX.Y.Z`
 - `ghcr.io/ioad-modul-sumatywny-26/playlink-frontend:vX.Y.Z`
 
-Pre-release tags (`vX.Y.Z-rc.N`) are deployed only when pinned with `PLAYLINK_TAG`. Start, stop and inspect the VMs with `deploy/azure.sh`. The full runbook (current deployment, local and public mode, Cloudflare hostnames, Azure VMs, rollback, failure drills) (local and public mode, Cloudflare hostnames, Azure VMs, rollback, failure drills) is in [`docs/operations/runbook-regions.md`](docs/operations/runbook-regions.md).
+Pre-release tags (`vX.Y.Z-rc.N`) are deployed only when pinned with `PLAYLINK_TAG`. Start, stop and inspect the VMs with `deploy/azure.sh`. The full runbook (current deployment, local and public mode, Cloudflare hostnames, Azure VMs, rollback, failure drills) is in [`docs/operations/runbook-regions.md`](docs/operations/runbook-regions.md).
 
 ## Features
 
@@ -93,13 +106,57 @@ The stacks are the compose projects `playlink-eu` and `playlink-us`; generated e
 
 For running each service outside Docker, see [`backend/README.md`](backend/README.md) and [`frontend/README.md`](frontend/README.md).
 
+## Model Context Protocol (MCP)
+
+PlayLink includes an MCP server (`backend/mcp_server`) that allows AI assistants (Claude Desktop, Cursor, Antigravity) to safely inspect platform status, retro games, active LFG lobbies, and regional health in read-only mode.
+
+### Testing via npx
+
+From the repository root:
+```bash
+npx @modelcontextprotocol/inspector uv run --directory backend python -m mcp_server
+```
+
+Or from the `backend/` directory:
+```bash
+npx @modelcontextprotocol/inspector uv run python -m mcp_server
+```
+
+To verify tools via CLI without launching the browser UI:
+```bash
+npx @modelcontextprotocol/inspector --cli --method tools/list uv run --directory backend python -m mcp_server
+```
+
+### Assistant Configuration
+
+Add the following entry to your assistant's MCP configuration file (e.g. `claude_desktop_config.json`, `~/.gemini/config/mcp_config.json`, or `.cursor/mcp.json`):
+
+```json
+{
+  "mcpServers": {
+    "playlink": {
+      "command": "uv",
+      "args": [
+        "run",
+        "--directory",
+        "C:\\x\\y\\z\\playlink\\backend",
+        "python",
+        "-m",
+        "mcp_server"
+      ]
+    }
+  }
+}
+```
+
 ## Project Organization
 
-- `backend/` — FastAPI service, SQLModel schemas, Alembic migrations, authentication and rooms logic.
+- `backend/` — FastAPI service, SQLModel schemas, Alembic migrations, authentication, rooms logic, and `mcp_server`.
 - `frontend/` — SvelteKit application, identity management UI, and the region chooser.
 - `deploy/` — `deploy.sh` (deploy a region), `update.sh` (pull-based rollout), `azure-vm.sh` and `cloud-init.yaml` (region VMs), `config.env` (shared settings), `site.env.example`.
 - `compose.yaml` — one regional stack (no host-exposed ports by default).
 - `compose.build.yaml` — builds images from the working tree.
 - `compose.ports.yaml` — publishes ports on localhost (local mode).
+- `docs/` — System documentation, data models, realtime protocols, and runbooks.
 - `prezentacje/` — Project documentation and presentation materials.
 - `CONTRIBUTING.md` — Workflow, branching, and quality standards.
