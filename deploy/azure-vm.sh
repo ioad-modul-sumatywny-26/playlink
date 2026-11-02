@@ -32,7 +32,8 @@ fi
 
 GROUP="playlink-$REGION"
 mkdir -p .run
-sed -e "s/__REGION__/$REGION/g" -e "s#__REPO__#$GITHUB_REPO#g" -e "s#__REF__#$REF#g" 	-e "s#__UPDATE_CMD__#$UPDATE_CMD#g" deploy/cloud-init.yaml >".run/cloud-init-$REGION.yaml"
+sed -e "s/__REGION__/$REGION/g" -e "s#__REPO__#$GITHUB_REPO#g" -e "s#__REF__#$REF#g" \
+	-e "s#__UPDATE_CMD__#$UPDATE_CMD#g" deploy/cloud-init.yaml >".run/cloud-init-$REGION.yaml"
 
 # Standard_B2ats_v2 and a 64 GB P6 disk are in the free-services allowance.
 # --nsg-rule NONE: no inbound port at all; traffic arrives through the tunnel

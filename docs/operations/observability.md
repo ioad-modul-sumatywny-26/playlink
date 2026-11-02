@@ -30,7 +30,7 @@ Open the **PlayLink regions** dashboard. Regions on the same machine reach the s
 3. **Ops VM**: `bash deploy/azure-vm.sh ops polandcentral` creates `playlink-ops` (same size as the regions, no inbound port), starts the stack and the tunnel connector, and keeps it up to date from the `main` branch (`PLAYLINK_OPS_REF` follows another branch). Grafana is then at `https://playlink-grafana.<domain>`, with `CF_ACCESS_TEAM` set you sign in through Cloudflare Access as a viewer; user `admin` with `OBS_PASSWORD` (from the VM or localhost) is the admin account.
 4. **Regions**: push the new settings with `bash deploy/azure-env.sh eu` and `us`. The next release deploy starts the two containers on the VM; they are not part of any older release.
 
-`deploy/azure.sh status|start|stop` includes the ops VM once it exists. If the stack is down, agents keep up to 256 MB of logs on disk and send them when it returns.
+`deploy/azure.sh status|start|stop` includes the ops VM once it exists. The ops VM pulls and redeploys its branch every 2 minutes, so only merge reviewed changes into it. If the stack is down, agents keep up to 256 MB of logs on disk and send them when it returns.
 
 ## What is collected
 
@@ -40,8 +40,8 @@ Open the **PlayLink regions** dashboard. Regions on the same machine reach the s
 | Business events `login`, `room_created`, `room_joined`, `room_left`, `room_closed`, `member_kicked` | backend `log_event` | field `event`, counter `playlink_events_total` |
 | Request id on every backend log line and as `X-Request-ID` response header | backend middleware | field `request_id` |
 | Server errors of the frontend (`server_error`) and errors in the visitor's browser (`client_error`) | `hooks.server.ts`, `hooks.client.ts` → `POST /api/client-errors` | `level:ERROR service:frontend` |
-| Host CPU, memory, network, disk, load | Vector `host_metrics` | `host_*` |
-| CPU, memory and network of each container | cAdvisor | `container_*`, label `container_label_com_docker_compose_service` |
+| Host CPU, memory, disk, load | Vector `host_metrics` | `host_*` |
+| CPU, memory and network of each container (the network panel sums them) | cAdvisor | `container_*`, label `container_label_com_docker_compose_service` |
 | Requests, status codes, latency, open WebSockets | backend `/metrics` | `playlink_*` |
 
 `/metrics` answers only on the compose network: a request that came through Cloudflare (it has `CF-Connecting-IP`) gets a 404. `/api/client-errors` keeps at most 1.5 KB of stack per report, five reports per page load and 20 per minute per address.
@@ -82,5 +82,7 @@ A region with the agent needs about 0.25 GB, the central stack about 0.35 GB, so
 
 - Vector and cAdvisor read container data through the Docker socket and `/var/lib/docker` (read-only mounts), which is root-equivalent on that host. Vector gets only the `OBS_*` settings, never the app secrets.
 - Push and read endpoints (`playlink-metrics`, `playlink-logs`) share one basic-auth user: use a long random `OBS_PASSWORD`. `playlink-grafana` sits behind Cloudflare Access (Zero Trust Free, application "PlayLink Grafana", policy "Team emails"): add a teammate's address to that policy to let them in. With `CF_ACCESS_TEAM` (the team domain, e.g. `myteam.cloudflareaccess.com`) in `deploy/site.env`, Grafana trusts the signed Access token and signs people in by their email as viewers (only tokens of this Access application, `CF_ACCESS_AUD`, are accepted), so the Access login is the only one; without it Grafana asks for `admin` and `OBS_PASSWORD`.
+- Grafana sets the admin password only when its database is first created. After changing `OBS_PASSWORD`, run `docker exec playlink-obs-grafana-1 grafana cli admin reset-admin-password <new>` on that machine.
+- The agents start after a release is healthy and never fail a deploy. To turn shipping off, remove `OBS_PASSWORD` and run `docker compose -p playlink-<region> --profile observability down vector cadvisor` on the VM.
 - Log lines carry shortened wallet addresses (`0x1234…abcd`) and no tokens or message contents.
 - **Cloudflare edge analytics** (traffic, countries, requests blocked before they reach a server) are not collected: that needs an API token and an extra exporter. The dashboards show what reaches the servers.

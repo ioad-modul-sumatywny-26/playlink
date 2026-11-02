@@ -1,13 +1,13 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { POST } from '../routes/api/client-errors/+server';
 
-function call(body: unknown, ip = '203.0.113.1') {
+function call(body: unknown, peer = '10.0.0.1', claimedIp = '203.0.113.1') {
 	const request = new Request('http://localhost/api/client-errors', {
 		method: 'POST',
-		headers: { 'content-type': 'application/json', 'cf-connecting-ip': ip },
+		headers: { 'content-type': 'application/json', 'cf-connecting-ip': claimedIp },
 		body: typeof body === 'string' ? body : JSON.stringify(body)
 	});
-	return POST({ request, getClientAddress: () => '10.0.0.1' } as never);
+	return POST({ request, getClientAddress: () => peer } as never);
 }
 
 describe('client error endpoint', () => {
@@ -26,13 +26,15 @@ describe('client error endpoint', () => {
 	});
 
 	it('rejects malformed bodies', async () => {
-		expect((await call('not json', '198.51.100.2')).status).toBe(400);
+		expect((await call('not json', '10.0.0.12')).status).toBe(400);
 	});
 
-	it('rate limits one address', async () => {
+	it('rate limits one peer even when it forges a new client IP each time', async () => {
 		vi.spyOn(console, 'error').mockImplementation(() => {});
 		let last = 204;
-		for (let i = 0; i < 22; i += 1) last = (await call({ message: 'e' }, '198.51.100.3')).status;
+		for (let i = 0; i < 22; i += 1) {
+			last = (await call({ message: 'e' }, '10.0.0.13', `198.51.100.${i}`)).status;
+		}
 		expect(last).toBe(429);
 	});
 });

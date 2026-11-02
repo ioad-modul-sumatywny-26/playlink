@@ -9,7 +9,7 @@ sources:
   host:
     type: host_metrics
     scrape_interval_secs: 15
-    collectors: [cpu, memory, network, filesystem, load]
+    collectors: [cpu, memory, filesystem, load]
   app:
     type: prometheus_scrape
     endpoints: [http://backend:8000/metrics]
@@ -26,6 +26,10 @@ transforms:
     source: |
       ts = format_timestamp!(.timestamp, "%+")
       service = get!(.label, ["com.docker.compose.service"])
+      # The agents' own retry errors would be shipped and fail again.
+      if service == "vector" || service == "cadvisor" {
+        abort
+      }
       msg = string!(.message)
       parsed, err = parse_json(msg)
       if err == null && is_object(parsed) {

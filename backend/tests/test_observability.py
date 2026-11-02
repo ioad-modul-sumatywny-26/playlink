@@ -75,3 +75,21 @@ def test_unhandled_exception_is_logged_with_request_id_and_counted():
 
     assert response.status_code == 500
     assert [r.fields["path"] for r in records if r.exc_info] == ["/boom"]
+
+
+def test_unmatched_route_uses_a_bounded_label(client: TestClient):
+    client.get("/no-such-page-123")
+    body = client.get("/metrics").text
+    assert 'route="unmatched"' in body
+    assert "no-such-page-123" not in body
+
+
+def test_event_fields_cannot_override_core_log_keys():
+    record = logging.LogRecord(
+        "playlink", logging.INFO, "", 0, "room_created", (), None
+    )
+    record.fields = {"request_id": "forged", "_msg": "forged", "extra": "kept"}
+    entry = json.loads(JsonFormatter().format(record))
+    assert entry["_msg"] == "room_created"
+    assert entry["request_id"] == "-"
+    assert entry["extra"] == "kept"

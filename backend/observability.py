@@ -46,13 +46,13 @@ EVENTS = Counter("playlink_events_total", "Business events", ["event"])
 class JsonFormatter(logging.Formatter):
     def format(self, record: logging.LogRecord) -> str:
         entry = {
+            **getattr(record, "fields", {}),
             "_time": datetime.fromtimestamp(record.created, UTC).isoformat(),
             "_msg": record.getMessage(),
             "level": record.levelname,
             "logger": record.name,
             "region": REGION,
             "request_id": request_id_var.get(),
-            **getattr(record, "fields", {}),
         }
         if record.exc_info:
             entry["exception"] = self.formatException(record.exc_info)

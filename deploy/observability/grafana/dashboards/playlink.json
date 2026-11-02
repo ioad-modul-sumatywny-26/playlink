@@ -122,7 +122,7 @@
   {
    "id": 4,
    "type": "timeseries",
-   "title": "Network",
+   "title": "Network (containers)",
    "datasource": {
     "type": "prometheus",
     "uid": "vm"
@@ -161,7 +161,7 @@
       "type": "prometheus",
       "uid": "vm"
      },
-     "expr": "sum by (region) (rate(host_network_receive_bytes_total[2m]))",
+     "expr": "sum by (region) (rate(container_network_receive_bytes_total{container_label_com_docker_compose_service!=\"\"}[2m]))",
      "legendFormat": "{{region}} in"
     },
     {
@@ -170,7 +170,7 @@
       "type": "prometheus",
       "uid": "vm"
      },
-     "expr": "sum by (region) (rate(host_network_transmit_bytes_total[2m]))",
+     "expr": "sum by (region) (rate(container_network_transmit_bytes_total{container_label_com_docker_compose_service!=\"\"}[2m]))",
      "legendFormat": "{{region}} out"
     }
    ]

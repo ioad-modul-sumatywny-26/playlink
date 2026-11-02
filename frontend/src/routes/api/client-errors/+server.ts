@@ -4,12 +4,16 @@ import { logLine } from '$lib/server/log';
 const MAX_PER_MINUTE = 20;
 const hits = new Map<string, number[]>();
 
-function limited(ip: string): boolean {
+// Keyed by the connection peer, never by a request header a client can forge.
+// Behind the tunnel that is the connector, so the cap is shared by all visitors.
+function limited(peer: string): boolean {
 	const now = Date.now();
-	const recent = (hits.get(ip) ?? []).filter((t) => now - t < 60_000);
+	for (const [key, times] of hits) {
+		if (now - times[times.length - 1] >= 60_000) hits.delete(key);
+	}
+	const recent = (hits.get(peer) ?? []).filter((t) => now - t < 60_000);
 	recent.push(now);
-	hits.set(ip, recent);
-	if (hits.size > 5000) hits.clear();
+	hits.set(peer, recent);
 	return recent.length > MAX_PER_MINUTE;
 }
 
@@ -17,8 +21,7 @@ const clip = (value: unknown, max: number) => String(value ?? '').slice(0, max);
 
 /** Browser-side errors reported by hooks.client.ts; written to the log stream. */
 export const POST: RequestHandler = async ({ request, getClientAddress }) => {
-	const ip = request.headers.get('cf-connecting-ip') ?? getClientAddress();
-	if (limited(ip)) return new Response(null, { status: 429 });
+	if (limited(getClientAddress())) return new Response(null, { status: 429 });
 
 	const body = await request.json().catch(() => null);
 	if (!body || typeof body !== 'object') return new Response(null, { status: 400 });
