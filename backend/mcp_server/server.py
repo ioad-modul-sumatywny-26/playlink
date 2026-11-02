@@ -17,12 +17,11 @@ DEFAULT_REGIONS = {
 
 
 def get_base_url(region: str) -> str:
-    """Resolve a region identifier or direct URL to a base API URL."""
-    clean = region.strip()
-    if clean.startswith(("http://", "https://")):
-        return clean.rstrip("/")
-    key = clean.lower()
-    return DEFAULT_REGIONS.get(key, clean).rstrip("/")
+    """Resolve a region identifier ('eu' or 'us') to its API base URL."""
+    try:
+        return DEFAULT_REGIONS[region.strip().lower()].rstrip("/")
+    except KeyError:
+        raise ValueError(f"Unknown region '{region}', use 'eu' or 'us'") from None
 
 
 def create_server() -> MCPServer:
@@ -40,7 +39,7 @@ def create_server() -> MCPServer:
         """List supported retro games on the PlayLink platform.
 
         Args:
-            region: Region identifier ('eu', 'us') or full API URL.
+            region: Region identifier ('eu' or 'us').
         """
         base_url = get_base_url(region)
         async with httpx.AsyncClient(timeout=5.0) as client:
@@ -55,7 +54,7 @@ def create_server() -> MCPServer:
         """List active LFG rooms, optionally filtered by game title.
 
         Args:
-            region: Region identifier ('eu', 'us') or full API URL.
+            region: Region identifier ('eu' or 'us').
             game: Optional game name to filter by (case-insensitive).
         """
         base_url = get_base_url(region)
@@ -78,7 +77,7 @@ def create_server() -> MCPServer:
 
         Args:
             room_name: The unique room identifier / name.
-            region: Region identifier ('eu', 'us') or full API URL.
+            region: Region identifier ('eu' or 'us').
         """
         base_url = get_base_url(region)
         async with httpx.AsyncClient(timeout=5.0) as client:
@@ -138,12 +137,11 @@ def create_server() -> MCPServer:
                 return "No active rooms found in EU region."
             lines = []
             for r in rooms:
-                active = r.get("players_active", len(r.get("members", [])))
                 max_p = r.get("players_max")
                 loc = r.get("lobby_location", "N/A")
                 lines.append(
                     f"- [{r.get('name')}] {r.get('game')} | "
-                    f"Players: {active}/{max_p} | Location: {loc}"
+                    f"Max players: {max_p} | Location: {loc}"
                 )
             return "\n".join(lines)
         except Exception as exc:  # noqa: BLE001

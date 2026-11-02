@@ -16,10 +16,8 @@ def test_get_base_url():
     assert get_base_url("EU") == "http://localhost:8000"
     assert get_base_url("us") == "http://localhost:8001"
     assert get_base_url("US") == "http://localhost:8001"
-    assert get_base_url("http://example.com/api/") == "http://example.com/api"
-    assert get_base_url("https://playlink-eu-api.monster") == (
-        "https://playlink-eu-api.monster"
-    )
+    with pytest.raises(ValueError, match="Unknown region"):
+        get_base_url("http://example.com")
 
 
 @pytest.mark.anyio
@@ -158,7 +156,6 @@ async def test_resources():
                     "name": "hl-deathmatch",
                     "game": "Half-Life",
                     "players_max": 16,
-                    "players_active": 4,
                     "lobby_location": "valve://127.0.0.1:27015",
                 }
             ],
@@ -194,7 +191,7 @@ async def test_resources():
 
     # Read playlink://rooms
     rooms_res = await server.read_resource("playlink://rooms")
-    assert "hl-deathmatch" in rooms_res[0].content
+    assert "Max players: 16" in rooms_res[0].content
 
     # Read playlink://rooms/{name}
     room_detail_res = await server.read_resource("playlink://rooms/hl-deathmatch")
