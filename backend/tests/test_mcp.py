@@ -8,6 +8,8 @@ import respx
 
 pytest.importorskip("mcp")
 
+from mcp.server.mcpserver.exceptions import ToolError
+
 from mcp_server.server import create_server, get_base_url, get_configured_regions
 
 
@@ -309,3 +311,47 @@ async def test_parameterized_and_cross_region_resources():
     # 5. Parameterized specific room detail
     us_room_detail = await server.read_resource("playlink://us/rooms/us-rush")
     assert '"name": "us-rush"' in us_room_detail[0].content
+
+
+@pytest.mark.anyio
+@respx.mock
+async def test_tool_error_handling_unreachable():
+    server = create_server()
+    respx.get("http://localhost:8001/games").mock(
+        side_effect=httpx.ConnectError("Connection refused")
+    )
+    with pytest.raises(ToolError, match="Cannot connect to region 'us'"):
+        await server.call_tool("list_games", {"region": "us"})
+
+
+@pytest.mark.anyio
+@respx.mock
+async def test_tool_error_handling_timeout():
+    server = create_server()
+    respx.get("http://localhost:8000/rooms").mock(
+        side_effect=httpx.TimeoutException("Timed out")
+    )
+    with pytest.raises(ToolError, match="timed out"):
+        await server.call_tool("list_rooms", {"region": "eu"})
+
+
+@pytest.mark.anyio
+async def test_tool_error_unknown_region():
+    server = create_server()
+    with pytest.raises(ToolError, match="Unknown region 'invalid'"):
+        await server.call_tool("list_games", {"region": "invalid"})
+
+
+@pytest.mark.anyio
+@respx.mock
+async def test_tool_error_room_not_found():
+    server = create_server()
+    respx.get("http://localhost:8000/rooms/missing-room").mock(
+        return_value=httpx.Response(404, json={"detail": "Not found"})
+    )
+    with pytest.raises(
+        ToolError, match="Room 'missing-room' was not found in region 'eu'"
+    ):
+        await server.call_tool(
+            "get_room_details", {"room_name": "missing-room", "region": "eu"}
+        )

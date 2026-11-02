@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import os
 import sys
@@ -10,6 +11,7 @@ from typing import Any
 import httpx
 from dotenv import load_dotenv
 from mcp.server.mcpserver import MCPServer
+from mcp.server.mcpserver.exceptions import ToolError
 
 load_dotenv()
 
@@ -117,6 +119,58 @@ def get_base_url(region: str) -> str:
     raise ValueError(f"Unknown region '{region}', use {valid}")
 
 
+def _raise_tool_error(
+    exc: Exception,
+    region: str,
+    base_url: str | None = None,
+    entity: str | None = None,
+) -> None:
+    """Translate lower-level exceptions into descriptive ToolError for AI clients."""
+    url_desc = base_url or "unknown URL"
+    if isinstance(exc, ValueError):
+        raise ToolError(str(exc)) from exc
+    if isinstance(exc, httpx.TimeoutException):
+        raise ToolError(
+            f"Request to region '{region}' ({url_desc}) timed out after 5.0s."
+        ) from exc
+    if isinstance(exc, httpx.ConnectError):
+        raise ToolError(
+            f"Cannot connect to region '{region}' at {url_desc}: connection refused. "
+            "The regional backend may be offline or unreachable."
+        ) from exc
+    if isinstance(exc, httpx.HTTPStatusError):
+        status = exc.response.status_code
+        if status == 404:
+            if entity:
+                raise ToolError(
+                    f"Room '{entity}' was not found in region '{region}' (HTTP 404)."
+                ) from exc
+            raise ToolError(
+                f"Requested resource not found in region '{region}' (HTTP 404)."
+            ) from exc
+        snippet = exc.response.text[:200]
+        raise ToolError(
+            f"HTTP {status} error from region '{region}' ({url_desc}): {snippet}"
+        ) from exc
+    raise ToolError(f"Network error while querying region '{region}': {exc}") from exc
+
+
+@contextlib.asynccontextmanager
+async def _safe_http_client(region: str, entity: str | None = None):
+    try:
+        base_url = get_base_url(region)
+    except ValueError as exc:
+        raise ToolError(str(exc)) from exc
+
+    async with httpx.AsyncClient(timeout=5.0) as client:
+        try:
+            yield client, base_url
+        except ToolError:
+            raise
+        except Exception as exc:
+            _raise_tool_error(exc, region, base_url, entity)
+
+
 def create_server() -> MCPServer:
     """Create and configure the PlayLink MCPServer instance."""
     server = MCPServer(
@@ -134,8 +188,7 @@ def create_server() -> MCPServer:
         Args:
             region: Region identifier (e.g. 'eu', 'us' or configured region).
         """
-        base_url = get_base_url(region)
-        async with httpx.AsyncClient(timeout=5.0) as client:
+        async with _safe_http_client(region) as (client, base_url):
             resp = await client.get(f"{base_url}/games")
             resp.raise_for_status()
             return resp.json()
@@ -150,8 +203,7 @@ def create_server() -> MCPServer:
             region: Region identifier (e.g. 'eu', 'us' or configured region).
             game: Optional game name to filter by (case-insensitive).
         """
-        base_url = get_base_url(region)
-        async with httpx.AsyncClient(timeout=5.0) as client:
+        async with _safe_http_client(region) as (client, base_url):
             resp = await client.get(f"{base_url}/rooms")
             resp.raise_for_status()
             rooms: list[dict[str, Any]] = resp.json()
@@ -172,8 +224,7 @@ def create_server() -> MCPServer:
             room_name: The unique room identifier / name.
             region: Region identifier (e.g. 'eu', 'us' or configured region).
         """
-        base_url = get_base_url(region)
-        async with httpx.AsyncClient(timeout=5.0) as client:
+        async with _safe_http_client(region, entity=room_name) as (client, base_url):
             resp = await client.get(f"{base_url}/rooms/{room_name}")
             resp.raise_for_status()
             return resp.json()
