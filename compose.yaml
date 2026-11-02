@@ -83,5 +83,55 @@ services:
     profiles:
       - tunnel
 
+  # Ships container logs and metrics to the central stack (see
+  # compose.observability.yaml). Needs the Docker socket to read container logs.
+  vector:
+    image: timberio/vector:0.61.0-alpine
+    command: ["--config", "/etc/vector/vector.yaml", "--dangerously-allow-env-var-interpolation"]
+    # Only the shipping settings: the agent never sees the app's secrets.
+    environment:
+      REGION: ${REGION:-}
+      OBS_USER: ${OBS_USER:-}
+      OBS_PASSWORD: ${OBS_PASSWORD:-}
+      OBS_METRICS_URL: ${OBS_METRICS_URL:-}
+      OBS_LOGS_URL: ${OBS_LOGS_URL:-}
+    volumes:
+      - ./deploy/observability/vector.yaml:/etc/vector/vector.yaml:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - vector_data:/vector-data
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      backend:
+        condition: service_healthy
+      cadvisor:
+        condition: service_started
+    restart: unless-stopped
+    mem_limit: 96m
+    logging: *default-logging
+    profiles:
+      - observability
+
+  # Per-container CPU, memory and network for the dashboard.
+  cadvisor:
+    image: ghcr.io/google/cadvisor:v0.60.6
+    command:
+      - --docker_only=true
+      - --housekeeping_interval=30s
+      - --store_container_labels=false
+      - --whitelisted_container_labels=com.docker.compose.service,com.docker.compose.project
+      - --disable_metrics=disk,diskIO,percpu,cpuLoad,advtcp,cpu_topology,hugetlb,memory_numa,perf_event,tcp,udp,sched,process,referenced_memory,resctrl
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+    restart: unless-stopped
+    mem_limit: 96m
+    logging: *default-logging
+    profiles:
+      - observability
+
 volumes:
   postgres_data:
+  vector_data:

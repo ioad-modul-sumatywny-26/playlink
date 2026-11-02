@@ -147,6 +147,8 @@ jobs:
         run: |
           docker compose -f compose.yaml --profile tunnel config -q
           docker compose -f compose.yaml -f compose.build.yaml -f compose.ports.yaml config -q
+          docker compose -f compose.yaml --profile observability config -q
+          OBS_USER=ci OBS_PASSWORD=ci docker compose -f compose.observability.yaml --profile tunnel config -q
       - name: Lint deploy scripts
         run: shellcheck -x deploy/*.sh
 

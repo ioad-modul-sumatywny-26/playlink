@@ -1,0 +1,19 @@
+apiVersion: 1
+datasources:
+  - name: Metrics
+    uid: vm
+    type: prometheus
+    url: http://victoriametrics:8428
+    isDefault: true
+    basicAuth: true
+    basicAuthUser: $OBS_USER
+    secureJsonData:
+      basicAuthPassword: $OBS_PASSWORD
+  - name: Logs
+    uid: vl
+    type: victoriametrics-logs-datasource
+    url: http://victorialogs:9428
+    basicAuth: true
+    basicAuthUser: $OBS_USER
+    secureJsonData:
+      basicAuthPassword: $OBS_PASSWORD

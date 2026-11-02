@@ -46,6 +46,28 @@ api_url() {
 
 ws_url() { api_url "$1" | sed 's/^http/ws/'; }
 
+# Where regions push logs and metrics. Defaults follow the tunnel hostnames in
+# public mode and the central stack on this machine in local mode.
+metrics_url() {
+	if [ -n "${OBS_METRICS_URL:-}" ]; then
+		echo "$OBS_METRICS_URL"
+	elif [ -n "$PLAYLINK_DOMAIN" ]; then
+		echo "https://playlink-metrics.$PLAYLINK_DOMAIN"
+	else
+		echo "http://host.docker.internal:8428"
+	fi
+}
+
+logs_url() {
+	if [ -n "${OBS_LOGS_URL:-}" ]; then
+		echo "$OBS_LOGS_URL"
+	elif [ -n "$PLAYLINK_DOMAIN" ]; then
+		echo "https://playlink-logs.$PLAYLINK_DOMAIN"
+	else
+		echo "http://host.docker.internal:9428"
+	fi
+}
+
 # The entry host shows the region chooser. It is served by the EU stack; in
 # local mode it is the EU port under a different host name.
 entry_origin() {

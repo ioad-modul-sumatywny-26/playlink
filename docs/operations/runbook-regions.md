@@ -6,10 +6,11 @@
 | --- | --- | --- | --- |
 | EU | `polandcentral` | `playlink-eu` | `playlink.nikodemnowak.pl`, `playlink-eu.nikodemnowak.pl`, `playlink-eu-api.nikodemnowak.pl` |
 | US | `denmarkeast` (stand-in) | `playlink-us` | `playlink-us.nikodemnowak.pl`, `playlink-us-api.nikodemnowak.pl` |
+| Logs and metrics | `polandcentral` | `playlink-ops` | `playlink-grafana.nikodemnowak.pl`, `playlink-metrics.nikodemnowak.pl`, `playlink-logs.nikodemnowak.pl` ([details](observability.md)) |
 
 - Subscription: Azure for Students. It only allows EU regions, so the "US" stack runs in Denmark until a US machine is funded; the mechanism is identical.
-- Tunnels `playlink-eu` / `playlink-us` live in the Cloudflare account that owns `nikodemnowak.pl`.
-- VMs are pinned to `PLAYLINK_TAG=v0.1.0-rc.4`. Remove the pin (and run `deploy/azure-env.sh eu` / `us`) before the first non-rc release, otherwise they stay on rc.4.
+- Tunnels `playlink-eu` / `playlink-us` / `playlink-ops` live in the Cloudflare account that owns `nikodemnowak.pl`.
+- Region VMs are pinned to `PLAYLINK_TAG=v0.2.0-rc.1`. Remove the pin (and run `deploy/azure-env.sh eu` / `us`) before the first non-rc release, otherwise they stay on rc.1. The ops VM follows a branch (`PLAYLINK_OPS_REF`, default `main`), not tags.
 - Images are private in GHCR; VMs pull with a `read:packages` token in `site.env`. Making the packages public removes the need for it.
 
 ### Daily operations (any machine)
@@ -19,12 +20,12 @@ Install the Azure CLI, clone the repository, then:
 ```bash
 az login                      # account with the Azure for Students subscription
 deploy/azure.sh status        # power state, deployed version, containers
-deploy/azure.sh stop          # deallocate both VMs (no compute billing)
-deploy/azure.sh start         # start both; the stack is up ~2 minutes later
+deploy/azure.sh stop          # deallocate all VMs (no compute billing)
+deploy/azure.sh start         # start all; the stack is up ~2 minutes later
 deploy/azure.sh logs eu       # updater log and containers of one region
 ```
 
-`stop` / `start` / `logs` accept a region (`eu` or `us`). Data survives a stop: Postgres lives on the OS disk.
+Without an argument these act on `eu`, `us` and `ops` (once it exists); `stop` / `start` / `logs` also accept one of them. Data survives a stop: Postgres lives on the OS disk.
 
 `deploy/site.env` (secrets, tunnel tokens) exists only on the machine that created the VMs and on the VMs themselves. To work from another machine, rebuild it from both VMs:
 

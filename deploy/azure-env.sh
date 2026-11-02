@@ -1,19 +1,30 @@
 #!/usr/bin/env bash
 # Push this region's part of deploy/site.env to its VM and trigger a deploy.
 # Clears a failed-release marker so the next run retries.
-#   deploy/azure-env.sh <eu|us>
+#   deploy/azure-env.sh <eu|us|ops>
 set -euo pipefail
 
-REGION="${1:?usage: azure-env.sh <eu|us>}"
+REGION="${1:?usage: azure-env.sh <eu|us|ops>}"
 cd "$(dirname "$0")/.."
 # shellcheck disable=SC1091
 . deploy/lib.sh
 load_config
-check_region "$REGION"
+[ "$REGION" = ops ] || check_region "$REGION"
 
 token_var="TUNNEL_TOKEN_${REGION^^}"
-site_env="$(
-	cat <<EOF
+if [ "$REGION" = ops ]; then
+	site_env="$(
+		cat <<EOF
+OBS_USER=${OBS_USER:-playlink}
+OBS_PASSWORD=$OBS_PASSWORD
+TUNNEL_TOKEN_OBS=${TUNNEL_TOKEN_OBS:-}
+CF_ACCESS_TEAM=${CF_ACCESS_TEAM:-}
+CF_ACCESS_AUD=${CF_ACCESS_AUD:-}
+EOF
+	)"
+else
+	site_env="$(
+		cat <<EOF
 PLAYLINK_DOMAIN=$PLAYLINK_DOMAIN
 $token_var=${!token_var}
 JWT_SECRET=$JWT_SECRET
@@ -22,8 +33,11 @@ ADMIN_ADDRESSES=${ADMIN_ADDRESSES:-}
 PLAYLINK_TAG=${PLAYLINK_TAG:-}
 GHCR_USER=${GHCR_USER:-}
 GHCR_TOKEN=${GHCR_TOKEN:-}
+OBS_USER=${OBS_USER:-}
+OBS_PASSWORD=${OBS_PASSWORD:-}
 EOF
-)"
+	)"
+fi
 
 # Base64 keeps the secrets out of shell quoting on both ends.
 site_b64="$(printf '%s\n' "$site_env" | base64 | tr -d '\n')"

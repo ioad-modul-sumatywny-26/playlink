@@ -71,6 +71,16 @@ compose=(docker compose -p "playlink-$REGION" -f compose.yaml)
 [ "$TAG" = local ] && compose+=(-f compose.build.yaml)
 [ -z "$PLAYLINK_DOMAIN" ] && compose+=(-f compose.ports.yaml)
 [ -n "$TUNNEL_TOKEN" ] && compose+=(--profile tunnel)
+# Log and metric shipping is on once the central stack has credentials. It
+# starts after the release is healthy and never fails the deploy.
+shipping=0
+if [ -n "${OBS_PASSWORD:-}" ]; then
+	shipping=1
+	OBS_USER="${OBS_USER:-playlink}"
+	OBS_METRICS_URL="$(metrics_url)"
+	OBS_LOGS_URL="$(logs_url)"
+	export REGION OBS_USER OBS_PASSWORD OBS_METRICS_URL OBS_LOGS_URL
+fi
 
 previous="$(cat ".run/$REGION.tag" 2>/dev/null || true)"
 
@@ -99,6 +109,10 @@ if ! "${compose[@]}" up -d --remove-orphans --wait --wait-timeout 300; then
 fi
 
 echo "$TAG" >".run/$REGION.tag"
+if [ "$shipping" = 1 ]; then
+	"${compose[@]}" --profile observability up -d --wait --wait-timeout 120 vector cadvisor ||
+		echo "warning: log and metric shipping did not start" >&2
+fi
 echo "Region $REGION is up on $TAG"
 echo "  frontend: $(frontend_url "$REGION")"
 echo "  api:      $(api_url "$REGION")/healthz"

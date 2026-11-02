@@ -20,6 +20,7 @@ from config import (
 )
 from dependencies import SessionDep
 from models import Nonce, User
+from observability import log_event, short_address
 from rate_limit import limiter
 from schemas import VerifyRequest
 from security import hash_nonce
@@ -135,6 +136,7 @@ def verify_signature(request: Request, body: VerifyRequest, session: SessionDep)
         session.add(user)
 
     session.commit()
+    log_event("login", user=short_address(checksum_address))
 
     # Generate JWT
     is_admin = is_admin_address(checksum_address)
