@@ -8,7 +8,9 @@ import respx
 
 pytest.importorskip("mcp")
 
-from mcp_server.server import create_server, get_base_url
+from mcp.server.mcpserver.exceptions import ToolError
+
+from mcp_server.server import create_server, get_base_url, get_configured_regions
 
 
 def test_get_base_url():
@@ -200,3 +202,156 @@ async def test_resources():
     # Read playlink://status
     status_res = await server.read_resource("playlink://status")
     assert '"reachable": true' in status_res[0].content
+
+
+def test_dynamic_region_discovery(monkeypatch):
+    # Default regions
+    monkeypatch.delenv("PLAYLINK_REGIONS", raising=False)
+    monkeypatch.delenv("PLAYLINK_DOMAIN", raising=False)
+    monkeypatch.delenv("PLAYLINK_ASIA_API", raising=False)
+    regions = get_configured_regions()
+    assert regions["eu"] == "http://localhost:8000"
+    assert regions["us"] == "http://localhost:8001"
+
+    # PLAYLINK_REGIONS JSON dict
+    monkeypatch.setenv(
+        "PLAYLINK_REGIONS",
+        '{"eu": "http://eu:8000", "us": "http://us:8001", "asia": "http://asia:8002"}',
+    )
+    regions = get_configured_regions()
+    assert regions["asia"] == "http://asia:8002"
+    assert get_base_url("asia") == "http://asia:8002"
+
+    # PLAYLINK_DOMAIN derivation
+    monkeypatch.delenv("PLAYLINK_REGIONS", raising=False)
+    monkeypatch.setenv("PLAYLINK_DOMAIN", "playlink.test")
+    regions = get_configured_regions()
+    assert regions["eu"] == "https://playlink-eu-api.playlink.test"
+    assert regions["us"] == "https://playlink-us-api.playlink.test"
+
+    # Environment variable scanning
+    monkeypatch.setenv("PLAYLINK_SA_API", "http://sa-api:8000")
+    regions = get_configured_regions()
+    assert regions["sa"] == "http://sa-api:8000"
+    assert get_base_url("sa") == "http://sa-api:8000"
+
+
+@pytest.mark.anyio
+@respx.mock
+async def test_parameterized_and_cross_region_resources():
+    server = create_server()
+    respx.get("http://localhost:8000/games").mock(
+        return_value=httpx.Response(200, json=["Quake III Arena"])
+    )
+    respx.get("http://localhost:8001/games").mock(
+        return_value=httpx.Response(200, json=["StarCraft"])
+    )
+    respx.get("http://localhost:8000/rooms").mock(
+        return_value=httpx.Response(
+            200,
+            json=[
+                {
+                    "name": "eu-frag",
+                    "game": "Quake III Arena",
+                    "players_max": 8,
+                    "lobby_location": "eu-central",
+                }
+            ],
+        )
+    )
+    respx.get("http://localhost:8001/rooms").mock(
+        return_value=httpx.Response(
+            200,
+            json=[
+                {
+                    "name": "us-rush",
+                    "game": "StarCraft",
+                    "players_max": 4,
+                    "lobby_location": "na-east",
+                }
+            ],
+        )
+    )
+    respx.get("http://localhost:8000/rooms/us-rush").mock(
+        return_value=httpx.Response(404, json={"detail": "Room not found"})
+    )
+    respx.get("http://localhost:8001/rooms/us-rush").mock(
+        return_value=httpx.Response(
+            200,
+            json={"name": "us-rush", "game": "StarCraft", "players_max": 4},
+        )
+    )
+
+    # 1. Parameterized games per region
+    eu_games = await server.read_resource("playlink://eu/games")
+    assert "Quake III Arena" in eu_games[0].content
+    us_games = await server.read_resource("playlink://us/games")
+    assert "StarCraft" in us_games[0].content
+
+    # 2. Parameterized rooms per region
+    eu_rooms = await server.read_resource("playlink://eu/rooms")
+    assert "eu-frag" in eu_rooms[0].content
+    assert "us-rush" not in eu_rooms[0].content
+
+    us_rooms = await server.read_resource("playlink://us/rooms")
+    assert "us-rush" in us_rooms[0].content
+    assert "eu-frag" not in us_rooms[0].content
+
+    # 3. Multi-region aggregated rooms (playlink://rooms)
+    all_rooms = await server.read_resource("playlink://rooms")
+    assert "[EU]" in all_rooms[0].content
+    assert "eu-frag" in all_rooms[0].content
+    assert "[US]" in all_rooms[0].content
+    assert "us-rush" in all_rooms[0].content
+
+    # 4. Cross-region room detail resolution (found in US even without region in URI)
+    room_detail = await server.read_resource("playlink://rooms/us-rush")
+    assert '"name": "us-rush"' in room_detail[0].content
+
+    # 5. Parameterized specific room detail
+    us_room_detail = await server.read_resource("playlink://us/rooms/us-rush")
+    assert '"name": "us-rush"' in us_room_detail[0].content
+
+
+@pytest.mark.anyio
+@respx.mock
+async def test_tool_error_handling_unreachable():
+    server = create_server()
+    respx.get("http://localhost:8001/games").mock(
+        side_effect=httpx.ConnectError("Connection refused")
+    )
+    with pytest.raises(ToolError, match="Cannot connect to region 'us'"):
+        await server.call_tool("list_games", {"region": "us"})
+
+
+@pytest.mark.anyio
+@respx.mock
+async def test_tool_error_handling_timeout():
+    server = create_server()
+    respx.get("http://localhost:8000/rooms").mock(
+        side_effect=httpx.TimeoutException("Timed out")
+    )
+    with pytest.raises(ToolError, match="timed out"):
+        await server.call_tool("list_rooms", {"region": "eu"})
+
+
+@pytest.mark.anyio
+async def test_tool_error_unknown_region():
+    server = create_server()
+    with pytest.raises(ToolError, match="Unknown region 'invalid'"):
+        await server.call_tool("list_games", {"region": "invalid"})
+
+
+@pytest.mark.anyio
+@respx.mock
+async def test_tool_error_room_not_found():
+    server = create_server()
+    respx.get("http://localhost:8000/rooms/missing-room").mock(
+        return_value=httpx.Response(404, json={"detail": "Not found"})
+    )
+    with pytest.raises(
+        ToolError, match="Room 'missing-room' was not found in region 'eu'"
+    ):
+        await server.call_tool(
+            "get_room_details", {"room_name": "missing-room", "region": "eu"}
+        )
