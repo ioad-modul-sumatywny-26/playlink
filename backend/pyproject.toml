@@ -34,10 +34,15 @@ line-ending = "auto"
 [dependency-groups]
 dev = [
     "httpx>=0.28.1",
+    "mcp>=1.0.0",
     "pytest>=9.0.2",
     "pytest-cov>=7.0.0",
     "pytest-env>=1.6.0",
+    "respx>=0.22.0",
     "ruff>=0.15.7",
+]
+mcp = [
+    "mcp>=1.0.0",
 ]
 
 [tool.pytest.ini_options]
