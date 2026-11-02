@@ -28,6 +28,7 @@ from models import (
     RoomEventRsvp,
     User,
 )
+from observability import log_event, short_address
 from rate_limit import limiter
 from schemas import CreateRoomRequest
 from serializers import (
@@ -102,6 +103,7 @@ async def delete_room(
 
     _purge_room(session, room)
     session.commit()
+    log_event("room_closed", room=room_name)
 
     await chat_manager.broadcast(
         room_name, json.dumps({"type": "room_closed", "room": room_name})
@@ -175,6 +177,12 @@ async def create_room(
     session.add(room)
     session.commit()
     session.refresh(room)
+    log_event(
+        "room_created",
+        room=room.name,
+        game=game_name,
+        user=short_address(address),
+    )
 
     await manager.broadcast(get_rooms_payload(session))
     return {"status": "created", "room": room.name}
@@ -205,6 +213,7 @@ async def join_room(
     room.members.append(user)
     session.add(room)
     session.commit()
+    log_event("room_joined", room=room_name, user=short_address(address))
 
     await manager.broadcast(get_rooms_payload(session))
     await chat_manager.broadcast(
@@ -250,6 +259,7 @@ async def leave_room(
     room.members.remove(user)
     session.add(room)
     session.commit()
+    log_event("room_left", room=room_name, user=short_address(address))
 
     await manager.broadcast(get_rooms_payload(session))
     await chat_manager.broadcast(
@@ -315,6 +325,12 @@ async def kick_room_member(
     session.add(system_message)
     session.commit()
     session.refresh(system_message)
+    log_event(
+        "member_kicked",
+        room=room_name,
+        user=short_address(target.identity_address),
+        by=short_address(admin_address),
+    )
 
     await chat_manager.broadcast(
         room_name,

@@ -7,6 +7,8 @@ routers and the background cleanup task.
 
 from fastapi import WebSocket
 
+from observability import WS_CONNECTIONS
+
 
 class ConnectionManager:
     def __init__(self):
@@ -15,10 +17,12 @@ class ConnectionManager:
     async def connect(self, websocket: WebSocket):
         await websocket.accept()
         self.active_connections.append(websocket)
+        WS_CONNECTIONS.labels("rooms").set(len(self.active_connections))
 
     def disconnect(self, websocket: WebSocket):
         if websocket in self.active_connections:
             self.active_connections.remove(websocket)
+            WS_CONNECTIONS.labels("rooms").set(len(self.active_connections))
 
     async def broadcast(self, data: str):
         for connection in list(self.active_connections):
@@ -37,10 +41,12 @@ class RoomChatManager:
     async def connect(self, room: str, websocket: WebSocket, address: str):
         await websocket.accept()
         self.rooms.setdefault(room, {})[websocket] = address
+        WS_CONNECTIONS.labels("chat").inc()
 
     def disconnect(self, room: str, websocket: WebSocket):
         if room in self.rooms and websocket in self.rooms[room]:
             del self.rooms[room][websocket]
+            WS_CONNECTIONS.labels("chat").dec()
             if not self.rooms[room]:
                 del self.rooms[room]
 

@@ -42,6 +42,8 @@ from config import (  # noqa: F401
 )
 from database import get_session
 from dependencies import SessionDep
+from observability import ObservabilityMiddleware, setup_logging
+from observability import router as metrics_router
 from rate_limit import limiter
 from routers import auth, chat, events, games, rooms, users
 from security import hash_nonce  # noqa: F401
@@ -77,6 +79,7 @@ __all__ = [
     "manager",
 ]
 
+setup_logging()
 logger = logging.getLogger(__name__)
 
 
@@ -99,6 +102,7 @@ app = FastAPI(lifespan=lifespan)
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
+app.add_middleware(ObservabilityMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=CORS_ORIGINS,
@@ -137,6 +141,7 @@ def readyz(response: Response, session: SessionDep):
     return {"status": "ready", "region": REGION}
 
 
+app.include_router(metrics_router)
 app.include_router(auth.router)
 app.include_router(users.router)
 app.include_router(rooms.router)
