@@ -1,4 +1,4 @@
-# Playlink — Moduł Sumatywny
+# Playlink — Moduł Sumatywny / Projekt Kompetencyjny
 
 Playlink is a full-stack **LFG (Looking For Group)** web application for finding players for niche, retro, and less popular multiplayer titles. Users create short-lived game sessions ("rooms") and browse open lobbies in real time. Authentication is non-custodial: identity is derived locally from a BIP39 mnemonic and verified against the backend with an ECDSA signature.
 
