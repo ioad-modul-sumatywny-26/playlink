@@ -1,7 +1,7 @@
 #cloud-config
-# Region VM bootstrap used by deploy/azure-vm.sh (__REGION__, __REPO__, __REF__ are
-# substituted there). Installs Docker, clones the repository and enables the
-# timer that deploys new releases. No inbound port is needed.
+# VM bootstrap used by deploy/azure-vm.sh, which fills in the placeholders
+# written in double underscores. Installs Docker, clones the repository and
+# enables the timer that keeps the stack up to date. No inbound port is needed.
 package_update: true
 packages:
   - ca-certificates
@@ -13,13 +13,13 @@ write_files:
   - path: /etc/systemd/system/playlink-update.service
     content: |
       [Unit]
-      Description=Deploy the latest PlayLink release (__REGION__)
+      Description=Keep PlayLink (__REGION__) up to date
       After=docker.service network-online.target
       Wants=network-online.target
 
       [Service]
       Type=oneshot
-      ExecStart=/bin/bash /opt/playlink/deploy/update.sh __REGION__
+      ExecStart=__UPDATE_CMD__
   - path: /etc/systemd/system/playlink-update.timer
     content: |
       [Unit]

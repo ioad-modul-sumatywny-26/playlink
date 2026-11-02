@@ -1,15 +1,19 @@
 #!/usr/bin/env bash
 # Day-to-day control of the region VMs from any machine with `az login`.
 #   deploy/azure.sh status            power state and deployed version
-#   deploy/azure.sh stop [eu|us]      deallocate (stops VM billing)
-#   deploy/azure.sh start [eu|us]     start; the stack comes back on boot
-#   deploy/azure.sh logs <eu|us>      last updater runs and containers
-#   deploy/azure.sh site-env <eu|us>  print the VM's site.env (to restore
+#   deploy/azure.sh stop [eu|us|ops]  deallocate (stops VM billing)
+#   deploy/azure.sh start [eu|us|ops] start; the stack comes back on boot
+#   deploy/azure.sh logs <eu|us|ops>  last updater runs and containers
+#   deploy/azure.sh site-env <eu|us|ops> print the VM's site.env (to restore
 #                                     deploy/site.env on a new machine)
 set -euo pipefail
 
-ACTION="${1:?usage: azure.sh <status|start|stop|logs|site-env> [eu|us]}"
+ACTION="${1:?usage: azure.sh <status|start|stop|logs|site-env> [eu|us|ops]}"
 REGIONS="${2:-eu us}"
+# Without a region argument, include the logs/metrics VM when it exists.
+if [ -z "${2:-}" ] && [ "$(az group exists -n playlink-ops)" = true ]; then
+	REGIONS="eu us ops"
+fi
 
 on_vm() { # region script
 	az vm run-command invoke -g "playlink-$1" -n "playlink-$1" --command-id RunShellScript \
@@ -23,7 +27,7 @@ for region in $REGIONS; do
 			--query "instanceView.statuses[?starts_with(code,'PowerState/')].displayStatus | [0]" -o tsv)"
 		echo "$region: $state"
 		if [ "$state" = "VM running" ]; then
-			on_vm "$region" 'cat /opt/playlink/.run/*.tag; docker ps --format "{{.Names}} {{.Status}}"'
+			on_vm "$region" 'cat /opt/playlink/.run/*.tag 2>/dev/null; docker ps --format "{{.Names}} {{.Status}}"'
 		fi
 		;;
 	stop) az vm deallocate -g "playlink-$region" -n "playlink-$region" --no-wait && echo "$region: stopping" ;;
