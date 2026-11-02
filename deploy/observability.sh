@@ -17,8 +17,12 @@ load_config
 export OBS_USER="${OBS_USER:-playlink}" OBS_PASSWORD TUNNEL_TOKEN_OBS="${TUNNEL_TOKEN_OBS:-}"
 # Team domain of Cloudflare Access (e.g. myteam.cloudflareaccess.com): Grafana
 # then trusts the Access login instead of asking for its own password.
-export CF_ACCESS_TEAM="${CF_ACCESS_TEAM:-}" GRAFANA_JWT=false
-[ -n "$CF_ACCESS_TEAM" ] && GRAFANA_JWT=true
+# CF_ACCESS_AUD is the Access application's audience tag; only its tokens count.
+export CF_ACCESS_TEAM="${CF_ACCESS_TEAM:-}" CF_ACCESS_AUD="${CF_ACCESS_AUD:-}" GRAFANA_JWT=false
+if [ -n "$CF_ACCESS_TEAM" ]; then
+	: "${CF_ACCESS_AUD:?CF_ACCESS_AUD is required with CF_ACCESS_TEAM}"
+	GRAFANA_JWT=true
+fi
 
 compose=(docker compose -f compose.observability.yaml)
 [ -n "$TUNNEL_TOKEN_OBS" ] && compose+=(--profile tunnel)

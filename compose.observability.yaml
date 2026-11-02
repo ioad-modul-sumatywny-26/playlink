@@ -55,11 +55,11 @@ services:
       GF_AUTH_JWT_ENABLED: ${GRAFANA_JWT:-false}
       GF_AUTH_JWT_HEADER_NAME: Cf-Access-Jwt-Assertion
       GF_AUTH_JWT_JWK_SET_URL: https://${CF_ACCESS_TEAM:-access.invalid}/cdn-cgi/access/certs
-      GF_AUTH_JWT_EXPECT_CLAIMS: '{"iss":"https://${CF_ACCESS_TEAM:-access.invalid}"}'
+      GF_AUTH_JWT_EXPECT_CLAIMS: '{"iss":"https://${CF_ACCESS_TEAM:-access.invalid}","aud":["${CF_ACCESS_AUD:-none}"]}'
       GF_AUTH_JWT_EMAIL_CLAIM: email
       GF_AUTH_JWT_USERNAME_CLAIM: email
       GF_AUTH_JWT_AUTO_SIGN_UP: "true"
-      GF_USERS_AUTO_ASSIGN_ORG_ROLE: Admin
+      GF_USERS_AUTO_ASSIGN_ORG_ROLE: Viewer
     volumes:
       - grafana_data:/var/lib/grafana
       - ./deploy/observability/grafana/provisioning:/etc/grafana/provisioning:ro
