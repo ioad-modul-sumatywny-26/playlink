@@ -71,6 +71,14 @@ compose=(docker compose -p "playlink-$REGION" -f compose.yaml)
 [ "$TAG" = local ] && compose+=(-f compose.build.yaml)
 [ -z "$PLAYLINK_DOMAIN" ] && compose+=(-f compose.ports.yaml)
 [ -n "$TUNNEL_TOKEN" ] && compose+=(--profile tunnel)
+# Log and metric shipping is on once the central stack has credentials.
+if [ -n "${OBS_PASSWORD:-}" ]; then
+	OBS_USER="${OBS_USER:-playlink}"
+	OBS_METRICS_URL="$(metrics_url)"
+	OBS_LOGS_URL="$(logs_url)"
+	export REGION OBS_USER OBS_PASSWORD OBS_METRICS_URL OBS_LOGS_URL
+	compose+=(--profile observability)
+fi
 
 previous="$(cat ".run/$REGION.tag" 2>/dev/null || true)"
 

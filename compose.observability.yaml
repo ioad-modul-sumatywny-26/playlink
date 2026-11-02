@@ -1,0 +1,82 @@
+# Central logs and metrics for all regions. Started by deploy/observability.sh.
+# Regions push to VictoriaMetrics / VictoriaLogs (basic auth); Grafana reads
+# both. Everything listens on loopback; public access goes through the tunnel.
+name: playlink-obs
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  victoriametrics:
+    image: victoriametrics/victoria-metrics:v1.155.0
+    command:
+      - -storageDataPath=/data
+      - -retentionPeriod=14d
+      - -httpAuth.username=${OBS_USER:?run deploy/observability.sh}
+      - -httpAuth.password=${OBS_PASSWORD:?run deploy/observability.sh}
+    volumes:
+      - vm_data:/data
+    ports:
+      - "127.0.0.1:8428:8428"
+    restart: unless-stopped
+    mem_limit: 160m
+    logging: *default-logging
+
+  victorialogs:
+    image: victoriametrics/victoria-logs:v1.53.0
+    command:
+      - -storageDataPath=/data
+      - -retentionPeriod=14d
+      - -httpAuth.username=${OBS_USER:?run deploy/observability.sh}
+      - -httpAuth.password=${OBS_PASSWORD:?run deploy/observability.sh}
+    volumes:
+      - vl_data:/data
+    ports:
+      - "127.0.0.1:9428:9428"
+    restart: unless-stopped
+    mem_limit: 128m
+    logging: *default-logging
+
+  grafana:
+    image: grafana/grafana-oss:12.4.3
+    environment:
+      GF_INSTALL_PLUGINS: victoriametrics-logs-datasource 0.33.1
+      GF_SECURITY_ADMIN_PASSWORD: ${OBS_PASSWORD}
+      GF_USERS_DEFAULT_THEME: dark
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      OBS_USER: ${OBS_USER}
+      OBS_PASSWORD: ${OBS_PASSWORD}
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./deploy/observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./deploy/observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports:
+      - "127.0.0.1:3300:3000"
+    depends_on:
+      - victoriametrics
+      - victorialogs
+    restart: unless-stopped
+    mem_limit: 256m
+    logging: *default-logging
+
+  # Outbound-only connector for remote regions. Routes (metrics -> :8428,
+  # logs -> :9428, grafana -> :3000) live in the tunnel's configuration.
+  cloudflared:
+    image: cloudflare/cloudflared:2025.10.0
+    command: tunnel --no-autoupdate run
+    environment:
+      TUNNEL_TOKEN: ${TUNNEL_TOKEN_OBS:-}
+    restart: unless-stopped
+    mem_limit: 96m
+    logging: *default-logging
+    profiles:
+      - tunnel
+
+volumes:
+  vm_data:
+  vl_data:
+  grafana_data:

@@ -1,0 +1,84 @@
+# Region agent: ships container logs and metrics to the central stack.
+data_dir: /vector-data
+
+sources:
+  docker:
+    type: docker_logs
+    include_labels:
+      - com.docker.compose.project=playlink-${REGION}
+  host:
+    type: host_metrics
+    scrape_interval_secs: 15
+    collectors: [cpu, memory, network, filesystem, load]
+  app:
+    type: prometheus_scrape
+    endpoints: [http://backend:8000/metrics]
+    scrape_interval_secs: 15
+  containers:
+    type: prometheus_scrape
+    endpoints: [http://cadvisor:8080/metrics]
+    scrape_interval_secs: 30
+
+transforms:
+  logs:
+    type: remap
+    inputs: [docker]
+    source: |
+      ts = format_timestamp!(.timestamp, "%+")
+      service = get!(.label, ["com.docker.compose.service"])
+      msg = string!(.message)
+      parsed, err = parse_json(msg)
+      if err == null && is_object(parsed) {
+        out = object!(parsed)
+      } else {
+        out = {"_msg": msg, "level": "INFO"}
+        if match(msg, r'(?i)\b(error|fatal|panic)\b') {
+          out.level = "ERROR"
+        } else if match(msg, r'(?i)\bwarn') {
+          out.level = "WARNING"
+        }
+      }
+      out.service = service
+      out.region = "${REGION}"
+      out._time = ts
+      . = out
+  # cAdvisor sees every container on the host; keep this region's only.
+  own_containers:
+    type: filter
+    inputs: [containers]
+    condition: .tags.container_label_com_docker_compose_project == "playlink-${REGION}"
+  metrics:
+    type: remap
+    inputs: [host, app, own_containers]
+    source: |
+      .tags.region = "${REGION}"
+
+sinks:
+  logs_out:
+    type: http
+    inputs: [logs]
+    uri: ${OBS_LOGS_URL}/insert/jsonline?_stream_fields=service,region&_msg_field=_msg&_time_field=_time
+    method: post
+    encoding:
+      codec: json
+    framing:
+      method: newline_delimited
+    auth:
+      strategy: basic
+      user: ${OBS_USER}
+      password: ${OBS_PASSWORD}
+    batch:
+      timeout_secs: 5
+    buffer:
+      type: disk
+      max_size: 268435488
+  metrics_out:
+    type: prometheus_remote_write
+    inputs: [metrics]
+    endpoint: ${OBS_METRICS_URL}/api/v1/write
+    auth:
+      strategy: basic
+      user: ${OBS_USER}
+      password: ${OBS_PASSWORD}
+    healthcheck:
+      enabled: false
