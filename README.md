@@ -53,7 +53,7 @@ Published images:
 - `ghcr.io/ioad-modul-sumatywny-26/playlink-backend:vX.Y.Z`
 - `ghcr.io/ioad-modul-sumatywny-26/playlink-frontend:vX.Y.Z`
 
-Pre-release tags (`vX.Y.Z-rc.N`) are deployed only when pinned with `PLAYLINK_TAG`. Start, stop and inspect the VMs with `deploy/azure.sh`. The full runbook (current deployment, local and public mode, Cloudflare hostnames, Azure VMs, rollback, failure drills) is in [`docs/operations/runbook-regions.md`](docs/operations/runbook-regions.md).
+Pre-release tags (`vX.Y.Z-rc.N`) are deployed only when pinned with `PLAYLINK_TAG`. Start, stop and inspect the VMs with `deploy/azure.sh`. The full runbook (current deployment, local and public mode, Cloudflare hostnames, Azure VMs, rollback, failure drills) is in [`docs/operations/runbook-regions.md`](docs/operations/runbook-regions.md). Logs and metrics of all regions in one Grafana: [`docs/operations/observability.md`](docs/operations/observability.md).
 
 ## Features
 

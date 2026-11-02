@@ -33,6 +33,7 @@ This is the developer documentation set. Start with the [architecture overview](
 | [Testing](operations/testing.md) | Backend pytest and frontend vitest suites, fixtures, and run commands. |
 | [Deployment](operations/deployment.md) | `deploy.sh`, Docker Compose services, Dockerfiles, container startup, and CI/release. |
 | [Multi-region runbook](operations/runbook-regions.md) | Local/public mode, Cloudflare tunnels, Azure VMs, pull-based release rollout, rollback, failure drills. |
+| [Logs and metrics](operations/observability.md) | Grafana, VictoriaLogs and VictoriaMetrics, region agents, what is collected, queries. |
 
 ## Quick Start
 
