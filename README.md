@@ -30,8 +30,10 @@ Public hostnames are derived from the configured `PLAYLINK_DOMAIN` (`<domain>`):
 | EU API | `https://playlink-eu-api.<domain>` |
 | US frontend | `https://playlink-us.<domain>` |
 | US API | `https://playlink-us-api.<domain>` |
+| Grafana (logs and metrics of all regions) | `https://playlink-grafana.<domain>` (Cloudflare Access login) |
+| Logs / metrics endpoints (for MCP) | `https://playlink-logs.<domain>`, `https://playlink-metrics.<domain>` (basic auth, `OBS_PASSWORD`) |
 
-Without a domain the stack runs in local mode: EU on `http://localhost:3000` (API `:8000`), US on `http://localhost:3001` (API `:8001`), chooser at `http://127.0.0.1:3000`.
+Without a domain the stack runs in local mode: EU on `http://localhost:3000` (API `:8000`), US on `http://localhost:3001` (API `:8001`), chooser at `http://127.0.0.1:3000`. Logs and metrics locally: `bash deploy/observability.sh up`, Grafana at `http://127.0.0.1:3300` (user `admin`, password `OBS_PASSWORD` from `deploy/site.env`), see [`docs/operations/observability.md`](docs/operations/observability.md).
 
 The entry host measures both regions and redirects to the faster live one. Each region has its own session: switching regions requires signing in again with the same 12 words. Rooms are regional — a room created in EU does not exist in US.
 
@@ -128,6 +130,8 @@ npx @modelcontextprotocol/inspector --cli --method tools/list uv run --directory
 ```
 
 ### Assistant Configuration
+
+Room tools need no login. For the log and metrics tools (`search_logs`, `query_metrics`) set the variables from `.env.example` in the `env` block of the entry below or in a `.env` next to where the server starts.
 
 Add the following entry to your assistant's MCP configuration file (e.g. `claude_desktop_config.json`, `~/.gemini/config/mcp_config.json`, or `.cursor/mcp.json`):
 
