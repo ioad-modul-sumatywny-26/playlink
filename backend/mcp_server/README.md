@@ -7,14 +7,20 @@ Serwer Model Context Protocol (MCP) do inspekcji platformy PlayLink w trybie rea
 - `list_games(region: str = "eu")`: Lista obslugiwanych gier retro.
 - `list_rooms(region: str = "eu", game: str | None = None)`: Aktywne pokoje LFG z opcjonalnym filtrem po grze.
 - `get_room_details(room_name: str, region: str = "eu")`: Szczegoly pokoju (gracze, komunikator, opis, eventy).
-- `check_platform_health()`: Status endpointow `/healthz` i `/readyz` oraz latencja dla regionow EU i US.
+- `check_platform_health()`: Status endpointow `/healthz` i `/readyz` oraz latencja dla wszystkich skonfigurowanych regionow.
 
 ## Zasoby (Resources)
 
-- `playlink://games`: Lista gier w formacie tekstowym.
-- `playlink://rooms`: Podsumowanie aktywnych pokojow w EU.
-- `playlink://rooms/{room_name}`: Szczegoly pokoju w formacie JSON.
-- `playlink://status`: Stan zdrowia i dostepnosci bazy w JSON.
+### Sparametryzowane per region
+- `playlink://{region}/games`: Lista gier dla wybranego regionu (np. `playlink://eu/games`, `playlink://us/games`).
+- `playlink://{region}/rooms`: Aktywne pokoje w wybranym regionie (np. `playlink://eu/rooms`).
+- `playlink://{region}/rooms/{room_name}`: Szczegoly pokoju w wybranym regionie.
+
+### Zbiorcze / Multi-region
+- `playlink://games`: Lista gier ze sprawdzonych, dostepnych regionow.
+- `playlink://rooms`: Zagregowane podsumowanie aktywnych pokojow ze wszystkich skonfigurowanych regionow.
+- `playlink://rooms/{room_name}`: Wyszukiwanie pokoju we wszystkich skonfigurowanych regionach.
+- `playlink://status`: Stan zdrowia i dostepnosci bazy dla wszystkich regionow w JSON.
 
 ## Uruchomienie
 
@@ -28,10 +34,13 @@ uv run --project backend python -m mcp_server
 uv run --project backend python backend/mcp_server/server.py --transport sse --port 8080
 ```
 
-## Zmienne srodowiskowe
+## Zmienne srodowiskowe i konfiguracja regionow
 
-- `PLAYLINK_EU_API` (domyslnie: `http://localhost:8000`)
-- `PLAYLINK_US_API` (domyslnie: `http://localhost:8001`)
+Regiony i adresy API sa wykrywane dynamicznie w nastepujacej kolejnosci:
+1. `PLAYLINK_REGIONS`: mapa JSON (np. `{"eu": "http://localhost:8000", "us": "http://localhost:8001"}`) lub lista po przecinku (`eu,us,asia`).
+2. Zmienne per region: `PLAYLINK_<REGION>_API` oraz `PUBLIC_REGION_<REGION>_API` (np. `PLAYLINK_EU_API`, `PUBLIC_REGION_US_API`).
+3. `PLAYLINK_DOMAIN`: w przypadku ustawienia domeny, serwer automatycznie wyprowadza adresy w formacie `https://playlink-<region>-api.<PLAYLINK_DOMAIN>`.
+4. Wartosci domyslne: EU (`http://localhost:8000`), US (`http://localhost:8001`).
 
 ## Konfiguracja w asystentach AI
 
