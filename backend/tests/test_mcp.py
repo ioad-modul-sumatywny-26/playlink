@@ -6,6 +6,8 @@ import httpx
 import pytest
 import respx
 
+pytest.importorskip("mcp")
+
 from mcp_server.server import create_server, get_base_url
 
 
