@@ -81,6 +81,6 @@ A region with the agent needs about 0.25 GB, the central stack about 0.35 GB, so
 ## Limits and security
 
 - Vector and cAdvisor read container data through the Docker socket and `/var/lib/docker` (read-only mounts), which is root-equivalent on that host. Vector gets only the `OBS_*` settings, never the app secrets.
-- Push and read endpoints share one basic-auth user, and Grafana is public behind the tunnel: use a long random `OBS_PASSWORD`. Cloudflare Access in front of `playlink-grafana` is the next hardening step.
+- Push and read endpoints (`playlink-metrics`, `playlink-logs`) share one basic-auth user: use a long random `OBS_PASSWORD`. `playlink-grafana` sits behind Cloudflare Access (Zero Trust Free, application "PlayLink Grafana", policy "Team emails"): add a teammate's address to that policy to let them in, then they sign in to Grafana as `admin`.
 - Log lines carry shortened wallet addresses (`0x1234…abcd`) and no tokens or message contents.
 - **Cloudflare edge analytics** (traffic, countries, requests blocked before they reach a server) are not collected: that needs an API token and an extra exporter. The dashboards show what reaches the servers.
