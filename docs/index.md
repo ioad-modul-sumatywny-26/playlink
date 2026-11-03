@@ -35,6 +35,11 @@ This is the developer documentation set. Start with the [architecture overview](
 | [Multi-region runbook](operations/runbook-regions.md) | Local/public mode, Cloudflare tunnels, Azure VMs, pull-based release rollout, rollback, failure drills. |
 | [Logs and metrics](operations/observability.md) | Grafana, VictoriaLogs and VictoriaMetrics, region agents, what is collected, queries. |
 
+### Project
+| Document | Contents |
+| -------- | -------- |
+| [Harmonogram](harmonogram.md) | 15-week implementation schedule: phases, milestones and KPIs (Polish). |
+
 ## Quick Start
 
 ```bash
