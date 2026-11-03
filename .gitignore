@@ -246,6 +246,7 @@ $RECYCLE.BIN/
 *.out
 *.pdf
 !prezentacje/raport_koncowy/dokumentacja-testowa-playlink.pdf
+!docs/dokument-wizji.pdf
 *.snm
 *.gz
 *.toc
