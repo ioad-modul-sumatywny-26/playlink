@@ -110,81 +110,89 @@ For running each service outside Docker, see [`backend/README.md`](backend/READM
 
 ## Model Context Protocol (MCP)
 
-PlayLink includes an MCP server (`backend/mcp_server`) that allows AI assistants (Claude Desktop, Cursor, Antigravity) to safely inspect platform status, retro games, active LFG lobbies, and regional health in read-only mode.
+PlayLink includes an MCP server (`backend/mcp_server`) that allows AI assistants (Claude Desktop, Cursor, Antigravity, Claude Code) to safely inspect platform status, retro games, active LFG lobbies, and regional health in read-only mode.
 
-### Testing via npx
+The MCP server always runs on your own machine and only talks to a PlayLink API over HTTP. What differs is where that API runs:
 
-From the repository root:
+| Case | API | Needs |
+| --- | --- | --- |
+| [Local](#case-1-playlink-running-locally) | `localhost:8000` (EU), `localhost:8001` (US) from `deploy/deploy.sh` | Docker, nothing else |
+| [Remote](#case-2-playlink-running-remotely-production) | Deployed regions, e.g. on Azure | The domain, optionally the logs password |
+
+### Setup (both cases)
+
+Install [Git](https://git-scm.com) and [uv](https://docs.astral.sh/uv/getting-started/installation/), then clone the repo and install dependencies:
+
 ```bash
-npx @modelcontextprotocol/inspector uv run --directory backend python -m mcp_server
+git clone https://github.com/ioad-modul-sumatywny-26/playlink.git
+cd playlink/backend && uv sync
 ```
 
-Or from the `backend/` directory:
-```bash
-npx @modelcontextprotocol/inspector uv run python -m mcp_server
-```
+Add the server to your assistant's MCP configuration file (e.g. `claude_desktop_config.json`, `~/.gemini/config/mcp_config.json`, or `.cursor/mcp.json`). The path to `backend` must be absolute; on Windows double the backslashes. The `env` block is the only part that differs between the two cases.
 
-To verify tools via CLI without launching the browser UI:
-```bash
-npx @modelcontextprotocol/inspector --cli --method tools/list uv run --directory backend python -m mcp_server
-```
+### Case 1: PlayLink running locally
 
-### Assistant Configuration
-
-Room tools need no login. For the log and metrics tools (`search_logs`, `query_metrics`) set the variables from `.env.example` in the `env` block of the entry below or in a `.env` next to where the server starts.
-
-Add the following entry to your assistant's MCP configuration file (e.g. `claude_desktop_config.json`, `~/.gemini/config/mcp_config.json`, or `.cursor/mcp.json`):
+Start the regions (`deploy/deploy.sh eu`, optionally `deploy/deploy.sh us`), then use the entry without any `env`. Without configuration the server uses `http://localhost:8000` (EU) and `http://localhost:8001` (US):
 
 ```json
 {
   "mcpServers": {
     "playlink": {
       "command": "uv",
-      "args": [
-        "run",
-        "--directory",
-        "C:\\x\\y\\z\\playlink\\backend",
-        "python",
-        "-m",
-        "mcp_server"
-      ]
+      "args": ["run", "--directory", "C:\path\to\playlink\backend", "python", "-m", "mcp_server"]
     }
   }
 }
 ```
 
-### Connecting to production
+Claude Code: `claude mcp add playlink -- uv run --directory /path/to/playlink/backend python -m mcp_server`
 
-The MCP server runs locally and only talks to the public API, so no VM access is needed. Point it at the deployed regions with `PLAYLINK_DOMAIN`; it derives `https://playlink-<region>-api.<domain>` for each region.
+To try the tools without an assistant, use the inspector from the repository root:
 
-1. Install [Git](https://git-scm.com) and [uv](https://docs.astral.sh/uv/getting-started/installation/), then clone the repo and install dependencies:
-   ```bash
-   git clone https://github.com/ioad-modul-sumatywny-26/playlink.git
-   cd playlink/backend && uv sync
-   ```
-2. Add the server to your assistant's MCP config (path to `backend` must be absolute; on Windows double the backslashes):
-   ```json
-   {
-     "mcpServers": {
-       "playlink": {
-         "command": "uv",
-         "args": ["run", "--directory", "/path/to/playlink/backend", "python", "-m", "mcp_server"],
-         "env": {
-           "PLAYLINK_DOMAIN": "<domain>",
-           "PLAYLINK_REGIONS": "eu,us"
-         }
-       }
-     }
-   }
-   ```
-   Claude Code users can run instead:
-   ```bash
-   claude mcp add playlink -e PLAYLINK_DOMAIN=<domain> -e PLAYLINK_REGIONS=eu,us -- uv run --directory /path/to/playlink/backend python -m mcp_server
-   ```
-3. Optional, for `search_logs` and `query_metrics`: add `PLAYLINK_LOGS_URL`, `PLAYLINK_METRICS_URL`, `PLAYLINK_OBS_USER` and `PLAYLINK_OBS_PASSWORD` to `env` (see [logs and metrics](docs/operations/observability.md#ask-the-logs-through-mcp)). The password is the `OBS_PASSWORD` of the deployment; ask the maintainer and never commit it.
-4. Restart the assistant and ask it to run `check_platform_health`. Both regions should report `reachable`.
+```bash
+npx @modelcontextprotocol/inspector uv run --directory backend python -m mcp_server
+npx @modelcontextprotocol/inspector --cli --method tools/list uv run --directory backend python -m mcp_server   # no browser UI
+```
 
-If no tools show up, check the absolute path in `--directory` and restart the assistant fully. Regions reported as unreachable usually mean the VMs are stopped.
+The log and metrics tools (`search_logs`, `query_metrics`) work locally only if you also run the [observability stack](docs/operations/observability.md); otherwise they answer that they are not configured.
+
+### Case 2: PlayLink running remotely (production)
+
+No VM access is needed. Point the server at the deployed regions with `PLAYLINK_DOMAIN`; it derives `https://playlink-<region>-api.<domain>` for each region listed in `PLAYLINK_REGIONS`:
+
+```json
+{
+  "mcpServers": {
+    "playlink": {
+      "command": "uv",
+      "args": ["run", "--directory", "C:\path\to\playlink\backend", "python", "-m", "mcp_server"],
+      "env": {
+        "PLAYLINK_DOMAIN": "<domain>",
+        "PLAYLINK_REGIONS": "eu,us"
+      }
+    }
+  }
+}
+```
+
+Claude Code: `claude mcp add playlink -e PLAYLINK_DOMAIN=<domain> -e PLAYLINK_REGIONS=eu,us -- uv run --directory /path/to/playlink/backend python -m mcp_server`
+
+For `search_logs` and `query_metrics` add these to `env` (see [logs and metrics](docs/operations/observability.md#ask-the-logs-through-mcp)). The password is the `OBS_PASSWORD` of the deployment; ask the maintainer and never commit it:
+
+```json
+"PLAYLINK_LOGS_URL": "https://playlink-logs.<domain>",
+"PLAYLINK_METRICS_URL": "https://playlink-metrics.<domain>",
+"PLAYLINK_OBS_USER": "playlink",
+"PLAYLINK_OBS_PASSWORD": "<OBS_PASSWORD>"
+```
+
+### Checking the connection
+
+Restart the assistant fully and ask it to run `check_platform_health`. Every configured region should report `reachable`.
+
+- No tools show up: check the absolute path in `--directory`.
+- Local, regions unreachable: the containers are not running (`docker compose ls`).
+- Remote, regions unreachable: the VMs are probably stopped, or `PLAYLINK_DOMAIN` is wrong.
 
 ## Project Organization
 

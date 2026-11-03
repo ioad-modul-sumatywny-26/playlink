@@ -74,4 +74,4 @@ Regiony i adresy API sa wykrywane dynamicznie w nastepujacej kolejnosci:
 }
 ```
 
-`env` wskazuje wdrozone regiony (produkcja); bez niego serwer laczy sie z `localhost`. Pelna instrukcja podlaczenia do produkcji: sekcja "Connecting to production" w glownym `README.md`.
+`env` wskazuje wdrozone regiony (produkcja); bez niego serwer laczy sie z `localhost`. Pelna instrukcja podlaczenia do produkcji: sekcje "Case 1" (lokalnie) i "Case 2" (zdalnie) w glownym `README.md`.
