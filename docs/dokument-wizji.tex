@@ -103,7 +103,7 @@ sukcesu, uwzględniając zrealizowane rezultaty prac (PR 91, 92, 96, 97, 99): wd
 \midrule
 LFG & \emph{Looking For Group} --- szukanie współgraczy. \\
 Lobby / pokój & Krótkotrwała sesja gry z limitem miejsc, wygasająca po czasie. \\
-Region & Osobne środowisko w chmurze (np. Frankfurt, N.\ Virginia)  z kompletnym stosem aplikacji. \\
+Region & Osobne środowisko w chmurze (w projekcie: Polska Central i Dania Wschód)  z kompletnym stosem aplikacji. \\
 Stos regionalny & Frontend, backend i baza danych wdrożone w jednym regionie. \\
 Routing użytkowników & Mechanizm wyboru regionu dla użytkownika (automatyczny lub ręczny). \\
 Stay/Switch & Mechanizm propozycji zmiany regionu: jeśli zapisany region żyje, interfejs proponuje szybszy region banerem bez agresywnego przerywania sesji. \\
@@ -183,7 +183,7 @@ Dzięki temu nie są sześcioma opisami tej samej rzeczy.
 F1 Regiony i lobby & Co dokładnie działa w regionie? & Dwa kompletne stosy (EU, US) na Azure z własnymi lobby za Cloudflare Tunnel & Oba regiony obsługują pełny przepływ: pokój, dołączenie, czat (PR 91) \\
 F2 Routing & Skąd system wie, dokąd wysłać użytkownika? & Sonda opóźnień w przeglądarce, baner propozycji Stay/Switch i ręczny przełącznik & Użytkownik trafia do szybszego regionu; brak niechcianych przeskoczeń (PR 91, 92) \\
 F3 Wdrożenie & Czy środowisko da się odtworzyć bez ręcznej pracy? & Szablony compose, skrypty \code{deploy/deploy.sh} i wdrożenie pull-based z GHCR na Azure VM & Czysty start regionu w kilka minut; automatyczna aktualizacja wydań (PR 91) \\
-F4 Eksperyment & Czy dwa regiony są szybsze niż jeden? & Dedykowany runner i scenariusze w \code{experiments/f4/}; zebrane pomiary 1 vs 2 regionów & Zmierzona różnica p50/p95, błędów i czasu synchronizacji WebSocket (PR 92) \\
+F4 Eksperyment & Czy dwa regiony są szybsze niż jeden? & Dedykowany runner i scenariusze w \code{experiments/f4/}; narzędzia do pomiaru 1 vs 2 regionów & Docelowo różnica p50/p95, błędów i czasu synchronizacji WebSocket; pomiary do wykonania (PR 92) \\
 F5 Awarie & Co się dzieje, gdy region pada? & Scenariusze awarii, procedury runbookowe, automatyczne przełączenie przy braku odpowiedzi & Czas wykrycia, ciągłość działania drugiego regionu i brak wpływu na bazę \\
 F6 Analiza & Kiedy to się opłaca? & Raport z wnioskami: korzyści, koszty maszyn w Azure, transfer i podział graczy & Rekomendacja poparta rzeczywistym rachunkiem i pomiarami F4 \\
 \bottomrule
@@ -258,13 +258,13 @@ zapamiętywany w cookie (\code{playlink.region}). W ramach PR 92 wdrożono dopra
 Zamiast ręcznego wdrożenia czy bezpośredniego dostępu SSH z potoku CI, wdrożono zautomatyzowany, bezpieczny model pull-based (PR 91):
 \begin{itemize}
   \item Skrypt \code{deploy/deploy.sh <eu|us> [tag]} umożliwia natychmiastowe uruchomienie parametryzowanego stosu regionalnego (lokalnie lub w chmurze) z wygenerowanym środowiskiem \code{.run/<region>.env}.
-  \item Potok wydań \code{.github/workflows/release.yml} buduje wieloarchitekturowe obrazy i publikuje je w GitHub Packages (GHCR) po oznaczeniu commita tagiem wydania.
+  \item Potok wydań \code{.github/workflows/release.yml} buduje obrazy (\code{linux/amd64}) i publikuje je w GitHub Packages (GHCR) po oznaczeniu commita tagiem wydania.
   \item Maszyny Azure mają skonfigurowany timer systemd (\code{deploy/update.sh} co 2 minuty), który automatycznie pobiera najnowszy release (najpierw EU, po weryfikacji zdrowia US). W razie błędu healthchecku skrypt automatycznie wycofuje wdrożenie (rollback).
-  \item Dla wygody prac deweloperskich przygotowano lokalne środowisko wieloregionowe (\code{start-local.ps1} z PR 92).
+  \item Dla wygody prac deweloperskich przygotowano lokalne środowisko wieloregionowe (\code{scripts/local-up.sh}, opcja \code{--both}, PR 92).
 \end{itemize}
 
 \paragraph{F4 --- Eksperyment porównawczy.}
-W ramach PR 92 zrealizowano dedykowany moduł eksperymentu obciążeniowego w katalogu \code{experiments/f4/}. Przygotowano syntetycznego klienta asynchronicznego oraz skrypty runnera (\code{run.py}, \code{run-f4.ps1}), które porównują wariant A (pojedynczy region EU) z wariantem B (dwa regiony EU/US). Scenariusze obejmują tworzenie pokojów, dołączanie, czat WebSocket oraz propagację listy. Narzędzia mierzą opóźnienia (p50, p95), kody odpowiedzi, błędy i zachowanie pod obciążeniem, generując ustrukturyzowane raporty JSON i Markdown.
+W ramach PR 92 zrealizowano dedykowany moduł eksperymentu obciążeniowego w katalogu \code{experiments/f4/}. Przygotowano syntetycznego klienta asynchronicznego oraz runner \code{run.py} z generatorem raportu \code{report.py}, które porównują wariant A (pojedynczy region EU) z wariantem B (dwa regiony EU/US). Scenariusze obejmują tworzenie pokojów, dołączanie, czat WebSocket oraz propagację listy. Narzędzia mierzą opóźnienia (p50, p95), kody odpowiedzi, błędy i zachowanie pod obciążeniem, generując ustrukturyzowane raporty JSON i Markdown.
 
 \paragraph{F5 --- Próby awarii.}
 Kontrolowane wyłączenie jednego regionu (zatrzymanie usługi backendu, odcięcie
@@ -280,7 +280,7 @@ podział społeczności graczy między regiony), zasilany danymi z eksperymentu 
 \paragraph{F7 --- Obserwowalność i inspekcja MCP.}
 W ramach PR 96, 97 i 99 rozszerzono zakres platformy o zaawansowane narzędzia diagnostyczne i telemetryczne:
 \begin{itemize}
-  \item \textbf{Centralna obserwowalność (PR 99):} Uruchomiono maszynę \code{playlink-ops} ze stosem VictoriaLogs (logi), VictoriaMetrics (metryki) i Grafana (\code{deploy/observability.sh}). Kontenery Vector w każdym regionie przesyłają logi JSON z identyfikatorem \code{request_id} i zdarzeniami biznesowymi, a cAdvisor zbiera metryki zużycia zasobów. Błędy frontendu trafiają do logów przez \code{/api/client-errors}. Panel Grafany chroniony jest przez Cloudflare Access.
+  \item \textbf{Centralna obserwowalność (PR 99):} Uruchomiono maszynę \code{playlink-ops} ze stosem VictoriaLogs (logi), VictoriaMetrics (metryki) i Grafana (\code{deploy/observability.sh}). Kontenery Vector w każdym regionie przesyłają logi JSON z identyfikatorem \code{request_id} i zdarzeniami biznesowymi, a cAdvisor zbiera metryki zużycia zasobów. Błędy frontendu trafiają do logów przez \code{/api/client-errors}. Panel Grafany można objąć ochroną Cloudflare Access.
   \item \textbf{Serwer MCP (PR 96, 97, 99):} Wdrożono bezpieczny serwer MCP w trybie \emph{read-only} (\code{backend/mcp_server/}) z transportem stdio i SSE. Oferuje narzędzia inspekcji gier, pokojów, zdrowia (\code{check_platform_health}) oraz zasoby per region (\code{playlink://{region}/*}) z agregacją multi-region. Dostępne są też narzędzia kwerend logów LogsQL (\code{search_logs}) oraz metryk PromQL (\code{query_metrics}).
 \end{itemize}
 
@@ -412,7 +412,7 @@ Stos na maszynie & \code{compose.yaml}: frontend, backend, PostgreSQL i agenci (
 Przepis regionu & Parametryzowane skrypty \code{deploy/deploy.sh} oraz konfiguracja per region w \code{.run/<region>.env} (PR 91). \\
 Sekrety & \code{JWT_SECRET}, hasła bazy i \code{OBS_PASSWORD} w \code{deploy/site.env} na maszynach; brak sekretów w repozytorium. \\
 Cloudflare DNS i tunel & Nazwy regionalne (\code{playlink-<reg>}), adres główny i tunel \code{playlink-ops}. Ruch wychodzący przez \code{cloudflared}; brak otwartych portów publicznych na maszynach VM. \\
-Ochrona i certyfikat & Ruch wchodzi na Cloudflare (DDoS, TLS). Panel Grafany (\code{playlink-grafana.<domain>}) zabezpieczony przez Cloudflare Access (PR 99). \\
+Ochrona i certyfikat & Ruch wchodzi na Cloudflare (DDoS, TLS). Panel Grafany (\code{playlink-grafana.<domain>}) z opcjonalną ochroną Cloudflare Access (PR 99). \\
 Cache plików statycznych & Cloudflare buforuje pliki JS, CSS i obrazy; sonda, API, WebSocket oraz telemetria omijają cache. \\
 Wybór regionu & Sonda w przeglądarce z mechanizmem propozycji Stay/Switch (\code{RegionProposalBanner}, PR 92) oraz ręczny przełącznik. \\
 Wdrożenie i aktualizacja & Publikacja wydań na GHCR (\code{release.yml}); maszyny Azure pobierają i wdrażają nowe wersje w trybie pull-based (\code{deploy/update.sh}) co 2 minuty (EU najpierw, potem US) z automatycznym rollbackiem (PR 91). \\
@@ -428,8 +428,7 @@ Testy obciążeniowe & Dedykowany runner syntetycznego obciążenia w \code{expe
 
 \subsection{Założenia}
 \begin{itemize}
-  \item Regiony: Europa (Frankfurt, spójny z domyślnym \code{eu-central}) i USA
-        (wschodnie wybrzeże, spójny z \code{na-east}). \emph{Do potwierdzenia.}
+  \item Regiony: Europa (Polska Central, \code{polandcentral}) oraz ``USA'' (Dania Wschód, \code{denmarkeast}), bo Azure for Students nie udostępnia regionów w USA; mechanizm jest ten sam. Prawdziwy East US zostaje na później.
   \item Pokoje są krótkotrwałe, więc ich utrata przy awarii regionu jest
         akceptowalna (RPO dla lobby bliskie zeru); trwałe dane (konta) są
         odtwarzalne z podpisu, bo tożsamość jest bezhasłowa i przechowywana wyłącznie
@@ -528,7 +527,7 @@ kontenery Cloudflare i baza D1.
 \subsubsection{Kontenery, sekrety, przepis}
 Na każdy region przypada stos kontenerów: frontend, backend,
 PostgreSQL oraz agenci telemetryczni (Vector, cAdvisor). Baza jest kontenerem Postgres w compose (\code{compose.yaml}). Usługi
-Azure Database for PostgreSQL nie uruchamiamy. Obrazy budowane są wieloarchitekturowo i publikowane w GHCR.
+Azure Database for PostgreSQL nie uruchamiamy. Obrazy (\code{linux/amd64}) są budowane i publikowane w GHCR.
 Sekrety (\code{JWT_SECRET}, hasła bazy, \code{OBS_PASSWORD}) nie wchodzą do repozytorium
 i nie idą do Azure Key Vault. Leżą w plikach środowiskowych na maszynie (\code{deploy/site.env}), a wdrożenie nie wymaga otwartych portów SSH dla CI.
 
@@ -619,9 +618,9 @@ R8 & Zakres ponad możliwości zespołu w 10 tygodniach & Średni & Priorytety: 
 F1 & Oba regiony przechodzą ten sam zestaw testów przepływu (pokój, dołączenie, czat, lista) & Spełnione: stosy EU/US za Cloudflare Tunnel, testy backendu i frontendu przechodzą (PR 91) \\
 F2 & Pierwsze wejście trafia do szybszego regionu; szybszy drugi region jest propozycją (Stay/Switch) & Spełnione: baner \code{RegionProposalBanner}, cookie \code{playlink.region}, failover przy awarii (PR 91, 92) \\
 F3 & Czyste wdrożenie obu środowisk jednym poleceniem; powtarzalna aktualizacja wydań & Spełnione: \code{deploy/deploy.sh}, obrazy GHCR i timer pull-based \code{deploy/update.sh} (PR 91) \\
-F4 & Zebrane pomiary wariantów A i B dla obu grup użytkowników, z opisem warunków & Spełnione: moduł \code{experiments/f4/}, raporty wyników p50/p95, błędy i WebSocket (PR 92) \\
-F5 & Co najmniej dwa scenariusze awarii wykonane, z czasem wykrycia i odzyskania & Scenariusze stopu backendu/tunelu i procedury runbookowe (\code{docs/operations/runbook-regions.md}) \\
-F6 & Raport z rekomendacją: kiedy opłaca się drugi region, jaki koszt i jakie ograniczenia & Podsumowanie wyników eksperymentu F4, kosztów maszyn Azure oraz wniosków \\
+F4 & Zebrane pomiary wariantów A i B dla obu grup użytkowników, z opisem warunków & Częściowo: moduł \code{experiments/f4/} (runner i raporty) gotowy, właściwe pomiary p50/p95 jeszcze do wykonania (PR 92) \\
+F5 & Co najmniej dwa scenariusze awarii wykonane, z czasem wykrycia i odzyskania & Do wykonania: scenariusze i procedury są w runbooku (\code{docs/operations/runbook-regions.md}), próby jeszcze nie przeprowadzone \\
+F6 & Raport z rekomendacją: kiedy opłaca się drugi region, jaki koszt i jakie ograniczenia & Do wykonania po pomiarach F4 i próbach F5 \\
 F7 & Centralna obserwowalność oraz bezpieczna inspekcja stanu przez asystentów AI (MCP) & Spełnione: Grafana, VictoriaLogs/Metrics (PR 99), serwer MCP z narzędziami logów i metryk (PR 96, 97) \\
 \bottomrule
 \end{tabularx}
@@ -653,10 +652,10 @@ oraz raport F6 (prowadzony na bieżąco w \code{docs/dziennik-etapu.md}).
 \midrule
 1 & decyzje & Konto Azure for Students aktywne; maszyny \code{Standard_B2ats_v2} z Ubuntu; konfiguracja domen i tuneli Cloudflare & Zrzut salda studenckiego, specyfikacja maszyn, domeny w Cloudflare \\
 2--4 & F1, F3 & Wdrożenie wieloregionowe EU/US za tunelami Cloudflare; potok budowania wydań GHCR i aktualizacja pull-based (\code{deploy/update.sh}) & Działające dwa regiony, healthchecki, runbook operacyjny (\code{docs/operations/runbook-regions.md}) (PR 91) \\
-5--7 & F2, F4 & Lokalne środowisko wieloregionowe (\code{start-local.ps1}), propozycja Stay/Switch (F2) w UI oraz realizacja eksperymentu obciążeniowego F4 w \code{experiments/f4/} & Pomiary p50/p95 wariantu 1 vs 2 regionów, weryfikacja braku samoczynnego przeskakiwania lobby (PR 92) \\
+5--7 & F2, F4 & Lokalne środowisko wieloregionowe (\code{start-local.ps1}), propozycja Stay/Switch (F2) w UI oraz realizacja eksperymentu obciążeniowego F4 w \code{experiments/f4/} & Runner F4 i opis uruchomienia (pomiary p50/p95 do wykonania); weryfikacja braku samoczynnego przeskakiwania lobby (PR 92) \\
 8 & MCP & Implementacja serwera Model Context Protocol: bezpieczna inspekcja gier i pokoi, dynamiczne regiony RFC 6570 (\code{backend/mcp_server}) & Narzędzia i zasoby MCP przetestowane lokalnie i w CI (PR 96, PR 97) \\
 9 & Obserw. & Centralny stos obserwowalności na maszynie \code{playlink-ops} (VictoriaLogs, VictoriaMetrics, Grafana) oraz narzędzia logów i metryk w MCP & Dashboard \emph{PlayLink regions}, logi z \code{request_id}, narzędzia \code{search_logs} i \code{query_metrics} w MCP (PR 99) \\
-10 & F5, F6 & Próby awarii, podsumowanie kosztów rzeczywistych, raport końcowy i odbiór projektu & Komplet wyników w dzienniku etapu, wnioski architektoniczne i obrona projektu \\
+10 & F5, F6 & Planowane: próby awarii, pomiary F4, podsumowanie kosztów, raport końcowy i odbiór & Do uzupełnienia: wyniki w dzienniku etapu, wnioski i obrona projektu \\
 \bottomrule
 \end{tabularx}
 \end{table}
