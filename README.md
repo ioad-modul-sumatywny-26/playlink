@@ -153,6 +153,39 @@ Add the following entry to your assistant's MCP configuration file (e.g. `claude
 }
 ```
 
+### Connecting to production
+
+The MCP server runs locally and only talks to the public API, so no VM access is needed. Point it at the deployed regions with `PLAYLINK_DOMAIN`; it derives `https://playlink-<region>-api.<domain>` for each region.
+
+1. Install [Git](https://git-scm.com) and [uv](https://docs.astral.sh/uv/getting-started/installation/), then clone the repo and install dependencies:
+   ```bash
+   git clone https://github.com/ioad-modul-sumatywny-26/playlink.git
+   cd playlink/backend && uv sync
+   ```
+2. Add the server to your assistant's MCP config (path to `backend` must be absolute; on Windows double the backslashes):
+   ```json
+   {
+     "mcpServers": {
+       "playlink": {
+         "command": "uv",
+         "args": ["run", "--directory", "/path/to/playlink/backend", "python", "-m", "mcp_server"],
+         "env": {
+           "PLAYLINK_DOMAIN": "<domain>",
+           "PLAYLINK_REGIONS": "eu,us"
+         }
+       }
+     }
+   }
+   ```
+   Claude Code users can run instead:
+   ```bash
+   claude mcp add playlink -e PLAYLINK_DOMAIN=<domain> -e PLAYLINK_REGIONS=eu,us -- uv run --directory /path/to/playlink/backend python -m mcp_server
+   ```
+3. Optional, for `search_logs` and `query_metrics`: add `PLAYLINK_LOGS_URL`, `PLAYLINK_METRICS_URL`, `PLAYLINK_OBS_USER` and `PLAYLINK_OBS_PASSWORD` to `env` (see [logs and metrics](docs/operations/observability.md#ask-the-logs-through-mcp)). The password is the `OBS_PASSWORD` of the deployment; ask the maintainer and never commit it.
+4. Restart the assistant and ask it to run `check_platform_health`. Both regions should report `reachable`.
+
+If no tools show up, check the absolute path in `--directory` and restart the assistant fully. Regions reported as unreachable usually mean the VMs are stopped.
+
 ## Project Organization
 
 - `backend/` — FastAPI service, SQLModel schemas, Alembic migrations, authentication, rooms logic, and `mcp_server`.

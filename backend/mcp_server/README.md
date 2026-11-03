@@ -59,13 +59,19 @@ Regiony i adresy API sa wykrywane dynamicznie w nastepujacej kolejnosci:
       "command": "uv",
       "args": [
         "run",
-        "--project",
+        "--directory",
         "C:\\x\\y\\z\\playlink\\backend",
         "python",
         "-m",
         "mcp_server"
-      ]
+      ],
+      "env": {
+        "PLAYLINK_DOMAIN": "<domena>",
+        "PLAYLINK_REGIONS": "eu,us"
+      }
     }
   }
 }
 ```
+
+`env` wskazuje wdrozone regiony (produkcja); bez niego serwer laczy sie z `localhost`. Pelna instrukcja podlaczenia do produkcji: sekcja "Connecting to production" w glownym `README.md`.
