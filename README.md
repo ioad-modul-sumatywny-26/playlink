@@ -110,44 +110,79 @@ For running each service outside Docker, see [`backend/README.md`](backend/READM
 
 ## Model Context Protocol (MCP)
 
-PlayLink includes an MCP server (`backend/mcp_server`) that allows AI assistants (Claude Desktop, Cursor, Antigravity, Claude Code) to safely inspect platform status, retro games, active LFG lobbies, and regional health in read-only mode.
+PlayLink includes an MCP server (`backend/mcp_server`) that allows AI assistants (Claude Desktop, Claude Code, Cursor, Antigravity) to safely inspect platform status, retro games, active LFG lobbies, and regional health in read-only mode.
 
-The MCP server always runs on your own machine and only talks to a PlayLink API over HTTP. What differs is where that API runs:
+The MCP server always runs on your own machine (Windows, macOS or Linux) and only talks to a PlayLink API over HTTP. What differs is where that API runs:
 
-| Case | API | Needs |
+| Case | API | You need |
 | --- | --- | --- |
-| [Local](#case-1-playlink-running-locally) | `localhost:8000` (EU), `localhost:8001` (US) from `deploy/deploy.sh` | Docker, nothing else |
+| [Local](#case-1-playlink-running-locally) | `localhost:8000` (EU) and `localhost:8001` (US) from `deploy/deploy.sh` | Docker |
 | [Remote](#case-2-playlink-running-remotely-production) | Deployed regions, e.g. on Azure | The domain, optionally the logs password |
 
-### Setup (both cases)
+### 1. Install the tools
 
-Install [Git](https://git-scm.com) and [uv](https://docs.astral.sh/uv/getting-started/installation/), then clone the repo and install dependencies:
+You need [Git](https://git-scm.com) and [uv](https://docs.astral.sh/uv/) (Python package manager; it installs the right Python itself).
+
+| | Git | uv |
+| --- | --- | --- |
+| **Windows** (PowerShell) | `winget install Git.Git` | `powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 \| iex"` |
+| **macOS** (Terminal) | `xcode-select --install` or `brew install git` | `curl -LsSf https://astral.sh/uv/install.sh \| sh` or `brew install uv` |
+| **Linux** (shell) | `sudo apt install git` (Debian/Ubuntu), `sudo dnf install git` (Fedora) | `curl -LsSf https://astral.sh/uv/install.sh \| sh` |
+
+Open a new terminal afterwards and check `git --version` and `uv --version`.
+
+### 2. Get the code
 
 ```bash
 git clone https://github.com/ioad-modul-sumatywny-26/playlink.git
-cd playlink/backend && uv sync
+cd playlink/backend
+uv sync
+pwd          # Windows PowerShell: (Get-Location).Path
 ```
 
-Add the server to your assistant's MCP configuration file (e.g. `claude_desktop_config.json`, `~/.gemini/config/mcp_config.json`, or `.cursor/mcp.json`). The path to `backend` must be absolute; on Windows double the backslashes. The `env` block is the only part that differs between the two cases.
+Keep the printed path: it is the absolute path to `backend` used below. Typical values:
+
+| OS | Example |
+| --- | --- |
+| Windows | `C:/Users/you/playlink/backend` (forward slashes work in JSON; with backslashes double them: `C:\Users\you\...`) |
+| macOS | `/Users/you/playlink/backend` |
+| Linux | `/home/you/playlink/backend` |
+
+### 3. Add the server to your assistant
+
+Pick your assistant. The JSON entries are the same on every system; only the file location and the path to `backend` differ. The `env` block is what changes between the two cases below.
+
+| Assistant | Where to add it |
+| --- | --- |
+| **Claude Code** | One command (see the cases below), same on all systems |
+| **Claude Desktop** | Settings → Developer → Edit Config. Windows: `%APPDATA%\Claude\claude_desktop_config.json`; macOS: `~/Library/Application Support/Claude/claude_desktop_config.json`. No official Linux app: use Claude Code or Cursor |
+| **Cursor** | Settings → MCP, or `~/.cursor/mcp.json` (Windows: `%USERPROFILE%\.cursor\mcp.json`) |
+| **Antigravity / Gemini** | `~/.gemini/config/mcp_config.json` |
+
+Restart Claude Desktop and Cursor fully after saving. If the app cannot find `uv` (common for macOS/Linux desktop apps, which do not read your shell profile), put the absolute path in `"command"`: `which uv` (macOS/Linux) or `where uv` (Windows), e.g. `/Users/you/.local/bin/uv`.
 
 ### Case 1: PlayLink running locally
 
-Start the regions (`deploy/deploy.sh eu`, optionally `deploy/deploy.sh us`), then use the entry without any `env`. Without configuration the server uses `http://localhost:8000` (EU) and `http://localhost:8001` (US):
+Start the regions first (`deploy/deploy.sh eu`, optionally `deploy/deploy.sh us`). Without any configuration the server uses `http://localhost:8000` (EU) and `http://localhost:8001` (US), so the entry needs no `env`:
 
 ```json
 {
   "mcpServers": {
     "playlink": {
       "command": "uv",
-      "args": ["run", "--directory", "C:\path\to\playlink\backend", "python", "-m", "mcp_server"]
+      "args": ["run", "--directory", "/path/to/playlink/backend", "python", "-m", "mcp_server"]
     }
   }
 }
 ```
 
-Claude Code: `claude mcp add playlink -- uv run --directory /path/to/playlink/backend python -m mcp_server`
+Claude Code:
 
-To try the tools without an assistant, use the inspector from the repository root:
+```bash
+claude mcp add playlink -- uv run --directory /path/to/playlink/backend python -m mcp_server
+```
+
+To try the tools without an assistant, run the inspector from the repository root (Windows: PowerShell, same commands):
 
 ```bash
 npx @modelcontextprotocol/inspector uv run --directory backend python -m mcp_server
@@ -158,14 +193,14 @@ The log and metrics tools (`search_logs`, `query_metrics`) work locally only if 
 
 ### Case 2: PlayLink running remotely (production)
 
-No VM access is needed. Point the server at the deployed regions with `PLAYLINK_DOMAIN`; it derives `https://playlink-<region>-api.<domain>` for each region listed in `PLAYLINK_REGIONS`:
+No access to the servers is needed. Point the MCP server at the deployed regions with `PLAYLINK_DOMAIN`; it derives `https://playlink-<region>-api.<domain>` for every region in `PLAYLINK_REGIONS`:
 
 ```json
 {
   "mcpServers": {
     "playlink": {
       "command": "uv",
-      "args": ["run", "--directory", "C:\path\to\playlink\backend", "python", "-m", "mcp_server"],
+      "args": ["run", "--directory", "/path/to/playlink/backend", "python", "-m", "mcp_server"],
       "env": {
         "PLAYLINK_DOMAIN": "<domain>",
         "PLAYLINK_REGIONS": "eu,us"
@@ -175,9 +210,13 @@ No VM access is needed. Point the server at the deployed regions with `PLAYLINK_
 }
 ```
 
-Claude Code: `claude mcp add playlink -e PLAYLINK_DOMAIN=<domain> -e PLAYLINK_REGIONS=eu,us -- uv run --directory /path/to/playlink/backend python -m mcp_server`
+Claude Code (Windows PowerShell, macOS and Linux alike):
 
-For `search_logs` and `query_metrics` add these to `env` (see [logs and metrics](docs/operations/observability.md#ask-the-logs-through-mcp)). The password is the `OBS_PASSWORD` of the deployment; ask the maintainer and never commit it:
+```bash
+claude mcp add playlink -e PLAYLINK_DOMAIN=<domain> -e PLAYLINK_REGIONS=eu,us -- uv run --directory /path/to/playlink/backend python -m mcp_server
+```
+
+For `search_logs` and `query_metrics` add the following to `env` (see [logs and metrics](docs/operations/observability.md#ask-the-logs-through-mcp)); with Claude Code add one more `-e NAME=value` per variable. The password is the `OBS_PASSWORD` of the deployment: ask the maintainer and never commit it.
 
 ```json
 "PLAYLINK_LOGS_URL": "https://playlink-logs.<domain>",
@@ -188,11 +227,14 @@ For `search_logs` and `query_metrics` add these to `env` (see [logs and metrics]
 
 ### Checking the connection
 
-Restart the assistant fully and ask it to run `check_platform_health`. Every configured region should report `reachable`.
+Restart the assistant and ask it to run `check_platform_health`. Every configured region should report `reachable`.
 
-- No tools show up: check the absolute path in `--directory`.
-- Local, regions unreachable: the containers are not running (`docker compose ls`).
-- Remote, regions unreachable: the VMs are probably stopped, or `PLAYLINK_DOMAIN` is wrong.
+| Symptom | Likely cause |
+| --- | --- |
+| No PlayLink tools in the assistant | Wrong absolute path in `--directory`, `uv` not found (use its full path), or the app was not restarted fully |
+| Local: regions unreachable | Containers not running (`docker compose ls`) |
+| Remote: regions unreachable | The VMs are stopped, or `PLAYLINK_DOMAIN` is wrong |
+| `search_logs` says "not configured" | The four `PLAYLINK_*` log variables are missing from `env` |
 
 ## Project Organization
 
