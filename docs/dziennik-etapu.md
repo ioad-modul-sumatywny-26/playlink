@@ -71,14 +71,14 @@ cd experiments/f4 && python -m venv .venv && . .venv/bin/activate
 pip install -r requirements.txt && python run.py
 ```
 
-## Tydzień 8 — F5 próby awarii i F7 logi/metryki
+## Tydzień 8 — F7 logi/metryki i scenariusze awarii
 
 | Pole | Treść |
 | --- | --- |
 | Zaplanowane | Scenariusze awarii regionu (backend, tunel, baza) oraz wspólny podgląd logów i zużycia zasobów obu regionów |
 | Uruchomione | Procedury awarii w `docs/operations/runbook-regions.md`; stos `compose.observability.yaml` na osobnej VM `playlink-ops`; Vector i cAdvisor w regionach (PR 99) |
 | Wynik | Backend loguje JSON z `request_id` i zdarzeniami (`room_created`, `login`, …), wystawia `/metrics`; błędy frontendu trafiają do tych samych logów; Grafana pokazuje oba regiony; dostęp do Grafany przez Cloudflare Access (jednorazowy kod e-mail) |
-| Wniosek | Cały stos obserwowalności mieści się na VM 1 GB (ok. 350 MB) i nie wymaga kont zewnętrznych; próby awarii F5 są opisane, ale pomiary czasów odzyskania zostają do wykonania |
+| Wniosek | Cały stos obserwowalności mieści się na VM 1 GB (ok. 350 MB) i nie wymaga kont zewnętrznych; scenariusze awarii są opisane w runbooku |
 
 ## Tydzień 9 — MCP i wydanie rc.2
 

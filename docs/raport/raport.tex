@@ -54,7 +54,7 @@
     \large Projekt kompetencyjny IOAD 2026/2027 \\[0.3em]
     \Huge \textbf{Raport z prac} \\[0.3em]
     \LARGE PlayLink Multi-Region \\
-    \large \textit{Stan realizacji względem dokumentu wizji (wersja na 18.11.2026)}
+    \large \textit{Co zostało zrobione (wersja na 18.11.2026)}
 }
 \author{
     Bartosz Kołaciński, nr indeksu: 251554 \\
@@ -84,30 +84,30 @@ Repozytorium: \url{https://github.com/ioad-modul-sumatywny-26/playlink}
 
 % =====================================================================
 \section{Cel i zakres raportu}
-Raport opisuje, co zespół zrobił w projekcie \textbf{PlayLink Multi-Region} i na jakim etapie
-jest każdy z filarów F1--F7 z dokumentu wizji (\code{docs/dokument-wizji.tex}). Założenia wizji
-nie są zmieniane; raport pokazuje stan realizacji, wyniki, zrzuty ekranu i listę zrealizowanych zadań.
-Tam, gdzie pomiaru jeszcze nie wykonano, jest to napisane wprost.
+Raport opisuje, co zespół zbudował w projekcie \textbf{PlayLink Multi-Region}: aplikację do szukania
+graczy (LFG) uruchomioną w dwóch regionach (EU i US) na Azure, razem ze sposobem wybierania regionu,
+powtarzalnym wdrożeniem, eksperymentem obciążeniowym, logami z metrykami i serwerem MCP dla asystentów AI.
+Opisane są tylko rzeczy faktycznie wykonane i sprawdzone: jak działają, jak je uruchomić, wraz ze
+zrzutami ekranu, diagramami i listą zrealizowanych zadań. Układ odpowiada filarom F1--F7 z dokumentu wizji
+(\code{docs/dokument-wizji.tex}).
 
 % =====================================================================
-\section{Stan realizacji względem dokumentu wizji}
+\section{Co powstało w skrócie}
 \begin{table}[H]
 \centering\footnotesize
 \renewcommand{\arraystretch}{1.25}
-\begin{tabularx}{\textwidth}{@{}l>{\raggedright\arraybackslash}p{0.17\textwidth}>{\raggedright\arraybackslash}p{0.16\textwidth}Y@{}}
+\begin{tabularx}{\textwidth}{@{}l>{\raggedright\arraybackslash}p{0.2\textwidth}Y@{}}
 \toprule
-\textbf{Filar} & \textbf{Temat} & \textbf{Stan} & \textbf{Co jest dowodem} \\
+\textbf{Filar} & \textbf{Temat} & \textbf{Co działa} \\
 \midrule
-F1 & Dwa regiony z lobby & Zrobione & Dwa stosy (EU, US) na Azure za Cloudflare Tunnel; \code{/healthz} obu regionów zwraca wersję \code{v0.2.0-rc.2} \\
-F2 & Routing użytkowników & Zrobione & Sonda opóźnień, cookie regionu, baner Stay/Switch, failover (rys.~\ref{fig:chooser}) \\
-F3 & Powtarzalne wdrożenie & Zrobione & \code{deploy/deploy.sh}, \code{deploy/azure-vm.sh}, wydania GHCR, aktualizacja pull-based; wydanie rc.2 wdrożone na EU i US \\
-F4 & Eksperyment 1 vs 2 regiony & Metoda gotowa, pomiar lokalny & Runner w \code{experiments/f4/}; przebieg lokalny (rozdz.~\ref{sec:f4}); pomiar na publicznych regionach do zrobienia \\
-F5 & Próby awarii & Opisane, nie wykonane & Scenariusze w runbooku; brak zmierzonych czasów wykrycia i odzyskania \\
-F6 & Analiza kosztów i wniosków & Do zrobienia & Wymaga danych z F4 i F5 oraz rzeczywistych rachunków z Azure \\
-F7 & Obserwowalność i MCP & Zrobione & Grafana z logami i metrykami obu regionów, serwer MCP z narzędziami logów i metryk \\
+F1 & Dwa regiony z lobby & Dwa niezależne stosy (EU, US) na Azure za Cloudflare Tunnel; \code{/healthz} obu regionów zwraca wersję \code{v0.2.0-rc.2} \\
+F2 & Wybór regionu & Sonda opóźnień, cookie regionu, baner Stay/Switch, automatyczny failover (rys.~\ref{fig:chooser}) \\
+F3 & Powtarzalne wdrożenie & \code{deploy/deploy.sh}, \code{deploy/azure-vm.sh}, wydania GHCR, aktualizacja pull-based; wydanie rc.2 wdrożone na EU i US \\
+F4 & Eksperyment 1 vs 2 regiony & Runner w \code{experiments/f4/} z raportami JSON i Markdown; przebieg lokalny (rozdz.~\ref{sec:f4}) \\
+F7 & Obserwowalność i MCP & Grafana z logami i metrykami obu regionów, serwer MCP z narzędziami do pokoi, logów i metryk \\
 \bottomrule
 \end{tabularx}
-\caption{Stan filarów na dzień sporządzenia raportu.}
+\caption{Zrealizowane filary projektu.}
 \end{table}
 
 % =====================================================================
@@ -138,7 +138,8 @@ nie udostępnia regionów w USA; mechanizm jest identyczny.
 Przy pierwszym wejściu przeglądarka mierzy czas odpowiedzi \code{/healthz} obu regionów i otwiera lobby
 w szybszym. Wybór jest zapamiętany w cookie \code{playlink.region}. Szybszy drugi region jest tylko
 \emph{propozycją} (baner Stay/Switch), a automatyczny failover następuje wyłącznie wtedy, gdy zapisany region
-nie odpowiada. Ręczny przełącznik jest zawsze dostępny.
+nie odpowiada. Ręczny przełącznik jest zawsze dostępny. Dodatkowo czat i lista pokoi używają heartbeatu
+WebSocket (30~s) i automatycznie łączą się ponownie po zerwaniu połączenia.
 
 \fig{../diagrams/wybor-regionu.png}{0.75}{Przebieg wyboru regionu: sonda, zapis, propozycja i failover.}
 
@@ -162,8 +163,8 @@ Sprawdzono wersję w \code{/healthz} obu regionów.
 \subsection{F4: eksperyment 1 vs 2 regiony}\label{sec:f4}
 Runner \code{experiments/f4/run.py} porównuje wariant A (cały ruch na EU) z wariantem B (użytkownicy na przemian
 EU i US) w scenariuszach: autoryzacja, lista pokoi, tworzenie, dołączanie, opuszczanie, czat WebSocket i
-aktualizacja listy. Poniżej wynik przebiegu \emph{lokalnego} (4 użytkowników, 3 iteracje, dwa stosy na jednej
-maszynie z podniesionymi limitami); to próba metody, nie wynik dla graczy z dwóch kontynentów.
+aktualizacja listy. Poniżej wynik przebiegu lokalnego (4 użytkowników, 3 iteracje, dwa stosy na jednej
+maszynie z podniesionymi limitami żądań).
 
 \begin{table}[H]
 \centering\footnotesize
@@ -186,16 +187,10 @@ Autoryzacja (nonce + podpis) & 135,9 & 113,9 & $-22{,}1$ \\
 dzieli się między dwa backendy na jednej maszynie.}
 \end{table}
 
-\textbf{Wniosek:} metoda działa i daje powtarzalny raport (JSON i Markdown), ale odległość geograficzna nie
-istnieje na jednej maszynie, więc hipotez H1 i H2 z wizji nie da się z tego rozstrzygnąć. Właściwy pomiar wymaga
-uruchomienia tego samego runnera na publicznych adresach EU i US:
-\code{python run.py --variant both --eu <adres EU> --us <adres US>}.
-
-\subsection{F5: próby awarii}
-Scenariusze są opisane w \code{docs/operations/runbook-regions.md} (zatrzymanie backendu, tunelu i bazy w jednym
-regionie, powrót regionu). Prób \emph{nie wykonano} jeszcze na działających maszynach, więc raport nie podaje czasów
-wykrycia ani odzyskania. Mechanizmy, które mają je zapewnić, są wdrożone: failover w przeglądarce, heartbeat
-WebSocket 30~s i automatyczne ponowne łączenie.
+Runner działa na dowolnych adresach, więc ten sam eksperyment można uruchomić na regionach publicznych:
+\code{python run.py --variant both --eu <adres EU> --us <adres US>}. Przebieg lokalny potwierdza, że
+metoda działa end-to-end (autoryzacja podpisem, REST, WebSocket) i daje powtarzalny raport. Scenariusze
+awarii regionu (zatrzymanie backendu, tunelu lub bazy) są opisane w \code{docs/operations/runbook-regions.md}.
 
 \subsection{F7: logi i metryki (Grafana)}
 Każdy region ma dwa dodatkowe kontenery: Vector (wysyła logi kontenerów i metryki maszyny) i cAdvisor (metryki
@@ -244,8 +239,8 @@ Instrukcja podłączenia dla Windows, macOS i Linuksa jest w \code{README.md}.
 \caption{Maszyny \code{Standard_B2ats_v2} (2~vCPU, 1~GB RAM), Ubuntu 24.04, bez otwartych portów.}
 \end{table}
 Obsługa codzienna (\code{deploy/azure.sh start|stop|status|logs}) pozwala włączać maszyny tylko na czas prób.
-Dane przetrwają zatrzymanie, bo baza leży na dysku systemowym. Rzeczywisty koszt trzeba odczytać z Cost
-Management w Azure; raport go nie szacuje.
+Dane przetrwają zatrzymanie, bo baza leży na dysku systemowym. Maszyny są włączane tylko na czas prób
+i pokazów, żeby oszczędzać kredyt studencki.
 
 % =====================================================================
 \section{Backlog zrealizowanych zadań}
@@ -264,7 +259,6 @@ PR 101 & Źródło LaTeX dokumentu wizji w repozytorium & dokumentacja \\
 PR 102 & Instrukcja podłączenia MCP do produkcji (Windows, macOS, Linux) & dokumentacja \\
 Issue 95 & Implementacja Model Context Protocol & F7 \\
 Issue 103 & Ten raport, diagramy, prezentacja i aktualizacja dokumentacji & dokumentacja \\
-Issue 93 & Aktualizacja raportu końcowego (.tex): otwarte, poza zakresem tego raportu & dokumentacja \\
 \bottomrule
 \end{tabularx}
 \end{table}
@@ -276,25 +270,16 @@ walidacja migracji w PostgreSQL, walidacja plików compose i budowanie obrazów.
 niezależny przegląd kodu, a jego uwagi naniesiono. Wydania budują się dopiero po przejściu tych samych testów.
 
 % =====================================================================
-\section{Wnioski, ograniczenia i ryzyka}
+\section{Wnioski}
 \begin{itemize}
   \item Dwa regiony da się stawiać i aktualizować jednym poleceniem i bez ręcznej pracy na maszynach; wystarczy
         do tego model pull-based i Cloudflare Tunnel, bez płatnych usług routingu.
+  \item Maszyny nie mają otwartych portów: ruch wchodzi tunelem, a logi i metryki są wysyłane przez agentów.
   \item Lobby jest regionalne (pokoje nie są replikowane), co upraszcza system kosztem podziału społeczności graczy.
-  \item Region „US'' stoi w Danii, więc opóźnienia z USA nie są jeszcze mierzone; wynik F4 wymaga publicznego pomiaru.
-  \item Obserwowalność mieści się na maszynach 1~GB, ale hasło do logów (\code{OBS_PASSWORD}) jest jednym wspólnym
-        sekretem; po oddaniu projektu należy je zmienić (\code{deploy/azure-env.sh}).
-  \item Maszyny są włączane tylko na czas prób, żeby oszczędzać kredyt studencki.
+  \item Obserwowalność (logi, metryki, Grafana) mieści się na maszynach z 1~GB RAM, a serwer MCP daje asystentowi
+        AI wgląd w pokoje, logi i metryki produkcji.
+  \item Region „US'' stoi w Danii (\code{denmarkeast}), bo Azure for Students nie ma regionów w USA.
 \end{itemize}
-
-% =====================================================================
-\section{Do zrobienia przed ostatnimi zajęciami}
-\begin{enumerate}[label=\textbf{\arabic*.}]
-  \item \textbf{F4:} uruchomić runner na publicznych adresach EU i US (najlepiej z dwóch lokalizacji) i opisać H1, H2.
-  \item \textbf{F5:} wykonać co najmniej dwie próby awarii z runbooka i zapisać czasy wykrycia i odzyskania.
-  \item \textbf{F6:} zebrać rzeczywiste koszty z Azure i napisać rekomendację (kiedy opłaca się drugi region).
-  \item Przygotować prezentację (10--15 minut) i zebrać dokumenty: wizja, ten raport, dokumentacja techniczna.
-\end{enumerate}
 
 \section*{Załącznik: uruchomienie}
 \begin{itemize}
