@@ -1,0 +1,60 @@
+@startuml mcp
+skinparam backgroundColor #FFFFFF
+skinparam shadowing false
+skinparam defaultFontName Arial
+skinparam ArrowColor #5c4a1e
+skinparam component {
+  BackgroundColor #f5ecd6
+  BorderColor #8a6d3b
+}
+skinparam database {
+  BackgroundColor #e8dcc0
+  BorderColor #8a6d3b
+}
+skinparam node {
+  BackgroundColor #faf6ec
+  BorderColor #8a6d3b
+}
+skinparam cloud {
+  BackgroundColor #eef3fa
+  BorderColor #4a6fa5
+}
+skinparam sequence {
+  ParticipantBackgroundColor #f5ecd6
+  ParticipantBorderColor #8a6d3b
+  LifeLineBorderColor #8a6d3b
+}
+skinparam note {
+  BackgroundColor #fffbe6
+  BorderColor #8a6d3b
+}
+!pragma layout smetana
+left to right direction
+title Serwer MCP: lokalnie lub na produkcji (tylko odczyt)
+
+component "Asystent AI\n(Claude, Cursor)" as ai
+node "Komputer użytkownika" as pc {
+  component "Serwer MCP\nbackend/mcp_server (stdio)" as mcp
+}
+
+cloud "Lokalnie: Docker" as local {
+  component "API EU :8000" as l_eu
+  component "API US :8001" as l_us
+}
+cloud "Produkcja: Azure + Cloudflare" as prod {
+  component "playlink-eu-api.<domena>" as p_eu
+  component "playlink-us-api.<domena>" as p_us
+  component "playlink-logs / -metrics\n(hasło OBS)" as p_obs
+}
+
+ai --> mcp : narzędzia i zasoby
+mcp --> l_eu : bez konfiguracji
+mcp --> l_us
+mcp --> p_eu : PLAYLINK_DOMAIN\nPLAYLINK_REGIONS
+mcp --> p_us
+mcp --> p_obs : PLAYLINK_LOGS_URL\nPLAYLINK_METRICS_URL
+note bottom of mcp
+list_games, list_rooms, get_room_details,
+check_platform_health, search_logs, query_metrics
+end note
+@enduml

@@ -1,0 +1,69 @@
+@startuml obserwowalnosc
+skinparam backgroundColor #FFFFFF
+skinparam shadowing false
+skinparam defaultFontName Arial
+skinparam ArrowColor #5c4a1e
+skinparam component {
+  BackgroundColor #f5ecd6
+  BorderColor #8a6d3b
+}
+skinparam database {
+  BackgroundColor #e8dcc0
+  BorderColor #8a6d3b
+}
+skinparam node {
+  BackgroundColor #faf6ec
+  BorderColor #8a6d3b
+}
+skinparam cloud {
+  BackgroundColor #eef3fa
+  BorderColor #4a6fa5
+}
+skinparam sequence {
+  ParticipantBackgroundColor #f5ecd6
+  ParticipantBorderColor #8a6d3b
+  LifeLineBorderColor #8a6d3b
+}
+skinparam note {
+  BackgroundColor #fffbe6
+  BorderColor #8a6d3b
+}
+!pragma layout smetana
+left to right direction
+title F7: logi i metryki (Vector, cAdvisor, Victoria*, Grafana)
+
+node "Region EU / US" as region {
+  component "frontend\n(POST /api/client-errors:\nbłędy serwera i przeglądarki)" as fe
+  component "backend\nlogi JSON + request_id\n/metrics" as be
+  component "db" as db
+  component "cAdvisor\nmetryki kontenerów" as cadv
+  component "Vector\n(bufor dyskowy 256 MB)" as vec
+}
+
+cloud "Cloudflare Tunnel + Access" as cf
+
+node "VM playlink-ops" as ops {
+  component "VictoriaLogs\n(LogsQL)" as vl
+  component "VictoriaMetrics\n(PromQL)" as vm
+  component "Grafana\ndashboard PlayLink regions" as gf
+}
+
+actor "Zespół" as team
+component "Serwer MCP (lokalnie)\nsearch_logs, query_metrics" as mcp
+component "Asystent AI" as ai
+
+be --> vec : stdout (docker logs)
+fe --> vec : stdout
+db --> vec : stdout
+be --> vec : scrape /metrics
+cadv --> vec
+vec --> cf : HTTPS + basic auth
+cf --> vl
+cf --> vm
+vl --> gf
+vm --> gf
+team --> cf : logowanie jednorazowym\nkodem e-mail (Access)
+cf --> gf
+ai --> mcp
+mcp --> cf : HTTPS + basic auth
+@enduml
