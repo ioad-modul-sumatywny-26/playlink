@@ -1,0 +1,88 @@
+@startuml architektura-regionow
+skinparam backgroundColor #FFFFFF
+skinparam shadowing false
+skinparam defaultFontName Arial
+skinparam ArrowColor #5c4a1e
+skinparam component {
+  BackgroundColor #f5ecd6
+  BorderColor #8a6d3b
+}
+skinparam database {
+  BackgroundColor #e8dcc0
+  BorderColor #8a6d3b
+}
+skinparam node {
+  BackgroundColor #faf6ec
+  BorderColor #8a6d3b
+}
+skinparam cloud {
+  BackgroundColor #eef3fa
+  BorderColor #4a6fa5
+}
+skinparam sequence {
+  ParticipantBackgroundColor #f5ecd6
+  ParticipantBorderColor #8a6d3b
+  LifeLineBorderColor #8a6d3b
+}
+skinparam note {
+  BackgroundColor #fffbe6
+  BorderColor #8a6d3b
+}
+!pragma layout smetana
+left to right direction
+title Architektura dwuregionowa PlayLink (Azure + Cloudflare)
+
+actor "Gracz" as user
+component "Przeglądarka\n(sonda opóźnień, cookie regionu)" as browser
+
+cloud "Cloudflare" as cf {
+  component "DNS + TLS + DDoS\n(plan darmowy)" as edge
+  component "Tunel playlink-eu" as t_eu
+  component "Tunel playlink-us" as t_us
+  component "Tunel playlink-ops" as t_ops
+}
+
+node "VM playlink-eu\n(Azure, polandcentral)" as eu {
+  component "cloudflared" as cfd_eu
+  component "frontend\nSvelteKit" as fe_eu
+  component "backend\nFastAPI" as be_eu
+  database "PostgreSQL" as db_eu
+  component "Vector + cAdvisor" as ag_eu
+}
+
+node "VM playlink-us\n(Azure, denmarkeast)" as us {
+  component "cloudflared" as cfd_us
+  component "frontend\nSvelteKit" as fe_us
+  component "backend\nFastAPI" as be_us
+  database "PostgreSQL" as db_us
+  component "Vector + cAdvisor" as ag_us
+}
+
+node "VM playlink-ops\n(Azure, polandcentral)" as ops {
+  component "cloudflared" as cfd_ops
+  component "VictoriaLogs" as vl
+  component "VictoriaMetrics" as vm
+  component "Grafana" as gf
+}
+
+user --> browser
+browser --> edge : HTTPS / WSS
+edge --> t_eu
+edge --> t_us
+t_eu --> cfd_eu
+t_us --> cfd_us
+cfd_eu --> fe_eu
+cfd_eu --> be_eu
+cfd_us --> fe_us
+cfd_us --> be_us
+fe_eu --> be_eu
+be_eu --> db_eu
+fe_us --> be_us
+be_us --> db_us
+ag_eu ..> t_ops : logi + metryki\n(HTTPS, hasło)
+ag_us ..> t_ops
+t_ops --> cfd_ops
+cfd_ops --> vl
+cfd_ops --> vm
+cfd_ops --> gf
+@enduml

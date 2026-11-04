@@ -1,0 +1,64 @@
+@startuml wybor-regionu
+skinparam backgroundColor #FFFFFF
+skinparam shadowing false
+skinparam defaultFontName Arial
+skinparam ArrowColor #5c4a1e
+skinparam component {
+  BackgroundColor #f5ecd6
+  BorderColor #8a6d3b
+}
+skinparam database {
+  BackgroundColor #e8dcc0
+  BorderColor #8a6d3b
+}
+skinparam node {
+  BackgroundColor #faf6ec
+  BorderColor #8a6d3b
+}
+skinparam cloud {
+  BackgroundColor #eef3fa
+  BorderColor #4a6fa5
+}
+skinparam sequence {
+  ParticipantBackgroundColor #f5ecd6
+  ParticipantBorderColor #8a6d3b
+  LifeLineBorderColor #8a6d3b
+}
+skinparam note {
+  BackgroundColor #fffbe6
+  BorderColor #8a6d3b
+}
+title F2: wybór regionu (sonda, Stay/Switch, failover)
+actor "Gracz" as u
+participant "Przeglądarka" as b
+participant "playlink.<domena>\n(EU, chooser)" as ch
+participant "API EU" as eu
+participant "API US" as us
+
+u -> b : otwiera adres główny
+b -> ch : GET /
+ch --> b : strona + skrypt sondy
+alt brak zapisanego regionu
+  par
+    b -> eu : GET /healthz (czas)
+  else
+    b -> us : GET /healthz (czas)
+  end
+  b -> b : wybiera szybszy żywy region,\nzapisuje cookie playlink.region
+  b -> u : otwiera lobby w tym regionie
+else zapisany region żyje
+  b -> b : zostaje w zapisanym regionie
+  par
+    b -> eu : sonda w tle
+  else
+    b -> us : sonda w tle
+  end
+  opt drugi region szybszy
+    b -> u : baner Stay / Switch\n(bez automatycznego przeskoku)
+  end
+else zapisany region nie odpowiada
+  b -> us : failover na żywy region
+  b -> u : lobby w drugim regionie
+end
+note over u, b : Ręczny przełącznik regionu w nagłówku\nzmienia adresy API i WS i wczytuje listę pokoi z nowego regionu.\nSesja i klucz są per origin: drugi region = drugi podpis tym samym kluczem.
+@enduml

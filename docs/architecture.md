@@ -1,8 +1,8 @@
 # Architecture Overview
 
-Playlink is a full-stack **LFG (Looking-For-Group)** web application for organizing short-lived multiplayer game sessions ("rooms") for niche, retro, and less popular titles. It pairs a single-module **FastAPI** backend with a **SvelteKit** Backend-for-Frontend (BFF) and a **PostgreSQL** database, orchestrated with Docker Compose. It runs as two independent regional stacks (EU and US) behind Cloudflare Tunnel. Identity is **non-custodial**: every user is a BIP39 mnemonic whose derived key proves ownership via an ECDSA (EIP-191) signature challenge.
+Playlink is a full-stack **LFG (Looking-For-Group)** web application for organizing short-lived multiplayer game sessions ("rooms") for niche, retro, and less popular titles. It pairs a modular **FastAPI** backend with a **SvelteKit** Backend-for-Frontend (BFF) and a **PostgreSQL** database, orchestrated with Docker Compose. It runs as two independent regional stacks (EU and US) behind Cloudflare Tunnel. Identity is **non-custodial**: every user is a BIP39 mnemonic whose derived key proves ownership via an ECDSA (EIP-191) signature challenge.
 
-> **Source:** `backend/main.py`, `backend/models.py`, `frontend/src/`, `compose.yaml`, `backend/docs/auth-flow.md`
+> **Source:** `backend/main.py`, `backend/routers/`, `backend/models.py`, `frontend/src/`, `compose.yaml`, `backend/docs/auth-flow.md`
 
 ## System Topology
 
@@ -27,25 +27,39 @@ The browser talks to the backend **directly** for most reads and for both WebSoc
 | ---------------- | -------------------------------------------- | ------------ |
 | Frontend         | SvelteKit 2 / Svelte 5 (runes), TypeScript   | Bun          |
 | Signing          | ethers + viem (BIP39 + EIP-191)              | —            |
-| Backend          | FastAPI (single module `main.py`), Python 3.14+ | uv        |
+| Backend          | FastAPI (`main.py` + `routers/`, `ws/`, `services.py`), Python 3.14+ | uv |
 | ORM              | SQLModel (SQLAlchemy + Pydantic)             | —            |
 | Database         | PostgreSQL 18 (prod) / SQLite in-memory (tests) | Docker    |
 | Migrations       | Alembic                                      | uv           |
 | Realtime         | FastAPI WebSockets                           | —            |
 | Auth             | BIP39 identity + ECDSA (eth_account), JWT HS256 | —         |
 | Rate limiting    | slowapi (REST) + per-address sliding window (chat WS) | —    |
-| Orchestration    | Docker Compose (db, backend, frontend, cloudflared) per region | Docker |
+| Orchestration    | Docker Compose (db, backend, frontend, cloudflared, Vector, cAdvisor) per region | Docker |
+| Observability    | Vector, cAdvisor, VictoriaLogs, VictoriaMetrics, Grafana | Docker |
+| Assistant access | MCP server (read-only, stdio) | uv |
 
 ### Multi-region topology
 
 Each region has its own VM, database, backend, frontend, and Cloudflare Tunnel connector, started as the compose project `playlink-eu` or `playlink-us` by `deploy/deploy.sh`. Hostnames are derived from `PLAYLINK_DOMAIN` and stay one level below the domain: the entry host (`playlink.<domain>`) renders the region chooser, while `playlink-eu.<domain>` / `playlink-us.<domain>` render the application and `playlink-<region>-api.<domain>` serve the API. The frontend image is shared. Without a domain both regions run on localhost (EU 3000/8000, US 3001/8001). The chooser probes both `/healthz` endpoints and redirects to the faster live region; the choice is stored in a cookie. Sessions and signing keys are per origin, so switching regions asks for the same 12 words again. See [the multi-region runbook](operations/runbook-regions.md).
+
+![Two-region architecture](diagrams/architektura-regionow.png)
+
+Diagram sources (PlantUML) are in [`diagrams/`](diagrams): region choice ([wybor-regionu](diagrams/wybor-regionu.puml)), pull-based release ([wdrozenie-pull](diagrams/wdrozenie-pull.puml)), logs and metrics ([obserwowalnosc](diagrams/obserwowalnosc.puml)) and the MCP server ([mcp](diagrams/mcp.puml)).
+
+### Observability and MCP
+
+Every region ships container logs (JSON with a request id) and per-container metrics to a central stack on a separate VM (`playlink-ops`); Grafana sits behind Cloudflare Access. A read-only MCP server runs on the user's machine and talks to the public API (and, with the log password, to the log and metrics endpoints), so an AI assistant can answer questions about the live platform. See [logs and metrics](operations/observability.md) and the MCP section of the root `README.md`.
 
 ## Repository Layout
 
 ```
 .
 ├── backend/            FastAPI service
-│   ├── main.py         All REST + WebSocket endpoints, managers, helpers, lifespan
+│   ├── main.py         App assembly, middleware, lifespan
+│   ├── routers/        REST endpoints grouped by area
+│   ├── ws/             WebSocket connection managers
+│   ├── observability.py  JSON logs, request ids, /metrics
+│   ├── mcp_server/     Read-only MCP server for AI assistants
 │   ├── models.py       SQLModel tables (User, Room, RoomMember, Message, RoomEvent, …)
 │   ├── database.py     Engine + session, Docker-aware DATABASE_URL rewrite
 │   ├── usernames.py    Username format + profanity validation
@@ -57,10 +71,12 @@ Each region has its own VM, database, backend, frontend, and Cloudflare Tunnel c
 │       ├── lib/        Client logic: auth, signing, stores, contexts, UI kit
 │       ├── routes/     Pages + server loaders/actions
 │       └── hooks.server.ts  Session-cookie decode hook
-├── compose.yaml        db + backend + frontend + cloudflared (one region)
+├── compose.yaml        db + backend + frontend + cloudflared (+ Vector, cAdvisor) for one region
+├── compose.observability.yaml  VictoriaLogs, VictoriaMetrics, Grafana (ops VM)
 ├── compose.build.yaml  build from the working tree
 ├── compose.ports.yaml  localhost ports (local mode)
-├── deploy/             deploy.sh, update.sh, azure-vm.sh, cloud-init.yaml, config.env
+├── deploy/             deploy.sh, update.sh, azure*.sh, observability.sh, cloud-init.yaml, config.env
+├── experiments/f4/     1 vs 2 region load experiment
 └── docs/               This documentation set
 ```
 

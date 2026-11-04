@@ -1,0 +1,60 @@
+@startuml wdrozenie-pull
+skinparam backgroundColor #FFFFFF
+skinparam shadowing false
+skinparam defaultFontName Arial
+skinparam ArrowColor #5c4a1e
+skinparam component {
+  BackgroundColor #f5ecd6
+  BorderColor #8a6d3b
+}
+skinparam database {
+  BackgroundColor #e8dcc0
+  BorderColor #8a6d3b
+}
+skinparam node {
+  BackgroundColor #faf6ec
+  BorderColor #8a6d3b
+}
+skinparam cloud {
+  BackgroundColor #eef3fa
+  BorderColor #4a6fa5
+}
+skinparam sequence {
+  ParticipantBackgroundColor #f5ecd6
+  ParticipantBorderColor #8a6d3b
+  LifeLineBorderColor #8a6d3b
+}
+skinparam note {
+  BackgroundColor #fffbe6
+  BorderColor #8a6d3b
+}
+title F3: wydanie i wdrożenie pull-based
+actor "Developer" as dev
+participant "GitHub\n(tag vX.Y.Z)" as gh
+participant "GitHub Actions\nrelease.yml" as ci
+participant "GHCR" as ghcr
+participant "VM EU\n(timer 2 min)" as eu
+participant "VM US\n(timer 2 min)" as us
+
+dev -> gh : git push tag
+gh -> ci : uruchamia workflow
+ci -> ci : testy, lint, migracje, build
+ci -> ghcr : push obrazów backend i frontend
+ci -> gh : tworzy GitHub Release
+loop co 2 minuty
+  eu -> gh : jest nowszy release lub PLAYLINK_TAG?
+end
+eu -> ghcr : pull obrazów
+eu -> eu : deploy.sh up --wait
+alt zdrowy (/healthz, /readyz)
+  eu -> eu : zapis .run/eu.tag
+else niezdrowy
+  eu -> eu : rollback do poprzedniego tagu,\ntag w .run/eu.failed
+end
+loop co 2 minuty
+  us -> eu : /healthz => czy EU raportuje nową wersję?
+end
+note right of us : US czeka na EU,\nwięc zły release zatrzymuje się na EU
+us -> ghcr : pull obrazów
+us -> us : deploy.sh up --wait (+ rollback)
+@enduml
