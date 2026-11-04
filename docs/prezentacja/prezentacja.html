@@ -1,0 +1,193 @@
+<!doctype html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<title>PlayLink Multi-Region</title>
+<style>
+@page{size:1920px 1080px;margin:0}
+*{box-sizing:border-box}
+html,body{margin:0;background:#fff}
+body{font-family:Arial,Helvetica,sans-serif;color:#222}
+.slide{width:1920px;height:1080px;position:relative;overflow:hidden;padding:90px 120px 100px;break-after:page;page-break-after:always;background:#fff}
+.slide::after{content:attr(data-n);position:absolute;right:60px;bottom:40px;font-size:22px;color:#999}
+h1{font-size:84px;margin:0;color:#1f3a5f}
+h2{font-size:56px;margin:0 0 40px;color:#1f3a5f;border-bottom:3px solid #1f3a5f;padding-bottom:16px}
+p,li{font-size:32px;line-height:1.45}
+ul{margin:0;padding-left:40px}
+li{margin-bottom:12px}
+code{font-family:Consolas,monospace;font-size:.9em;background:#f1f3f5;padding:2px 6px;border-radius:4px}
+table{border-collapse:collapse;width:100%;font-size:28px}
+th,td{border:1px solid #c8ced6;padding:14px 18px;text-align:left;vertical-align:top}
+th{background:#eef2f7;color:#1f3a5f}
+.img{display:block;max-width:100%;max-height:760px;margin:0 auto;border:1px solid #ddd}
+.row{display:flex;gap:50px;align-items:flex-start}
+.row>*{flex:1}
+.muted{color:#666}
+.title{display:flex;flex-direction:column;justify-content:center;height:100%}
+</style>
+</head>
+<body>
+
+<section class="slide" data-n="1"><div class="title">
+  <p class="muted" style="margin:0 0 20px">Projekt kompetencyjny IOAD 2026/2027</p>
+  <h1>PlayLink Multi-Region</h1>
+  <p style="font-size:40px;margin:20px 0 60px">Lobby dla graczy w dwóch regionach Azure, za tunelem Cloudflare</p>
+  <p>Bartosz Kołaciński, Mateusz Kosowski, Nikodem Nowak, Natan Ręklewski, Jakub Rosiak, Andrzej Krysiak</p>
+  <p class="muted">Opiekun: mgr inż. Bartłomiej Jencz<br>18 listopada 2026</p>
+</div></section>
+
+<section class="slide" data-n="2">
+  <h2>Cel projektu</h2>
+  <p>PlayLink to aplikacja do szukania graczy (LFG) dla starszych i niszowych gier. Celem było uruchomienie jej w dwóch regionach.</p>
+  <ul>
+    <li>F1: dwa niezależne regiony (EU i US), każdy z własną bazą</li>
+    <li>F2: przeglądarka sama wybiera szybszy region</li>
+    <li>F3: wdrożenie jednym poleceniem, aktualizacje pull-based</li>
+    <li>F4: eksperyment: jeden region kontra dwa</li>
+    <li>F7: logi, metryki i serwer MCP</li>
+  </ul>
+</section>
+
+<section class="slide" data-n="3">
+  <h2>Co zostało zrobione</h2>
+  <table>
+    <tr><th style="width:110px">Filar</th><th style="width:420px">Temat</th><th>Stan</th></tr>
+    <tr><td>F1</td><td>Dwa regiony z lobby</td><td>EU i US na Azure za Cloudflare Tunnel, wersja <code>v0.2.0-rc.2</code></td></tr>
+    <tr><td>F2</td><td>Wybór regionu</td><td>Sonda opóźnień, cookie regionu, baner Stay / Switch, failover</td></tr>
+    <tr><td>F3</td><td>Powtarzalne wdrożenie</td><td>Skrypty wdrożenia, wydania w GHCR, aktualizacja pull-based z rollbackiem</td></tr>
+    <tr><td>F4</td><td>Eksperyment 1 vs 2 regiony</td><td>Runner z raportami JSON i Markdown</td></tr>
+    <tr><td>F7</td><td>Obserwowalność i MCP</td><td>Grafana z logami i metrykami, serwer MCP dla asystentów AI</td></tr>
+  </table>
+</section>
+
+<section class="slide" data-n="4">
+  <h2>F1: architektura</h2>
+  <img class="img" src="../diagrams/architektura-regionow.png" alt="Architektura dwuregionowa">
+  <p class="muted" style="text-align:center;font-size:26px">Maszyny nie mają otwartych portów, cały ruch wchodzi tunelem Cloudflare.</p>
+</section>
+
+<section class="slide" data-n="5">
+  <h2>F1: lobby w obu regionach</h2>
+  <div class="row">
+    <div><img class="img" src="../raport/obrazy/02-lobby-eu.png" alt="Lobby EU"><p style="text-align:center">EU (polandcentral)</p></div>
+    <div><img class="img" src="../raport/obrazy/03-lobby-us.png" alt="Lobby US"><p style="text-align:center">US (denmarkeast)</p></div>
+  </div>
+  <p class="muted" style="font-size:26px">Pokoje i czat są regionalne, tożsamość (klucz z frazy BIP39) jest wspólna. Region „US” stoi w Danii, bo Azure for Students nie ma regionów w USA.</p>
+</section>
+
+<section class="slide" data-n="6">
+  <h2>F2: wybór regionu</h2>
+  <div class="row">
+    <img class="img" src="../diagrams/wybor-regionu.png" alt="Wybór regionu" style="max-height:780px;flex:0 0 auto">
+    <ul>
+      <li>Przeglądarka mierzy <code>/healthz</code> obu regionów i otwiera szybszy</li>
+      <li>Wybór zapisany w cookie <code>playlink.region</code></li>
+      <li>Szybszy drugi region to tylko propozycja (baner Stay / Switch)</li>
+      <li>Failover, gdy zapisany region nie odpowiada</li>
+      <li>Heartbeat WebSocket co 30 s i ponowne łączenie</li>
+    </ul>
+  </div>
+</section>
+
+<section class="slide" data-n="7">
+  <h2>F2: ekran wyboru regionu</h2>
+  <img class="img" src="../raport/obrazy/01-chooser.png" alt="Ekran wyboru regionu">
+</section>
+
+<section class="slide" data-n="8">
+  <h2>F3: wydanie i wdrożenie</h2>
+  <div class="row">
+    <img class="img" src="../diagrams/wdrozenie-pull.png" alt="Wdrożenie pull-based" style="max-height:780px;flex:0 0 auto;max-width:1000px">
+    <ul>
+      <li><code>deploy/deploy.sh eu|us [tag]</code> stawia region</li>
+      <li><code>deploy/azure-vm.sh</code> tworzy maszynę bez otwartych portów</li>
+      <li>Tag uruchamia testy i budowanie obrazów (GHCR)</li>
+      <li>Maszyny co 2 minuty pobierają nową wersję; US czeka na EU</li>
+      <li>3.11.2026: <code>v0.2.0-rc.2</code> wdrożone na EU i US</li>
+    </ul>
+  </div>
+</section>
+
+<section class="slide" data-n="9">
+  <h2>F4: eksperyment 1 vs 2 regiony</h2>
+  <table>
+    <tr><th>Scenariusz</th><th>A p95 [ms]</th><th>B p95 [ms]</th></tr>
+    <tr><td>GET /rooms</td><td>24,9</td><td>18,6</td></tr>
+    <tr><td>POST /rooms</td><td>80,6</td><td>58,8</td></tr>
+    <tr><td>POST /rooms/{name}/join</td><td>56,8</td><td>49,9</td></tr>
+    <tr><td>POST /rooms/{name}/leave</td><td>66,0</td><td>49,9</td></tr>
+    <tr><td>Czat WebSocket (round-trip)</td><td>56,3</td><td>24,9</td></tr>
+    <tr><td>Aktualizacja listy (WS)</td><td>28,0</td><td>30,0</td></tr>
+    <tr><td>Autoryzacja (nonce + podpis)</td><td>135,9</td><td>113,9</td></tr>
+  </table>
+  <p class="muted" style="font-size:26px">Przebieg lokalny: 4 użytkowników, 3 iteracje, 0% błędów. A: cały ruch na EU, B: użytkownicy na przemian EU i US.</p>
+</section>
+
+<section class="slide" data-n="10">
+  <h2>F7: logi i metryki</h2>
+  <img class="img" src="../diagrams/obserwowalnosc.png" alt="Logi i metryki">
+  <p class="muted" style="font-size:26px;text-align:center">Vector i cAdvisor w regionach, VictoriaLogs, VictoriaMetrics i Grafana na maszynie ops.</p>
+</section>
+
+<section class="slide" data-n="11">
+  <h2>F7: dashboard Grafana</h2>
+  <div class="row">
+    <img class="img" src="../raport/obrazy/04-grafana.png" alt="Grafana" style="max-height:760px;flex:0 0 auto">
+    <ul>
+      <li>Zasoby maszyn i kontenerów</li>
+      <li>Ruch i opóźnienia obu regionów</li>
+      <li>Logi JSON z <code>request_id</code></li>
+      <li>Dostęp przez Cloudflare Access</li>
+      <li>Ok. 250 MB RAM na region, 350 MB stos centralny</li>
+    </ul>
+  </div>
+</section>
+
+<section class="slide" data-n="12">
+  <h2>F7: serwer MCP</h2>
+  <img class="img" src="../diagrams/mcp.png" alt="Serwer MCP" style="max-height:520px">
+  <ul style="margin-top:30px">
+    <li>Tylko odczyt, działa lokalnie, łączy się z publicznym API</li>
+    <li>Narzędzia: <code>list_games</code>, <code>list_rooms</code>, <code>get_room_details</code>, <code>check_platform_health</code>, <code>search_logs</code>, <code>query_metrics</code></li>
+  </ul>
+</section>
+
+<section class="slide" data-n="13">
+  <h2>Wdrożenie na Azure</h2>
+  <table>
+    <tr><th>Maszyna</th><th>Lokalizacja</th><th>Rola</th></tr>
+    <tr><td><code>playlink-eu</code></td><td><code>polandcentral</code></td><td>Region EU</td></tr>
+    <tr><td><code>playlink-us</code></td><td><code>denmarkeast</code></td><td>Region „US”</td></tr>
+    <tr><td><code>playlink-ops</code></td><td><code>polandcentral</code></td><td>Logi, metryki, Grafana</td></tr>
+  </table>
+  <p>Maszyny <code>Standard_B2ats_v2</code> (2 vCPU, 1 GB RAM), Ubuntu 24.04, bez otwartych portów. Włączane tylko na czas prób i pokazów.</p>
+</section>
+
+<section class="slide" data-n="14">
+  <h2>Jakość i testy</h2>
+  <ul>
+    <li>CI: lint backendu i frontendu, testy, walidacja migracji, budowanie obrazów</li>
+    <li>159 testów backendu i 69 testów frontendu</li>
+    <li>Wydania budują się dopiero po przejściu testów</li>
+    <li>Niezależny przegląd kodu przed scaleniem PR 99</li>
+  </ul>
+</section>
+
+<section class="slide" data-n="15">
+  <h2>Wnioski</h2>
+  <ul>
+    <li>Dwa regiony da się stawiać i aktualizować jednym poleceniem, bez płatnych usług routingu</li>
+    <li>Maszyny nie mają otwartych portów: ruch wchodzi tunelem, logi wysyłają agenty</li>
+    <li>Lobby jest regionalne: prostszy system kosztem podziału społeczności graczy</li>
+    <li>Obserwowalność mieści się na maszynach z 1 GB RAM</li>
+  </ul>
+</section>
+
+<section class="slide" data-n="16"><div class="title">
+  <h1>Dziękujemy</h1>
+  <p style="font-size:40px">Pytania</p>
+  <p class="muted">github.com/ioad-modul-sumatywny-26/playlink</p>
+</div></section>
+
+</body>
+</html>
