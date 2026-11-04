@@ -38,6 +38,9 @@ This is the developer documentation set. Start with the [architecture overview](
 ### Project
 | Document | Contents |
 | -------- | -------- |
+| [Raport z prac](raport/raport.tex) | Report for 18.11: what was built per pillar F1-F7, results, screenshots, backlog (Polish). |
+| [Diagrams](diagrams) | PlantUML sources and PNGs: regions, region choice, release flow, observability, MCP. |
+| [Dziennik etapu](dziennik-etapu.md) | Weekly log: planned / run / result / conclusion. |
 | [Dokument wizji](dokument-wizji.tex) | LaTeX source of the vision document (Polish): goals, scope, requirements, risks, roadmap. |
 
 ## Quick Start

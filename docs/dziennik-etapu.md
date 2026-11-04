@@ -1,4 +1,4 @@
-# Dziennik etapu (tygodnie 1–6)
+# Dziennik etapu (tygodnie 1–9)
 
 Format z dokumentu wizji: zaplanowane / uruchomione / wynik / wniosek.
 
@@ -70,6 +70,24 @@ bash scripts/local-up.sh --both --lab-limits
 cd experiments/f4 && python -m venv .venv && . .venv/bin/activate
 pip install -r requirements.txt && python run.py
 ```
+
+## Tydzień 8 — F5 próby awarii i F7 logi/metryki
+
+| Pole | Treść |
+| --- | --- |
+| Zaplanowane | Scenariusze awarii regionu (backend, tunel, baza) oraz wspólny podgląd logów i zużycia zasobów obu regionów |
+| Uruchomione | Procedury awarii w `docs/operations/runbook-regions.md`; stos `compose.observability.yaml` na osobnej VM `playlink-ops`; Vector i cAdvisor w regionach (PR 99) |
+| Wynik | Backend loguje JSON z `request_id` i zdarzeniami (`room_created`, `login`, …), wystawia `/metrics`; błędy frontendu trafiają do tych samych logów; Grafana pokazuje oba regiony; dostęp do Grafany przez Cloudflare Access (jednorazowy kod e-mail) |
+| Wniosek | Cały stos obserwowalności mieści się na VM 1 GB (ok. 350 MB) i nie wymaga kont zewnętrznych; próby awarii F5 są opisane, ale pomiary czasów odzyskania zostają do wykonania |
+
+## Tydzień 9 — MCP i wydanie rc.2
+
+| Pole | Treść |
+| --- | --- |
+| Zaplanowane | Inspekcja platformy przez asystentów AI oraz wydanie z całym kodem z `main` na oba regiony |
+| Uruchomione | Serwer MCP `backend/mcp_server` (PR 96, 97): gry, pokoje, zdrowie regionów, dynamiczna lista regionów; narzędzia `search_logs` i `query_metrics` (PR 99); tag `v0.2.0-rc.2` wdrożony pull-based na EU, potem US |
+| Wynik | MCP uruchomiony lokalnie łączy się z produkcją na Azure (`PLAYLINK_DOMAIN`, `PLAYLINK_REGIONS`) i zwraca zdrowie obu regionów, gry i logi, a zapytania o metryki wykonują się bez błędu; instrukcja dla Linux/macOS/Windows w `README.md` (PR 102) |
+| Wniosek | Asystent AI może odpowiadać na pytania o stan platformy bez dostępu do serwerów; hasło do logów (`OBS_PASSWORD`) jest jednym wspólnym sekretem, więc po oddaniu projektu należy je zmienić |
 
 ## Jak odpalić lokalnie (bez Cloudflare)
 

@@ -10,7 +10,7 @@
 
 - Subscription: Azure for Students. It only allows EU regions, so the "US" stack runs in Denmark until a US machine is funded; the mechanism is identical.
 - Tunnels `playlink-eu` / `playlink-us` / `playlink-ops` live in the Cloudflare account that owns `nikodemnowak.pl`.
-- Region VMs are pinned to `PLAYLINK_TAG=v0.2.0-rc.1`. Remove the pin (and run `deploy/azure-env.sh eu` / `us`) before the first non-rc release, otherwise they stay on rc.1. The ops VM follows a branch (`PLAYLINK_OPS_REF`, default `main`), not tags.
+- Region VMs are pinned to `PLAYLINK_TAG=v0.2.0-rc.2`. Remove the pin (and run `deploy/azure-env.sh eu` / `us`) before the first non-rc release, otherwise they stay on rc.2. The ops VM follows a branch (`PLAYLINK_OPS_REF`, default `main`), not tags.
 - Images are private in GHCR; VMs pull with a `read:packages` token in `site.env`. Making the packages public removes the need for it.
 
 ### Daily operations (any machine)
