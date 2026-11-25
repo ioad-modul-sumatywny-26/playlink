@@ -1,0 +1,1121 @@
+% =====================================================================
+% Część III — Architektura (rozdziały 1-3)
+% =====================================================================
+
+\chapter{Architektura systemu}
+\label{ch:arch}
+
+PlayLink to pełnostosowa aplikacja webowa typu \emph{LFG} (\textit{Looking-For-Group})
+do organizowania krótkotrwałych sesji wieloosobowych („pokojów”) dla gier niszowych,
+retro i mniej popularnych. Łączy modularny backend \textbf{FastAPI}, serwer
+\textbf{SvelteKit} pełniący rolę Backend-for-Frontend (BFF) oraz bazę
+\textbf{PostgreSQL}, całość orkiestrowana przez Docker Compose. System działa jako dwa
+niezależne stosy regionalne (EU i US) za Cloudflare Tunnel, a tożsamość użytkownika jest
+\emph{niekustodialna}: każdy użytkownik to mnemonik BIP39, a jego własność potwierdza
+podpis ECDSA (EIP-191) w wyzwaniu challenge-response.
+
+Źródła tego rozdziału w repozytorium: \code{backend/main.py}, \code{backend/routers/},
+\code{backend/models.py}, \code{frontend/src/}, \code{compose.yaml},
+\code{backend/docs/auth-flow.md} oraz analiza aplikacji bazowej z raportu końcowego.
+
+\section{Topologia systemu}
+\label{sec:arch-topologia}
+
+Elementy pojedynczego stosu regionalnego i ich połączenia:
+
+\begin{itemize}
+  \item \textbf{Przeglądarka} (klient Svelte, podpisywanie przez ethers/viem) komunikuje się
+        \emph{bezpośrednio} z API FastAPI (\code{PUBLIC_BACKEND_URL}, \code{PUBLIC_WS_URL})
+        dla większości odczytów oraz obu kanałów WebSocket.
+  \item Z serwerem \textbf{SvelteKit} (BFF, \code{adapter-node}, port 3000) przeglądarka
+        rozmawia tylko przy operacjach, które muszą dotknąć ciasteczka sesyjnego
+        \code{session} typu httpOnly: logowanie/wylogowanie oraz uwierzytelnione akcje
+        formularzy (\emph{form actions}).
+  \item Serwer SvelteKit proxy-uje te operacje do backendu zapytaniami po stronie serwera
+        (\code{BACKEND_INTERNAL_URL}) z dołączonym tokenem JWT.
+  \item \textbf{FastAPI} (port 8000) udostępnia REST oraz WebSockety i łączy się z bazą
+        przez SQLModel/SQLAlchemy.
+  \item \textbf{PostgreSQL 18} przechowuje całość stanu regionu.
+\end{itemize}
+
+Trójwarstwowa architektura z wzorcem BFF została przyjęta już w analizie wstępnej.
+Wzorce projektowe użyte w systemie: BFF (izolacja JWT od JavaScriptu klienta),
+wstrzykiwanie zależności (FastAPI \code{Depends}), wzorzec repozytorium przez
+SQLModel/SQLAlchemy oraz publish--subscribe do rozgłaszania zdarzeń WebSocket.
+Głównymi modułami są: klient Svelte (podpisywanie BIP39), BFF SvelteKit, API FastAPI
+(REST, WebSocket i zadanie w tle) oraz baza PostgreSQL.
+
+\fig{komponenty.png}{0.85}{Diagram komponentów: przeglądarka, usługi \texttt{frontend}
+(BFF SvelteKit), \texttt{backend} (FastAPI z zadaniem czyszczącym) i \texttt{db}
+(PostgreSQL). Diagram pochodzi z analizy wstępnej i odzwierciedla jeden stos regionalny;
+element „Tailscale / SSH deploy” to stan z etapu 1 --- obecnie ruch wchodzi przez Cloudflare Tunnel, a wydania są pobierane z GHCR (część III, rozdział o wdrożeniu).}
+
+\section{Stos technologiczny}
+\label{sec:arch-stos}
+
+\begin{table}[H]
+\centering\small
+\renewcommand{\arraystretch}{1.2}
+\begin{tabularx}{\textwidth}{@{}>{\raggedright\arraybackslash}p{0.22\textwidth}Y>{\raggedright\arraybackslash}p{0.2\textwidth}@{}}
+\toprule
+\textbf{Warstwa} & \textbf{Technologia} & \textbf{Narzędzie} \\
+\midrule
+Frontend & SvelteKit 2 / Svelte 5 (runes), TypeScript & Bun \\
+Podpisywanie & ethers + viem (BIP39 + EIP-191) & --- \\
+Backend & FastAPI (\code{main.py} + \code{routers/}, \code{ws/}, \code{services.py}), Python 3.14+ & uv \\
+ORM & SQLModel (SQLAlchemy + Pydantic) & --- \\
+Baza danych & PostgreSQL 18 (produkcja) / SQLite in-memory (testy) & Docker \\
+Migracje & Alembic & uv \\
+Realtime & FastAPI WebSockets (kanały: lista pokojów, czat pokoju) & --- \\
+Uwierzytelnianie & BIP39 + ECDSA (\code{eth_account}), JWT HS256 & ethers.js (klient) \\
+Rate limiting & slowapi (REST) + przesuwne okno per adres (czat WS) & --- \\
+Orkiestracja & Docker Compose (db, backend, frontend, cloudflared, Vector, cAdvisor) na region & Docker \\
+Ingress & Cloudflare Tunnel & cloudflared \\
+Obserwowalność & Vector, cAdvisor, VictoriaLogs, VictoriaMetrics, Grafana & Docker \\
+Dostęp dla asystenta AI & serwer MCP (tylko odczyt, stdio) & uv \\
+Hooki git & prek & uv \\
+\bottomrule
+\end{tabularx}
+\caption{Stos technologiczny PlayLink (stan repozytorium).}
+\label{tab:arch-stos}
+\end{table}
+
+Frontend używa dodatkowo Tailwind CSS. Testy backendu działają na SQLite in-memory z
+\code{TestClient}; tabele tworzy wówczas \code{create_db_and_tables()}, a w produkcji
+schematem zarządza Alembic (rozdział o modelu danych i migracjach).
+
+\section{Architektura wieloregionowa (koncepcja)}
+\label{sec:arch-regiony}
+
+Każdy region (EU, US) ma własną maszynę wirtualną, bazę danych, backend, frontend i
+konektor Cloudflare Tunnel; uruchamiany jest jako projekt compose \code{playlink-eu}
+lub \code{playlink-us} przez \code{deploy/deploy.sh}. Podział na to, co regionalne, a co
+wspólne, wygląda następująco.
+
+\paragraph{Regionalne (niezależne w każdym regionie).}
+\begin{itemize}
+  \item baza PostgreSQL, backend i serwer frontendu --- pokoje są regionalne: pokój
+        utworzony w EU nie istnieje w US;
+  \item sesje i klucze podpisujące są związane z origin: zmiana regionu wymaga ponownego
+        zalogowania tymi samymi 12 słowami (mnemonik jest jedyną rzeczą przenoszoną między
+        regionami, przez użytkownika);
+  \item konektor Cloudflare Tunnel i hosty aplikacji oraz API
+        (\code{playlink-eu.<domena>}, \code{playlink-us.<domena>},
+        \code{playlink-<region>-api.<domena>}).
+\end{itemize}
+
+\paragraph{Wspólne.}
+\begin{itemize}
+  \item obraz frontendu (jeden dla obu regionów) oraz wersjonowane obrazy backendu i
+        frontendu publikowane w GHCR;
+  \item host wejściowy (\code{playlink.<domena>}), który renderuje wybór regionu: strona
+        sonduje oba endpointy \code{/healthz} i przekierowuje do szybszego, działającego
+        regionu, a wybór zapisuje w ciasteczku;
+  \item wspólny stos obserwowalności na osobnej maszynie (\code{playlink-ops}): kontenery
+        wysyłają logi JSON z identyfikatorem żądania i metryki per kontener; Grafana stoi
+        za Cloudflare Access;
+  \item konfiguracja współdzielona i niesekretna (\code{deploy/config.env}).
+\end{itemize}
+
+Nazwy hostów wywodzą się z \code{PLAYLINK_DOMAIN} i pozostają o jeden poziom pod domeną.
+Bez domeny oba regiony działają na localhost (EU: 3000/8000, US: 3001/8001). Szczegóły
+wdrożenia, rolloutu, wycofywania i runbooka opisano w części o operacjach.
+
+\section{Układ repozytorium}
+\label{sec:arch-repo}
+
+\begin{lstlisting}[basicstyle=\ttfamily\footnotesize]
+.
+|-- backend/            usluga FastAPI
+|   |-- main.py         skladanie aplikacji, middleware, lifespan
+|   |-- routers/        endpointy REST pogrupowane obszarami
+|   |-- ws/             menedzery polaczen WebSocket
+|   |-- observability.py  logi JSON, request id, /metrics
+|   |-- mcp_server/     serwer MCP (tylko odczyt) dla asystentow AI
+|   |-- models.py       tabele SQLModel (User, Room, RoomMember, Message, RoomEvent, ...)
+|   |-- database.py     silnik + sesja, przepisywanie DATABASE_URL w Dockerze
+|   |-- usernames.py    walidacja formatu i wulgaryzmow nazw
+|   |-- alembic/        srodowisko migracji + wersje
+|   |-- tests/          testy pytest (SQLite + TestClient)
+|   `-- docs/           specyfikacja auth-flow.md
+|-- frontend/           aplikacja SvelteKit
+|   `-- src/ (lib/, routes/, hooks.server.ts)
+|-- compose.yaml        db + backend + frontend + cloudflared (+ Vector, cAdvisor)
+|-- compose.observability.yaml  VictoriaLogs, VictoriaMetrics, Grafana (VM ops)
+|-- compose.build.yaml  budowanie z drzewa roboczego
+|-- compose.ports.yaml  porty na localhost (tryb lokalny)
+|-- deploy/             deploy.sh, update.sh, azure*.sh, observability.sh,
+|                       cloud-init.yaml, config.env
+|-- experiments/f4/     eksperyment obciazeniowy 1 vs 2 regiony
+`-- docs/               zestaw dokumentacji
+\end{lstlisting}
+
+W \code{src/lib/} frontendu mieszczą się logika klienta (uwierzytelnianie, podpisywanie,
+store'y, konteksty, biblioteka UI), w \code{routes/} --- strony wraz z loaderami i akcjami
+serwerowymi, a \code{hooks.server.ts} dekoduje ciasteczko sesji. Szczegóły frontendu
+opisano w części o frontendzie.
+
+\section{Przypadki użycia i model pojęciowy}
+\label{sec:arch-uc}
+
+\subsection{Aktorzy i przypadki użycia}
+
+W systemie występują czterej aktorzy: \textbf{Gość} (niezalogowany), \textbf{Użytkownik}
+(zalogowany, dziedziczy uprawnienia Gościa), \textbf{Administrator} (dziedziczy
+uprawnienia Użytkownika) oraz \textbf{System} (zadania automatyczne: weryfikacja
+challenge-response i czyszczenie wygasłych pokojów). Wymagania funkcjonalne i
+niefunkcjonalne przedstawiono w części I (wizja); poniżej podano wyłącznie model
+pojęciowy.
+
+\begin{itemize}
+  \item \textbf{Gość:} przeglądanie listy pokojów; wyszukiwanie i filtrowanie;
+        rejestracja/logowanie.
+  \item \textbf{Użytkownik:} tworzenie i konfiguracja pokoju; dołączanie i opuszczanie;
+        czat (podpisany); planowanie wydarzenia i RSVP; edycja nazwy; odzyskiwanie konta.
+  \item \textbf{Administrator:} wyrzucenie uczestnika (kick); zarządzanie kategoriami gier.
+  \item \textbf{System:} weryfikacja podpisu i wydanie JWT; czyszczenie wygasłych pokojów
+        i wiadomości.
+\end{itemize}
+
+\fig{uc.png}{0.95}{Diagram przypadków użycia PlayLink (aktorzy: Gość, Użytkownik,
+Administrator, System).}
+
+\subsection{Scenariusze kluczowych przypadków}
+
+\begin{table}[H]
+\centering\footnotesize
+\renewcommand{\arraystretch}{1.25}
+\begin{tabularx}{\textwidth}{@{}>{\bfseries}p{0.17\textwidth}p{0.14\textwidth}YY@{}}
+\toprule
+\textbf{Przypadek} & \textbf{Aktorzy} & \textbf{Przebieg główny} & \textbf{Alternatywa} \\
+\midrule
+UC-1 Rejestracja i logowanie (BIP39) & Gość, System &
+  Wybór „Enter realm”, lokalne wygenerowanie 12 słów; pobranie nonce
+  (\code{POST /auth/request-nonce}); podpis \code{personal_sign} (EIP-191); backend
+  odtwarza adres i wydaje JWT (\code{POST /auth/verify}); BFF zapisuje JWT w ciasteczku
+  httpOnly. Warunek wstępny: brak, konto powstaje przy pierwszym poprawnym podpisie. &
+  Nonce wygasł lub został użyty: odrzucenie weryfikacji, klient ponawia od pobrania
+  nonce. \\
+\addlinespace
+UC-2 Utworzenie pokoju i czat & Użytkownik &
+  Formularz (nazwa, gra, limit graczy, lokalizacja; opcjonalnie opis, link do
+  komunikatora, wymagania); \code{POST /rooms} tworzy pokój, dołącza twórcę i rozgłasza
+  listę na \code{/ws/rooms}; wejście do pokoju otwiera uwierzytelniony kanał
+  \code{/ws/rooms/<name>/chat}. Warunek: ważny JWT, mniej niż 3 aktywne pokoje. &
+  Zajęta nazwa lub przekroczony limit 3 pokojów: błąd walidacji w formularzu. \\
+\addlinespace
+UC-3 Dołączenie i RSVP & Użytkownik &
+  \code{POST /rooms/<name>/join}, rozgłoszenie \code{roster_update}; przy zaplanowanym
+  wydarzeniu deklaracja \code{present}/\code{maybe}/\code{absent} przez
+  \code{PUT /rooms/<name>/event/rsvp} (ramka \code{rsvp_update}); udział w czacie. &
+  Pokój pełny lub wygasły: odrzucenie, powrót do listy. \\
+\addlinespace
+UC-4 Moderacja: kick & Administrator &
+  \code{POST /rooms/<name>/members/<address>/kick}; backend weryfikuje uprawnienia,
+  usuwa członkostwo, rozgłasza \code{member_kicked} i \code{roster_update}; połączenia
+  czatu wyrzuconego zamykane kodem \code{4409}. Warunek: adres w
+  \code{ADMIN_ADDRESSES}, cel jest członkiem pokoju. &
+  Konto bez uprawnień admina: HTTP 403. \\
+\addlinespace
+UC-5 Wyszukiwanie i filtrowanie & Gość lub Użytkownik &
+  Lista pokojów aktualizowana przez \code{/ws/rooms}; fraza wyszukiwania i/lub filtr
+  gry oraz sortowanie zawężają listę; wybór pokoju prowadzi do szczegółów (a po
+  zalogowaniu do dołączenia). &
+  Brak wyników: stan pusty z podpowiedzią rozszerzenia filtrów lub utworzenia pokoju. \\
+\bottomrule
+\end{tabularx}
+\caption{Scenariusze pięciu kluczowych przypadków użycia (skrót; pełne scenariusze w
+raporcie końcowym).}
+\label{tab:arch-uc}
+\end{table}
+
+\subsection{Pojęcia domeny}
+\label{sec:arch-pojecia}
+
+\begin{description}[style=nextline,leftmargin=1.2em]
+  \item[Tożsamość / User] wywodzi się z 12-słowego mnemonika BIP39; zapisana jako adres
+        \code{identity_address} w formacie EIP-55 z trwałą, losową nazwą \code{username}.
+        Nie ma hasła.
+  \item[Room (pokój)] nazwana, ograniczona pojemnością i wygasająca sesja gry,
+        powiązana z grą (\code{Game}) i lokalizacją lobby (\code{lobby_location}). Twórca
+        dołącza automatycznie; użytkownik może mieć co najwyżej 3 aktywne pokoje.
+  \item[RoomMember] tabela łącząca użytkowników z pokojami.
+  \item[Message] wiadomość czatu w obrębie pokoju, opcjonalnie podpisana (EIP-191) przez
+        nadawcę dla weryfikowalnego autorstwa.
+  \item[RoomEvent / RoomEventRsvp] opcjonalne zaplanowane spotkanie pokoju z
+        deklaracjami członków (\code{present}, \code{absent}, \code{maybe}).
+  \item[Game] kategoria katalogu, uporządkowana wg \code{sort_order}; administratorzy
+        mogą dodawać i usuwać kategorie.
+  \item[Nonce] jednorazowe, haszowane, krótkożyciowe wyzwanie dla uwierzytelniania.
+\end{description}
+
+Diagram klas zestawia encje warstwy danych z menedżerami połączeń WebSocket warstwy
+logiki: \code{ConnectionManager} (rejestr połączeń kanału listy pokojów) i
+\code{RoomChatManager} (rejestr połączeń czatu per pokój, z mapowaniem gniazdo$\rightarrow$adres),
+oba jako singletony w \code{backend/ws/managers.py}.
+
+\fig{klasy.png}{1.0}{Diagram klas PlayLink: encje SQLModel (warstwa danych) oraz menedżery
+połączeń WebSocket \texttt{ConnectionManager} i \texttt{RoomChatManager} (warstwa
+logiki).}
+
+\section{Warstwa logiki backendu}
+\label{sec:arch-logika}
+
+Logika jest skupiona w usłudze FastAPI, która udostępnia REST oraz dwa kanały WebSocket;
+szczegółowy katalog endpointów i ramek znajduje się w części o API backendu.
+
+\begin{itemize}
+  \item \textbf{REST:} uwierzytelnianie (\code{/auth/request-nonce}, \code{/auth/verify}),
+        CRUD pokojów, profil użytkownika, administracja; dokumentacja OpenAPI pod
+        \code{/docs}.
+  \item \textbf{WebSocket:} \code{/ws/rooms} (pełna lista pokojów po każdej mutacji) oraz
+        \code{/ws/rooms/<name>/chat} (czat z autoryzacją JWT i kontrolą członkostwa; ramki
+        m.in. \code{history}, \code{message}, \code{event_update}, \code{rsvp_update},
+        \code{roster_update}, \code{room_closed}, \code{member_kicked}, \code{error}).
+  \item \textbf{Logika biznesowa:} limit 3 aktywnych pokojów na użytkownika, weryfikacja
+        podpisów EIP-191 z odrzuceniem dryfu czasu powyżej
+        \code{CHAT_SIGNATURE_SKEW_SECONDS}, upsert RSVP, dobór pingu na podstawie
+        lokalizacji lobby (odległość Haversine).
+  \item \textbf{Zadanie w tle:} cykliczne czyszczenie wygasłych pokojów (i wiadomości) co
+        \code{ROOM_CLEANUP_INTERVAL_SECONDS}.
+\end{itemize}
+
+\section{Główne przepływy}
+\label{sec:arch-przeplywy}
+
+\subsection{Uwierzytelnianie}
+Niekustodialny challenge-response; pełny opis i diagram sekwencji w rozdziale
+\ref{ch:tozsamosc}.
+
+\subsection{Cykl życia pokoju i lista na żywo}
+Uwierzytelnieni użytkownicy tworzą, dołączają do pokojów i opuszczają je przez REST.
+Każda mutacja rozgłasza \emph{pełną} listę pokojów wszystkim klientom połączonym z
+kanałem WebSocket \code{/ws/rooms} (lista jest liczona przez \code{get_rooms_payload}),
+a wygasłe pokoje (\code{expires_at <= now}) są usuwane przy tym kroku oraz przez zadanie w
+tle co \code{ROOM_CLEANUP_INTERVAL_SECONDS}.
+
+\subsection{Czat pokoju z weryfikowalnym autorstwem}
+Każdy pokój ma kanał \code{/ws/rooms/<name>/chat}, uwierzytelniany JWT i dostępny tylko
+członkom. Wiadomości są podpisywane kluczem nadawcy wywiedzionym z BIP39 (EIP-191), więc
+autorstwo da się zweryfikować od końca do końca, a nie tylko na podstawie JWT. Serwer
+odtwarza kanoniczny ciąg wiadomości i odrzuca znaczniki czasu odbiegające o więcej niż
+\code{CHAT_SIGNATURE_SKEW_SECONDS}, co ogranicza ataki powtórzeniowe. Ten sam kanał niesie
+ramki zdarzeń, RSVP, rosteru, zamknięcia pokoju i wyrzucenia uczestnika.
+
+\section{Podsumowanie modelu bezpieczeństwa}
+\label{sec:arch-bezp-podsumowanie}
+
+\begin{itemize}
+  \item \textbf{Klucze niekustodialne} --- klucz prywatny nie opuszcza przeglądarki;
+        backend weryfikuje tylko dowody.
+  \item \textbf{Ochrona przed powtórzeniem} --- nonce jednorazowe, haszowane w bazie
+        (SHA-256), krótkożyciowe i unieważniane przy ponownym żądaniu.
+  \item \textbf{Utwardzenie BFF / XSS} --- JWT sesji w ciasteczku httpOnly,
+        \code{sameSite=strict}, ustawianym przez serwer SvelteKit.
+  \item \textbf{Autoryzacja} --- uprawnienia admina wyłącznie ze zmiennej
+        \code{ADMIN_ADDRESSES} (brak kolumny \code{is_admin}).
+  \item \textbf{Rate limiting} --- slowapi dla REST (domyślnie \code{10/minute}) oraz
+        przesuwne okno per adres dla czatu WS.
+  \item \textbf{Izolacja sieciowa} --- Postgres nie ma mapowania portu na hosta w Compose,
+        celowo, bo Docker omija zapory hosta.
+\end{itemize}
+
+Szczegóły --- w następnych rozdziałach tej części.
+
+% =====================================================================
+\chapter{Tożsamość i bezpieczeństwo}
+\label{ch:tozsamosc}
+
+\section{Uwierzytelnianie challenge-response}
+\label{sec:tozs-flow}
+
+PlayLink używa bezhasłowego mechanizmu challenge-response opartego o BIP39 i ECDSA
+(specyfikacja źródłowa: \code{backend/docs/auth-flow.md}). Przebieg ma cztery fazy.
+
+\fig{sekwencja-auth.png}{0.92}{Diagram sekwencji: bezhasłowe logowanie
+(challenge-response BIP39/ECDSA). Klucz prywatny nigdy nie opuszcza przeglądarki; JWT
+trafia do ciasteczka httpOnly ustawianego przez BFF.}
+
+\paragraph{Faza 1: żądanie wyzwania.}
+\begin{enumerate}
+  \item Użytkownik wpisuje 12-słowny mnemonik; przeglądarka lokalnie wyprowadza adres.
+  \item Klient wysyła \code{POST /auth/request-nonce} z \code{{"address": "0x..."}}.
+  \item Backend wykonuje upsert użytkownika (\code{identity_address}, losowa nazwa),
+        generuje losowy UUID jako nonce i liczy jego skrót SHA-256.
+  \item Backend unieważnia wcześniejsze nonce dla tego adresu, zapisuje skrót nonce z TTL
+        5 minut i zwraca \code{{"nonce": "uuid-..."}}.
+\end{enumerate}
+
+\paragraph{Faza 2: lokalne podpisanie.}
+Przeglądarka podpisuje kluczem prywatnym komunikat:
+
+\begin{lstlisting}
+Sign in to Playlink
+Nonce: <uuid>
+\end{lstlisting}
+
+\paragraph{Faza 3: weryfikacja.}
+Klient wysyła \code{POST /auth/verify} z \code{{address, nonce, signature}}. Backend
+liczy skrót podanego nonce i szuka pasującego, nieużytego i niewygasłego wpisu.
+\begin{itemize}
+  \item Nonce znaleziony i podpis poprawny (odtworzony adres zgadza się): nonce oznaczony
+        jako użyty, aktualizacja \code{user.last_login}, wydanie JWT (\code{sub} = adres,
+        \code{username}); odpowiedź \code{{"token": "jwt...", "username": "..."}}.
+  \item Nonce znaleziony, podpis niepoprawny: \code{401 Identity verification failed}.
+  \item Nonce nieznany lub wygasły: \code{401 Invalid or expired challenge}.
+\end{itemize}
+
+\paragraph{Faza 4: bezpieczna sesja.}
+Przeglądarka przekazuje token do akcji SvelteKit \code{POST /auth?/login}. Serwer BFF
+ustawia \code{Set-Cookie: session=<jwt>} (httpOnly, \code{sameSite=strict}, w
+środowisku produkcyjnym \code{Secure}). JWT nigdy nie trafia do kodu JavaScript po
+stronie klienta: loadery serwerowe dekodują go (\code{jwt-decode}) i udostępniają
+stronom wyłącznie adres, nazwę i flagę admina. Uwierzytelnione endpointy backendu
+oczekują nagłówka \code{Authorization: Bearer <token>} (schemat OAuth2 password bearer),
+który BFF dokleja przy proxy.
+
+\section{Własności bezpieczeństwa}
+\label{sec:tozs-wlasnosci}
+
+\begin{enumerate}
+  \item \textbf{Ochrona przed powtórzeniem.} Nonce jest jednorazowy (flaga \code{used}),
+        żądanie nowego nonce unieważnia wszystkie poprzednie dla adresu, a TTL jest
+        krótki (domyślnie 5 minut, \code{NONCE_EXPIRATION_MINUTES}).
+  \item \textbf{Integralność bazy.} W bazie jest tylko skrót SHA-256 nonce, co
+        zapobiega atakom „pre-signing” po wycieku bazy (helper \code{hash_nonce}).
+  \item \textbf{Niekustodialność.} Klucz prywatny nigdy nie opuszcza klienta; backend
+        sprawdza wyłącznie dowód posiadania.
+  \item \textbf{Ochrona przed XSS (wzorzec BFF).} JWT jest w ciasteczku httpOnly
+        ustawianym przez serwer SvelteKit, więc złośliwy skrypt w przeglądarce nie
+        wykradnie tokenu.
+  \item \textbf{Normalizacja tożsamości.} Wszystkie adresy są przed zapisem i
+        wyszukiwaniem sprowadzane do formatu sum kontrolnych EIP-55; przy pierwszej
+        rejestracji użytkownik dostaje losową, trwałą nazwę.
+\end{enumerate}
+
+\section{Podpisywanie wiadomości czatu}
+\label{sec:tozs-czat}
+
+Autorstwo wiadomości czatu jest weryfikowalne kryptograficznie: nadawca podpisuje
+kanoniczną treść kluczem wywiedzionym z BIP39 (EIP-191 \code{personal_sign}), a do
+wiadomości dołączany jest podpisany znacznik czasu \code{sent_at} (ISO-8601 ustawiany
+przez klienta). Serwer odtwarza kanoniczny ciąg i odrzuca znaczniki czasu oddalone
+o więcej niż \code{CHAT_SIGNATURE_SKEW_SECONDS}. Kolumny \code{signature} i \code{sent_at}
+są nullable, więc starsze wiadomości (sprzed wprowadzenia podpisów, migracja
+\code{c4a9f1e7b6d2}) pozostają poprawne i są wyświetlane jako niezweryfikowane. Format
+ramek czatu jest opisany w części o realtime.
+
+\section{Autoryzacja i uprawnienia administratora}
+\label{sec:tozs-admin}
+
+Uprawnienia admina wynikają \emph{wyłącznie} ze zmiennej środowiskowej
+\code{ADMIN_ADDRESSES} --- w modelu \code{User} nie ma kolumny \code{is_admin}. Nadanie
+lub odebranie uprawnień wymaga edycji \code{ADMIN_ADDRESSES} (dla wdrożonych regionów w
+\code{deploy/site.env}) i ponownego wdrożenia. Szczegóły parsowania, zależności
+\code{get_admin_address} i wpływu na odpowiedzi opisano w rozdziale o konfiguracji
+(sekcja~\ref{sec:konf-admin}). Dodatkowo fałszywa deklaracja \code{is_admin} w ładunku
+JWT nie daje dostępu, bo źródłem prawdy jest zawsze zmienna środowiskowa.
+
+\section{Ograniczanie nadużyć i izolacja}
+\label{sec:tozs-limity}
+
+Ograniczanie ruchu składa się z dwóch niezależnych mechanizmów (REST przez slowapi oraz
+przesuwne okno dla czatu WebSocket; szczegóły w sekcji~\ref{sec:konf-rate} o
+konfiguracji). Tożsamość klienta dla limitów REST pochodzi z nagłówka
+\code{CF-Connecting-IP}, ufanego tylko od zaufanych proxy. CORS jest sterowany jawną
+białą listą z konfiguracji. Poza tym:
+
+\begin{itemize}
+  \item Postgres nie jest publikowany na porcie hosta (Docker omija zapory hosta);
+  \item w trybie publicznym backend nie publikuje żadnego portu, ruch wchodzi przez
+        Cloudflare Tunnel;
+  \item sesje i klucze podpisujące są związane z origin, a więc osobne w każdym regionie.
+\end{itemize}
+
+\section{Walidacja i moderacja nazw użytkowników}
+\label{sec:tozs-nazwy}
+
+Nazwy użytkowników są publiczne (czat, rostery, listy RSVP), dlatego wymagają podstawowej
+moderacji. Projekt (Issue \#56, specyfikacja z 29.05.2026) pozwala uwierzytelnionemu
+użytkownikowi ustawić własną, unikalną nazwę zamiast wygenerowanej \code{user_<hex>},
+walidowaną względem publicznej listy wulgaryzmów przed zapisem. Reguły walidacji i
+odpowiedzi \code{PATCH /users/me} opisano w sekcji~\ref{sec:konf-nazwy}; tutaj
+najważniejsze założenia projektowe:
+
+\begin{itemize}
+  \item kolumna \code{User.username} była już unikalna i indeksowana w migracji
+        początkowej, więc zmiana nie wymagała migracji bazy;
+  \item nazwa pojawia się na żywo w czacie, rosterach i RSVP (wyszukiwana po adresie),
+        więc edycja propaguje się automatycznie, bez backfillu;
+  \item frontend dostał trasę \code{/profile} (loader z przekierowaniem do \code{/auth}
+        bez sesji, akcja \code{update} wywołująca \code{PATCH /users/me} z Bearer) oraz
+        zakładkę „Profile” w nawigacji widoczną tylko po zalogowaniu (minimalny
+        \code{+layout.server.ts} zwraca \code{isAuthenticated});
+  \item testy backendu (TDD) w \code{tests/test_users.py}: sukces, niepoprawny format,
+        wulgaryzm (wielkość liter i forma z tokenami), konflikt 409, idempotencja tej
+        samej nazwy, 401 bez uwierzytelnienia, niepusta lista stop; dla frontendu brak
+        harnessu, więc przepływ \code{/profile} weryfikowano ręcznie w Dockerze.
+\end{itemize}
+
+% =====================================================================
+\chapter{Model danych i konfiguracja backendu}
+\label{ch:dane}
+
+\section{Silnik, sesja i model ERD}
+\label{sec:dane-silnik}
+
+Projekt używa \textbf{SQLModel} (cienka warstwa łącząca modele ORM SQLAlchemy z walidacją
+Pydantic v2) oraz \textbf{Alembic} do zarządzania schematem. Silnik i sesja żyją w
+\code{database.py}, a klasy tabel w \code{models.py}.
+
+\begin{itemize}
+  \item \code{DATABASE_URL} musi być ustawiony przy starcie procesu; w przeciwnym razie
+        \code{database.py} zgłasza \code{RuntimeError("DATABASE_URL environment variable is not set")}.
+  \item Jeżeli URL zawiera \code{@db:} (nazwa usługi Compose) i plik \code{/.dockerenv}
+        \emph{nie} istnieje, silnik zamienia \code{@db:} na \code{@localhost:}, co pozwala
+        programistom na hoście używać tej samej konfiguracji bez ręcznych poprawek.
+  \item Silnik tworzony jest przez \code{create_engine(DATABASE_URL)} (bez specjalnej
+        konfiguracji puli).
+\end{itemize}
+
+\begin{table}[H]
+\centering\small
+\renewcommand{\arraystretch}{1.2}
+\begin{tabularx}{\textwidth}{@{}llY@{}}
+\toprule
+\textbf{Funkcja} & \textbf{Sygnatura} & \textbf{Zachowanie} \\
+\midrule
+\code{create_db_and_tables()} & \code{() -> None} & Wywołuje \code{SQLModel.metadata.create_all(engine)}; używana w testach, w produkcji schemat tworzą migracje Alembic uruchamiane przez \code{entrypoint.sh} (\code{alembic upgrade head}). \\
+\code{get_session()} & \code{() -> Generator[Session]} & Otwiera \code{Session(engine)}, oddaje ją jako zależność FastAPI i zamyka po zakończeniu żądania. \\
+\bottomrule
+\end{tabularx}
+\caption{Funkcje pomocnicze \texttt{database.py}.}
+\end{table}
+
+Graf kluczy obcych jest acykliczny: \code{nonce.user_id} $\rightarrow$ \code{user.id};
+\code{roommember.room_id} $\rightarrow$ \code{room.id}; \code{roommember.user_id}
+$\rightarrow$ \code{user.id}; \code{message.room_id} $\rightarrow$ \code{room.id};
+\code{roomevent.room_id} $\rightarrow$ \code{room.id} (ON DELETE CASCADE, UNIQUE);
+\code{roomeventrsvp.event_id} $\rightarrow$ \code{roomevent.id} (ON DELETE CASCADE);
+\code{roomeventrsvp.user_id} $\rightarrow$ \code{user.id} (ON DELETE CASCADE).
+
+\fig{er.png}{1.0}{Model danych (ERD) PlayLink: osiem encji wraz z kluczami i relacjami.}
+
+Relacje logiczne: \code{Room} ma wiele \code{Message}, co najwyżej jedno \code{RoomEvent}
+oraz wiele \code{RoomMember}; \code{RoomMember} należy do \code{User}; \code{RoomEvent} ma
+wiele \code{RoomEventRsvp}, a każde RSVP należy do respondenta (\code{User}); \code{User}
+ma wiele \code{Nonce} i wiele członkostw.
+
+\section{Typy pomocnicze}
+\label{sec:dane-enum}
+
+\paragraph{RsvpStatus (StrEnum).} Zdefiniowany na poziomie modułu \code{models.py},
+używany jako typ kolumny \code{status} w \code{RoomEventRsvp}: \code{present},
+\code{absent}, \code{maybe} (wartości tekstowe identyczne z nazwami członków).
+
+\paragraph{DEFAULT\_LOBBY\_LOCATION.} Stała \code{DEFAULT_LOBBY_LOCATION = "eu-central"}
+--- wartość zastępcza dla \code{Room.lobby_location}, gdy klient pominie pole.
+
+\section{Tabele}
+\label{sec:dane-tabele}
+
+Poniżej wszystkie tabele z polami, ograniczeniami i opisem. Klucze główne generowane są
+automatycznie (\code{int | None}, \code{primary_key=True}, \code{default=None}) tam, gdzie
+nie zaznaczono inaczej; znaczniki czasu domyślnie ustawia
+\code{datetime.now(UTC)}.
+
+\subsection{Tabela \texttt{game} (Game)}
+
+Kuratorowana lista gier do wyboru przy tworzeniu pokoju; wypełniana w migracji pięcioma
+pozycjami: \emph{Quake III Arena}, \emph{Diablo II}, \emph{StarCraft}, \emph{Half-Life},
+\emph{Unreal Tournament}.
+
+\renewcommand{\arraystretch}{1.2}
+\begin{longtable}{@{}p{0.2\textwidth}p{0.22\textwidth}p{0.5\textwidth}@{}}
+\toprule
+\textbf{Pole} & \textbf{Typ} & \textbf{Ograniczenia i opis} \\
+\midrule
+\endhead
+\code{id} & \code{int | None} & PK, automatyczny przyrost \\
+\code{name} & \code{str} & \code{index=True}, \code{unique=True}; nazwa wyświetlana \\
+\code{sort_order} & \code{int} & \code{index=True}; kolejność w UI (mniejsza = wcześniej) \\
+\bottomrule
+\end{longtable}
+
+\subsection{Tabela \texttt{user} (User)}
+
+Uwierzytelniony uczestnik; tworzony leniwie przy pierwszej udanej weryfikacji podpisu
+portfela (faktycznie już przy \code{POST /auth/request-nonce} dzięki upsertowi).
+
+\begin{longtable}{@{}p{0.2\textwidth}p{0.22\textwidth}p{0.5\textwidth}@{}}
+\toprule
+\textbf{Pole} & \textbf{Typ} & \textbf{Ograniczenia i opis} \\
+\midrule
+\endhead
+\code{id} & \code{int | None} & PK \\
+\code{identity_address} & \code{str} & \code{index=True}, \code{unique=True}; adres Ethereum (checksum, z odtworzenia ECDSA) \\
+\code{username} & \code{str} & \code{default_factory=lambda: f"user_{secrets.token_hex(4)}"}, \code{index=True}, \code{unique=True}; nazwa generowana (np. \code{user_a1b2c3d4}), właściciel może ją zmienić (bez limitu jednorazowości) \\
+\code{created_at} & \code{datetime} & znacznik rejestracji \\
+\code{last_login} & \code{datetime | None} & czas ostatniego udanego uwierzytelnienia \\
+\bottomrule
+\end{longtable}
+
+Relacje: \code{nonces} (\code{list[Nonce]}, \code{back_populates="user"}) oraz \code{rooms}
+(\code{list[Room]}, \code{back_populates="members"}, \code{link_model=RoomMember}).
+
+\subsection{Tabela \texttt{nonce} (Nonce)}
+
+Efemeryczne wyzwania flow EIP-191/ECDSA. Pole \code{value} przechowuje skrót SHA-256
+oryginalnego nonce (liczony przez helper \code{hash_nonce} w \code{main.py}), więc surowy
+nonce nie trafia do bazy.
+
+\begin{longtable}{@{}p{0.2\textwidth}p{0.22\textwidth}p{0.5\textwidth}@{}}
+\toprule
+\textbf{Pole} & \textbf{Typ} & \textbf{Ograniczenia i opis} \\
+\midrule
+\endhead
+\code{id} & \code{int | None} & PK \\
+\code{identity_address} & \code{str} & \code{index=True}; adres, który zażądał nonce \\
+\code{value} & \code{str} & \code{unique=True}; skrót SHA-256 nonce \\
+\code{expires_at} & \code{datetime} & wymagane; wygasłe nonce są odrzucane przez API \\
+\code{used} & \code{bool} & \code{default=False}; flaga jednorazowości, ustawiana po udanej weryfikacji \\
+\code{user_id} & \code{int | None} & \code{default=None}, \code{foreign_key="user.id"}; wypełniane dopiero po udanym uwierzytelnieniu \\
+\bottomrule
+\end{longtable}
+
+Relacja: \code{user} (\code{User | None}, \code{back_populates="nonces"}).
+
+\subsection{Tabela \texttt{room} (Room)}
+
+Podstawowa encja grupująca: sesja gry z TTL.
+
+\begin{longtable}{@{}p{0.2\textwidth}p{0.17\textwidth}p{0.57\textwidth}@{}}
+\toprule
+\textbf{Pole} & \textbf{Typ} & \textbf{Ograniczenia i opis} \\
+\midrule
+\endhead
+\code{id} & \code{int | None} & PK \\
+\code{name} & \code{str} & \code{index=True}, \code{unique=True}; czytelna nazwa używana w URL \\
+\code{game} & \code{str} & nazwa gry (tekst swobodny, walidowany w warstwie API) \\
+\code{lobby_location} & \code{str} & \code{default=DEFAULT_LOBBY_LOCATION}, \code{index=True}; region/miasto lobby (np. \code{"eu-central"}, \code{"us-west"}) \\
+\code{players_max} & \code{int} & maksymalna liczba członków \\
+\code{description} & \code{str | None} & \code{max_length=500}; opis sesji i oczekiwań \\
+\code{communicator_link} & \code{str | None} & \code{max_length=500}; zaproszenie do czatu głosowego (Discord, TeamSpeak itp.) \\
+\code{requirements} & \code{str | None} & \code{max_length=1000}; wymagania sprzętowe/programowe/umiejętności \\
+\code{created_by} & \code{str} & \code{index=True}; adres twórcy pokoju \\
+\code{created_at} & \code{datetime} & znacznik utworzenia \\
+\code{expires_at} & \code{datetime} & domyślnie teraz + 60 min; pokoje po tym terminie są usuwane \\
+\bottomrule
+\end{longtable}
+
+Relacja: \code{members} (\code{list[User]}, \code{back_populates="rooms"},
+\code{link_model=RoomMember}).
+
+\subsection{Tabela \texttt{roommember} (RoomMember)}
+
+Tabela łącząca wiele-do-wielu \code{User}--\code{Room}. Klucz złożony oznacza co najwyżej
+jedno członkostwo na parę; ponowne dołączenie po opuszczeniu wstawia nowy wiersz.
+
+\begin{longtable}{@{}p{0.2\textwidth}p{0.17\textwidth}p{0.57\textwidth}@{}}
+\toprule
+\textbf{Pole} & \textbf{Typ} & \textbf{Ograniczenia i opis} \\
+\midrule
+\endhead
+\code{room_id} & \code{int} & \code{primary_key=True}, \code{foreign_key="room.id"}; część klucza złożonego \\
+\code{user_id} & \code{int} & \code{primary_key=True}, \code{foreign_key="user.id"}; część klucza złożonego \\
+\code{joined_at} & \code{datetime} & czas utworzenia członkostwa \\
+\bottomrule
+\end{longtable}
+
+Brak relacji deklarowanych bezpośrednio; używana przez \code{link_model=RoomMember} w
+\code{Room.members} i \code{User.rooms}.
+
+\subsection{Tabela \texttt{message} (Message)}
+
+Wiadomości czatu wysyłane przez WebSocket i przechowywane do odtwarzania historii.
+Obsługuje wiadomości podpisane EIP-191 (migracja \code{c4a9f1e7b6d2}, Issue \#59);
+wiadomości sprzed podpisów mają \code{signature} i \code{sent_at} równe NULL.
+
+\begin{longtable}{@{}p{0.2\textwidth}p{0.17\textwidth}p{0.57\textwidth}@{}}
+\toprule
+\textbf{Pole} & \textbf{Typ} & \textbf{Ograniczenia i opis} \\
+\midrule
+\endhead
+\code{id} & \code{int | None} & PK \\
+\code{room_id} & \code{int} & \code{foreign_key="room.id"}, \code{index=True}; pokój właściciel \\
+\code{sender_address} & \code{str} & \code{index=True}; adres nadawcy \\
+\code{content} & \code{str} & treść wiadomości \\
+\code{created_at} & \code{datetime} & \code{index=True}; czas zapisania nadawany przez serwer \\
+\code{signature} & \code{str | None} & hex podpisu EIP-191 kanonicznego ładunku (Issue \#59) \\
+\code{sent_at} & \code{str | None} & znacznik ISO-8601 ustawiony przez klienta i objęty podpisem \\
+\bottomrule
+\end{longtable}
+
+\subsection{Tabela \texttt{roomevent} (RoomEvent)}
+
+Pojedyncze zaplanowane spotkanie pokoju. Obecnie co najwyżej jedno na pokój
+(\code{room_id} jest \code{UNIQUE}); zniesienie tego ograniczenia w przyszłości nie
+łamie zgodności (Issue \#62).
+
+\begin{longtable}{@{}p{0.2\textwidth}p{0.17\textwidth}p{0.57\textwidth}@{}}
+\toprule
+\textbf{Pole} & \textbf{Typ} & \textbf{Ograniczenia i opis} \\
+\midrule
+\endhead
+\code{id} & \code{int | None} & PK \\
+\code{room_id} & \code{int} & \code{sa_column=Column("room_id", Integer, ForeignKey("room.id", ondelete="CASCADE"), unique=True, index=True, nullable=False)}; pokój właściciel, UNIQUE (jedno wydarzenie na pokój) \\
+\code{starts_at} & \code{datetime} & \code{index=True}; planowany początek \\
+\code{ends_at} & \code{datetime} & \code{index=True}; planowany koniec \\
+\code{created_by} & \code{str} & \code{index=True}; adres twórcy pokoju \\
+\code{created_at} & \code{datetime} & znacznik utworzenia \\
+\code{updated_at} & \code{datetime} & ostatnia aktualizacja (podbijana przy przesunięciu terminu) \\
+\bottomrule
+\end{longtable}
+
+\subsection{Tabela \texttt{roomeventrsvp} (RoomEventRsvp)}
+
+Deklaracja obecności członka na \code{RoomEvent} z semantyką \emph{upsert}: RSVP jest
+tworzone lub aktualizowane w miejscu. Ograniczenie unikalności \code{(event_id, user_id)}
+wymusza jedno RSVP na użytkownika i wydarzenie:
+
+\begin{lstlisting}[language=Python]
+__table_args__ = (UniqueConstraint("event_id", "user_id"),)
+\end{lstlisting}
+
+\begin{longtable}{@{}p{0.2\textwidth}p{0.17\textwidth}p{0.57\textwidth}@{}}
+\toprule
+\textbf{Pole} & \textbf{Typ} & \textbf{Ograniczenia i opis} \\
+\midrule
+\endhead
+\code{id} & \code{int | None} & PK \\
+\code{event_id} & \code{int} & \code{sa_column=Column("event_id", Integer, ForeignKey("roomevent.id", ondelete="CASCADE"), index=True, nullable=False)}; wydarzenie (usuwane kaskadowo) \\
+\code{user_id} & \code{int} & \code{sa_column=Column("user_id", Integer, ForeignKey("user.id", ondelete="CASCADE"), index=True, nullable=False)}; respondent (usuwany kaskadowo) \\
+\code{status} & \code{RsvpStatus} & jedno z: \code{present}, \code{absent}, \code{maybe} \\
+\code{updated_at} & \code{datetime} & czas ostatniej modyfikacji \\
+\bottomrule
+\end{longtable}
+
+\section{Migracje Alembic}
+\label{sec:dane-migracje}
+
+\subsection{Konfiguracja}
+
+\paragraph{\texttt{alembic/env.py}.} Skrypt środowiska konfiguruje tryby offline i online:
+\begin{itemize}
+  \item \textbf{Import modeli dla autogenerate:} importowane są wszystkie klasy tabel
+        (\code{from models import Game, Message, Nonce, Room, RoomEvent, RoomEventRsvp, User}),
+        dzięki czemu \code{SQLModel.metadata} odzwierciedla pełny schemat;
+        \code{target_metadata = SQLModel.metadata}.
+  \item \textbf{\code{get_url()} (przepisywanie dla developmentu lokalnego):} czyta
+        \code{DATABASE_URL}; poza Dockerem (brak \code{/.dockerenv}) host \code{@db:} jest
+        przepisywany na \code{@localhost:} --- ta sama logika co w \code{backend/database.py}.
+        Gdy zmienna nie jest ustawiona, zgłasza \code{RuntimeError}.
+  \item \textbf{\code{load_dotenv}:} wczytuje \code{.env} z korzenia projektu
+        (\code{backend/../.env}), jeśli plik istnieje.
+  \item \textbf{Tryb offline} (\code{alembic upgrade --sql}): \code{literal_binds=True} i
+        \code{dialect_opts={"paramstyle": "named"}} dla przenośnego SQL.
+  \item \textbf{Tryb online:} połączenie z \code{engine_from_config} i
+        \code{pool.NullPool} (bez trwałej puli między krokami migracji).
+\end{itemize}
+
+\paragraph{\texttt{alembic.ini}.}
+\begin{table}[H]
+\centering\small
+\renewcommand{\arraystretch}{1.2}
+\begin{tabularx}{\textwidth}{@{}llY@{}}
+\toprule
+\textbf{Klucz} & \textbf{Wartość} & \textbf{Uwagi} \\
+\midrule
+\code{script_location} & \code{alembic} & względem \code{backend/}, gdzie leży \code{alembic.ini} \\
+\code{prepend_sys_path} & \code{.} & umożliwia \code{from models import ...} w migracjach \\
+\code{logger_root} (poziom) & \code{WARN} & \\
+\code{logger_sqlalchemy} (poziom) & \code{WARN} & wycisza logowanie SQL silnika \\
+\code{logger_alembic} (poziom) & \code{INFO} & pokazuje postęp migracji \\
+\code{handler_console} & \code{StreamHandler}, stderr & całe wyjście logów \\
+\bottomrule
+\end{tabularx}
+\caption{Klucze \texttt{alembic.ini}.}
+\end{table}
+
+\subsection{Polecenia operatora}
+
+Wszystkie polecenia uruchamia się z katalogu \code{backend/} w zarządzanym środowisku
+Pythona (\code{uv}).
+
+\begin{lstlisting}[language=bash]
+# nowa rewizja (autogenerate) -- wynik zawsze przejrzyj; autogenerate
+# potrafi pominac heurystyki zmiany nazwy/typu
+uv run alembic revision --autogenerate -m "opis zmiany"
+# zastosowanie oczekujacych migracji (idempotentne, transakcyjne;
+# wersje sledzi tabela alembic_version z jednym wierszem version_num)
+uv run alembic upgrade head
+uv run alembic current        # biezaca rewizja
+uv run alembic downgrade -1   # cofniecie o jeden krok
+uv run alembic history        # historia
+\end{lstlisting}
+
+\paragraph{Start w Dockerze.} W produkcji \code{entrypoint.sh} czeka na bazę (port TCP
+5432 na hoście \code{db}, do 30 prób co 2 sekundy), a następnie uruchamia
+\code{alembic upgrade head} przed startem uvicorn. Pełną sekwencję startu opisano w
+części o operacjach.
+
+\subsection{Historia migracji}
+
+Wszystkie migracje w kolejności zależności (od najstarszej); bieżący \textbf{head} to
+\code{c4a9f1e7b6d2}.
+
+\begin{table}[H]
+\centering\small
+\renewcommand{\arraystretch}{1.2}
+\begin{tabularx}{\textwidth}{@{}llY@{}}
+\toprule
+\textbf{Rewizja} & \textbf{Rodzic} & \textbf{Opis} \\
+\midrule
+\code{f273b29c941a} & (korzeń) & schemat początkowy: game, room, user, nonce, roommember + dane początkowe gier \\
+\code{a1b2c3d4e5f6} & \code{f273b29c941a} & dodanie tabeli \code{message} \\
+\code{17b0946aadca} & \code{a1b2c3d4e5f6} & kolumny metadanych pokoju \\
+\code{4fb1ffbfc7d9} & \code{17b0946aadca} & dodanie \code{roomevent} i \code{roomeventrsvp} \\
+\code{b7e2c1f4d8a3} & \code{4fb1ffbfc7d9} & \code{ends_at} w \code{roomevent} + backfill \\
+\code{9c3d2e1f0a4b} & \code{b7e2c1f4d8a3} & \code{lobby_location} w \code{room} \\
+\code{c4a9f1e7b6d2} & \code{9c3d2e1f0a4b} & \code{signature} i \code{sent_at} w \code{message} \\
+\bottomrule
+\end{tabularx}
+\caption{Łańcuch migracji Alembic.}
+\end{table}
+
+\subsection{Szczegóły poszczególnych migracji}
+
+\paragraph{\texttt{f273b29c941a} --- migracja początkowa.} Korzeń (\code{down_revision: None}).
+Tworzy pięć tabel i wypełnia \code{game}.
+
+\begin{longtable}{@{}p{0.15\textwidth}p{0.45\textwidth}p{0.3\textwidth}@{}}
+\toprule
+\textbf{Tabela} & \textbf{Kolumny} & \textbf{Ograniczenia i indeksy} \\
+\midrule
+\endhead
+\code{game} & \code{id} (PK, int), \code{name} (str), \code{sort_order} (int) & \code{ix_game_name} (unikalny), \code{ix_game_sort_order} \\
+\code{room} & \code{id} (PK, int), \code{name} (str), \code{game} (str), \code{players_max} (int), \code{created_by} (str), \code{created_at} (datetime), \code{expires_at} (datetime) & \code{ix_room_name} (unikalny), \code{ix_room_created_by} \\
+\code{user} & \code{id} (PK, int), \code{identity_address} (str), \code{username} (str), \code{created_at} (datetime), \code{last_login} (datetime, nullable) & \code{ix_user_identity_address} (unikalny), \code{ix_user_username} (unikalny) \\
+\code{nonce} & \code{id} (PK, int), \code{identity_address} (str), \code{value} (str), \code{expires_at} (datetime), \code{used} (bool), \code{user_id} (int, nullable, FK $\rightarrow$ \code{user.id}) & \code{ix_nonce_identity_address}, unikalność \code{value} \\
+\code{roommember} & \code{room_id} (int, PK, FK $\rightarrow$ \code{room.id}), \code{user_id} (int, PK, FK $\rightarrow$ \code{user.id}), \code{joined_at} (datetime) & klucz główny złożony \code{(room_id, user_id)} \\
+\bottomrule
+\end{longtable}
+
+Dane początkowe (5 gier przez \code{op.bulk_insert}): Quake III Arena (1), Diablo II (2),
+StarCraft (3), Half-Life (4), Unreal Tournament (5) --- w nawiasie \code{sort_order}.
+
+\paragraph{\texttt{a1b2c3d4e5f6} --- tabela message.} Tworzy \code{message} dla czatu
+pokoju: \code{id} (int, PK, auto-increment), \code{room_id} (int, FK $\rightarrow$
+\code{room.id}, indeks \code{ix_message_room_id}), \code{sender_address} (str, indeks
+\code{ix_message_sender_address}), \code{content} (str), \code{created_at} (datetime,
+indeks \code{ix_message_created_at}).
+
+\paragraph{\texttt{17b0946aadca} --- metadane pokoju.} Dodaje trzy nullable kolumny do
+\code{room}: \code{description} (\code{VARCHAR(500)}, opis), \code{communicator_link}
+(\code{VARCHAR(500)}, link do czatu głosowego, np. Discord) i \code{requirements}
+(\code{VARCHAR(1000)}, warunki dołączenia).
+
+\paragraph{\texttt{4fb1ffbfc7d9} --- wydarzenie i RSVP.} Tworzy tabele harmonogramu.
+\begin{itemize}
+  \item \code{roomevent}: \code{id} (PK), \code{room_id} (FK $\rightarrow$ \code{room.id},
+        \code{ON DELETE CASCADE}, \textbf{unikalny} --- jedno wydarzenie na pokój, Issue
+        \#62), \code{starts_at} (indeks \code{ix_roomevent_starts_at}), \code{created_by}
+        (indeks \code{ix_roomevent_created_by}), \code{created_at}, \code{updated_at}.
+  \item \code{roomeventrsvp}: \code{id} (PK), \code{event_id} (FK $\rightarrow$
+        \code{roomevent.id}, \code{ON DELETE CASCADE}, indeks), \code{user_id} (FK
+        $\rightarrow$ \code{user.id}, \code{ON DELETE CASCADE}, indeks), \code{status}
+        (ENUM \code{rsvpstatus}: \code{present}, \code{absent}, \code{maybe}),
+        \code{updated_at}; dodatkowo \code{UniqueConstraint("event_id", "user_id")}.
+  \item Downgrade jawnie usuwa typ ENUM Postgresa przez
+        \code{sa.Enum(name="rsvpstatus").drop()} (na SQLite nic nie robi).
+\end{itemize}
+
+\paragraph{\texttt{b7e2c1f4d8a3} --- \texttt{ends\_at} wydarzenia.} Dodaje \code{ends_at}
+(datetime, NOT NULL, indeks \code{ix_roomevent_ends_at}) z backfillem dla środowisk, w
+których istnieją już wiersze z poprzedniej migracji: (1) kolumna dodawana jako nullable;
+(2) dla każdego istniejącego wiersza \code{ends_at = starts_at + 2 godziny}; (3) zmiana
+na \code{NOT NULL} przez \code{batch_alter_table} (zgodność z SQLite --- przebudowa
+tabeli; Postgres używa zwykłego \code{ALTER COLUMN}). Nowe wiersze zawsze podają
+\code{ends_at} przez API, więc backfill dotyczy tylko starych wydarzeń.
+
+\paragraph{\texttt{9c3d2e1f0a4b} --- \texttt{lobby\_location}.} Dodaje do \code{room}
+kolumnę \code{lobby_location} (\code{VARCHAR}, NOT NULL, \code{server_default='eu-central'},
+indeks \code{ix_room_lobby_location}). Kolumna dodawana jest od razu jako NOT NULL z
+\code{server_default}, więc backfill nie jest potrzebny --- wartość domyślna obejmuje
+istniejące wiersze.
+
+\paragraph{\texttt{c4a9f1e7b6d2} --- podpis i \texttt{sent\_at}.} Issue \#59: dodaje do
+\code{message} nullable kolumny \code{signature} (str, hex podpisu EIP-191
+\code{personal_sign}) i \code{sent_at} (str, ISO-8601 ustawiony przez klienta, np.
+\code{"2026-06-18T12:00:00Z"}). Obie nullable, więc stare wiadomości pozostają poprawne i
+wyświetlają się jako niezweryfikowane; nowe podpisane wypełniają oba pola, niepodpisane
+zostawiają \code{NULL}.
+
+\section{Konfiguracja backendu}
+\label{sec:dane-konfiguracja}
+
+\subsection{Zmienne środowiskowe}
+\label{sec:konf-env}
+
+W kontenerach środowisko generuje \code{deploy/deploy.sh} do pliku
+\code{.run/<region>.env} z \code{deploy/config.env} (wspólne, niesekretne),
+\code{deploy/site.env} (sekrety) i URL-i regionu. Poza Dockerem backend ładuje plik
+\code{.env} z korzenia projektu (\code{backend/../.env}, wzór w \code{.env.example}): przy
+imporcie \code{config.py} i \code{database.py} wywołują \code{dotenv.load_dotenv()}, jeśli
+plik istnieje; zmienne czytane są przez \code{os.getenv()}.
+
+\begin{longtable}{@{}p{0.27\textwidth}p{0.08\textwidth}p{0.14\textwidth}p{0.4\textwidth}@{}}
+\toprule
+\textbf{Zmienna} & \textbf{Wym.} & \textbf{Domyślnie} & \textbf{Przeznaczenie} \\
+\midrule
+\endhead
+\code{DATABASE_URL} & tak & --- & URL bazy SQLAlchemy (np. \code{postgresql+psycopg://user:pass@host:port/db}); \code{RuntimeError} przy imporcie, gdy brak \\
+\code{JWT_SECRET} & tak & --- & klucz symetryczny do podpisu/weryfikacji JWT HS256; \code{RuntimeError} przy imporcie, gdy brak \\
+\code{JWT_ALGORITHM} & nie & \code{HS256} & algorytm podpisu JWT (używany tylko HS256) \\
+\code{NONCE_EXPIRATION_MINUTES} & nie & \code{5} & czas życia nonce uwierzytelniania \\
+\code{JWT_EXPIRATION_MINUTES} & nie & \code{60} & czas życia tokenu sesji JWT \\
+\code{ROOM_CLEANUP_INTERVAL_SECONDS} & nie & \code{60} & odstęp między przebiegami zadania usuwającego wygasłe pokoje \\
+\code{DEFAULT_RATE_LIMIT} & nie & \code{10/minute} & ciąg limitu slowapi stosowany do każdego endpointu REST \\
+\code{WS_RATE_LIMIT_MAX_MESSAGES} & nie & \code{10} & maks. liczba wiadomości czatu od jednego adresu w oknie \\
+\code{WS_RATE_LIMIT_TIME_WINDOW_SECONDS} & nie & \code{10} & przesuwne okno (s) limitu czatu WebSocket \\
+\code{ADMIN_ADDRESSES} & nie & \code{""} & adresy tożsamości administratorów oddzielone przecinkami, bez rozróżniania wielkości liter \\
+\code{CORS_ORIGINS} & nie & originy localhost & originy przeglądarki dopuszczone do wywołań API, generowane przez \code{deploy.sh} \\
+\code{TRUSTED_PROXY_HOSTS} & nie & \code{127.0.0.1,::1} & IP lub zakresy CIDR, którym ufamy w sprawie \code{CF-Connecting-IP} \\
+\bottomrule
+\end{longtable}
+
+\paragraph{Zmienne Compose dla Postgresa.} Składają się na \code{DATABASE_URL} (\code{.env.example}
+dla uruchomień lokalnych, \code{deploy/config.env} i \code{deploy/site.env} dla wdrożonych
+regionów); sam backend czyta tylko \code{DATABASE_URL}, a poniższe zmienne obsługuje
+usługa \code{db} w \code{compose.yaml}.
+
+\begin{table}[H]
+\centering\small
+\renewcommand{\arraystretch}{1.2}
+\begin{tabularx}{\textwidth}{@{}llY@{}}
+\toprule
+\textbf{Zmienna} & \textbf{Przykład} & \textbf{Przeznaczenie} \\
+\midrule
+\code{POSTGRES_USER} & \code{postgres} & nazwa użytkownika bazy \\
+\code{POSTGRES_PASSWORD} & \code{postgres} & hasło bazy \\
+\code{POSTGRES_DB} & \code{playlink} & nazwa bazy \\
+\code{POSTGRES_HOST} & \code{db} & host bazy (nazwa usługi Docker) \\
+\code{POSTGRES_PORT} & \code{5432} & port bazy \\
+\bottomrule
+\end{tabularx}
+\caption{Zmienne Postgresa w Compose.}
+\end{table}
+
+\begin{lstlisting}
+postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@${POSTGRES_HOST}:${POSTGRES_PORT}/${POSTGRES_DB}
+\end{lstlisting}
+
+\paragraph{Przepisanie \texttt{@db} na \texttt{@localhost}.} Gdy backend działa poza
+Dockerem (np. w lokalnym developmencie), a \code{DATABASE_URL} zawiera \code{@db:},
+\code{database.py} zamienia go na \code{@localhost:}, by połączyć się z lokalnie
+zmapowanym portem Postgresa. Obecność \code{/.dockerenv} wyłącza przepisywanie.
+
+\subsection{Model administratora}
+\label{sec:konf-admin}
+
+Uprawnienia admina leżą \emph{w całości} w \code{ADMIN_ADDRESSES} (brak kolumny
+\code{is_admin} w \code{User}); jedyny sposób nadania lub odebrania to edycja zmiennej
+(w \code{deploy/site.env} dla wdrożonych regionów) i redeploy.
+
+\begin{lstlisting}[language=Python]
+# config.py
+def _parse_admin_addresses(raw: str | None) -> set[str]:
+    """Parsuje wartosc ADMIN_ADDRESSES (po przecinkach) do zbioru.
+    Adresy sa zamieniane na male litery, wiec sprawdzenie nie zalezy od
+    wielkosci liter ani od checksum EIP-55. Pusta/nieustawiona wartosc
+    daje pusty zbior -- system po prostu nie ma adminow."""
+    if not raw:
+        return set()
+    return {part.strip().lower() for part in raw.split(",") if part.strip()}
+
+ADMIN_ADDRESSES: set[str] = _parse_admin_addresses(os.getenv("ADMIN_ADDRESSES"))
+
+def is_admin_address(address: str) -> bool:
+    return address.lower() in ADMIN_ADDRESSES
+\end{lstlisting}
+
+Zbiór \code{ADMIN_ADDRESSES} jest modyfikowalnym obiektem na poziomie modułu, aby testy
+mogły go podmieniać. Zamiana na małe litery po obu stronach czyni sprawdzenie niezależnym
+od wielkości liter EIP-55.
+
+\paragraph{Zależność autoryzacyjna.} Wszystkie endpointy tylko dla admina (usuwanie
+pokoju, CRUD gier, wyrzucanie członków) używają zależności \code{get_admin_address}:
+
+\begin{lstlisting}[language=Python]
+# dependencies.py
+async def get_admin_address(
+    address: Annotated[str, Depends(get_current_user_address)],
+) -> str:
+    if not is_admin_address(address):
+        raise HTTPException(status_code=403, detail="Admin privileges required")
+    return address
+\end{lstlisting}
+
+Najpierw rozwiązuje tożsamość wywołującego zwykłym uwierzytelnieniem JWT
+(\code{get_current_user_address}), potem sprawdza białą listę. Sfałszowany claim
+\code{is_admin} w JWT nie da dostępu, bo źródłem prawdy jest \code{ADMIN_ADDRESSES}.
+
+\paragraph{Flaga admina w odpowiedziach.} Ładunek JWT oraz odpowiedzi
+\code{GET /users/me} i \code{PATCH /users/me} zawierają wartość logiczną \code{is_admin}
+liczoną w momencie odpowiedzi (\code{serializers.py}, \code{_user_payload}:
+\code{"is_admin": is_admin_address(user.identity_address)}).
+
+\paragraph{Kick.} Endpoint \code{POST /rooms/{name}/members/{address}/kick} dostaje
+rozwiązany adres admina jako zależność; ładunek członków oznacza adminów polem
+\code{"is_admin": true} (\code{_members_payload}).
+
+\subsection{Rate limiting}
+\label{sec:konf-rate}
+
+W backendzie działają dwa niezależne mechanizmy.
+
+\paragraph{REST (slowapi).} Konfiguracja przy starcie aplikacji:
+\code{limiter = Limiter(key_func=client_ip_key)} (moduł \code{rate_limit.py}).
+\begin{itemize}
+  \item \textbf{Klucz:} \code{CF-Connecting-IP}, gdy bezpośredni peer jest zaufanym proxy
+        (\code{TRUSTED_PROXY_HOSTS}, IP lub zakresy CIDR: domyślnie loopback;
+        \code{deploy/config.env} ufa dodatkowo prywatnym zakresom Dockera
+        \code{172.16.0.0/12}, \code{192.168.0.0/16}, \code{10.0.0.0/8}, co jest bezpieczne,
+        bo backend nie publikuje portu w trybie publicznym). W przeciwnym razie używany
+        jest adres bezpośredniego peera. \code{X-Forwarded-For} celowo nie jest ufany.
+  \item \textbf{SSR:} loadery i akcje serwerowe SvelteKit przekazują przychodzący
+        \code{CF-Connecting-IP} przez \code{backendFetch}, więc wywołania z przeglądarki i
+        z SSR dzielą ten sam kubełek na gracza.
+  \item \textbf{Okno domyślne:} \code{10/minute} (\code{DEFAULT_RATE_LIMIT}).
+  \item \textbf{Obsługa 429:} standardowy \code{_rate_limit_exceeded_handler} slowapi
+        zwraca \code{429 Too Many Requests}.
+  \item \textbf{Zakres:} każdy endpoint REST ma \code{@limiter.limit(DEFAULT_RATE_LIMIT)},
+        z wyjątkiem sond \code{/healthz} i \code{/readyz}, celowo bez limitu.
+  \item \textbf{Testy:} \code{conftest.py} ustawia \code{app.state.limiter.enabled = False}.
+\end{itemize}
+
+\paragraph{Czat WebSocket.} Endpoint \code{/ws/rooms/<name>/chat} egzekwuje limit
+przesuwnego okna \emph{per adres}, niezależny od slowapi (\code{WS_LIMITS} w
+\code{config.py}, \code{MAX_MSGS} z \code{WS_RATE_LIMIT_MAX_MESSAGES}, \code{WINDOW} z
+\code{WS_RATE_LIMIT_TIME_WINDOW_SECONDS}). W pętli odbioru wiadomości:
+\begin{enumerate}
+  \item usuń z listy znaczników adresu wpisy starsze niż \code{WINDOW} sekund;
+  \item jeśli pozostała długość $\geq$ \code{MAX_MSGS}, zamknij WebSocket kodem \textbf{4429};
+  \item w przeciwnym razie dopisz bieżący znacznik i przetwórz wiadomość.
+\end{enumerate}
+Słownik \code{WS_LIMITS} nie jest czyszczony globalnie: wpisy nieaktywnych adresów
+zostają w pamięci do restartu procesu, ale kosztują tylko kilka liczb zmiennoprzecinkowych
+na adres.
+
+\subsection{CORS}
+\label{sec:konf-cors}
+
+Middleware CORS używa jawnej, sterowanej środowiskiem białej listy:
+\code{CORS_ORIGINS = _parse_origins(os.getenv("CORS_ORIGINS"))}, a
+\code{CORSMiddleware} dostaje \code{allow_origins=CORS_ORIGINS},
+\code{allow_credentials=True}, \code{allow_methods=["*"]}, \code{allow_headers=["*"]}.
+
+\begin{itemize}
+  \item \textbf{Wartość wdrożona:} generowana przez \code{deploy/deploy.sh} z
+        \code{PLAYLINK_DOMAIN}: host wejściowy oraz oba frontendy regionalne
+        (\code{https://playlink.<domena>}, \code{https://playlink-eu.<domena>},
+        \code{https://playlink-us.<domena>}); w trybie lokalnym --- originy localhost.
+  \item \textbf{Domyślnie:} gdy \code{CORS_ORIGINS} nie jest ustawione, backend dopuszcza
+        tylko originy localhost.
+  \item \textbf{allow\_credentials:} \code{True} --- potrzebne dla ciasteczka \code{session}
+        używanego przez BFF frontendu.
+  \item Nie ustawiono \code{expose_headers}; obowiązuje zestaw domyślny.
+\end{itemize}
+
+\subsection{Walidacja nazw użytkowników}
+\label{sec:konf-nazwy}
+
+Zdefiniowana w \code{backend/usernames.py}, wywoływana przez \code{PATCH /users/me}
+(tło projektowe: sekcja~\ref{sec:tozs-nazwy}).
+
+\paragraph{Format.} \code{USERNAME_RE = re.compile(r"^[a-zA-Z0-9_-]{3,20}$")}: nazwa ma
+3--20 znaków i składa się z liter \code{a--z}, \code{A--Z}, cyfr, podkreślnika (\code{_}) lub
+łącznika (\code{-}); bez spacji i białych znaków na brzegach.
+
+\paragraph{Lista wulgaryzmów.} Backend zawiera wbudowaną angielską listę LDNOOBW
+(\emph{List of Dirty, Naughty, Obscene, and Otherwise Bad Words}) w
+\code{backend/data/profanity_en.txt} (git blob
+\code{a438b9ca33af77341768bd6c63ce3e48e726b76e}, pobrana 2026-05-29); sprawdzenie
+działa w pełni offline.
+
+\begin{lstlisting}[language=Python]
+@lru_cache(maxsize=1)
+def load_stoplist() -> frozenset[str]:
+    """Wczytuje liste raz, malymi literami, bez pustych linii."""
+    lines = _STOPLIST_PATH.read_text(encoding="utf-8").splitlines()
+    return frozenset(word.strip().lower() for word in lines if word.strip())
+
+def contains_profanity(name: str) -> bool:
+    """True, jesli `name` jako calosc lub dowolny token rozdzielony `_`/`-`
+    jest slowem z listy. Dokladne dopasowanie calosci/tokenu (zamiast
+    podciagu) unika falszywych trafien jak `assassin`, `classic`, a lapie
+    obejscia typu `xX_fuck_Xx`."""
+    stoplist = load_stoplist()
+    lowered = name.lower()
+    if lowered in stoplist:
+        return True
+    return any(token in stoplist for token in _TOKEN_SPLIT.split(lowered) if token)
+\end{lstlisting}
+
+\begin{itemize}
+  \item dopasowanie całego ciągu do listy;
+  \item podział na tokeny po \code{_} i \code{-} (regex \code{[_-]}) i sprawdzenie każdego
+        niepustego tokenu;
+  \item \textbf{brak dopasowania podciągów}: nazwa \code{assassin} przechodzi, bo ani ona,
+        ani żaden token rozdzielony \code{_}/\code{-} nie jest kompletnym wpisem listy;
+        wielowyrazowe frazy z listy (ze spacjami) nigdy nie pasują do nazwy i są
+        nieaktywne.
+\end{itemize}
+
+\paragraph{Funkcja walidująca.} \code{validate_username(name) -> str | None} zwraca kod
+błędu albo \code{None}: \code{"invalid_format"} (nie spełnia regexa) lub \code{"profane"}
+(trafienie na liście).
+
+\begin{table}[H]
+\centering\small
+\renewcommand{\arraystretch}{1.2}
+\begin{tabularx}{\textwidth}{@{}llY@{}}
+\toprule
+\textbf{Wynik} & \textbf{Znaczenie} & \textbf{Status HTTP w endpoincie} \\
+\midrule
+\code{None} & poprawna & 200 \\
+\code{"invalid_format"} & niezgodna z regexem & 400 \\
+\code{"profane"} & trafienie na liście wulgaryzmów & 400 \\
+\bottomrule
+\end{tabularx}
+\caption{Wyniki walidacji nazwy.}
+\end{table}
+
+Zduplikowane nazwy dają \code{409 Conflict}, wykrywany przez \code{IntegrityError} na
+unikalnym indeksie \code{user.username}. Pełna logika \code{PATCH /users/me} (wg
+specyfikacji): walidacja formatu (400, „Username must be 3--20 characters: letters,
+numbers, \_ or -.”), wulgaryzm (400, „Username contains inappropriate language.”),
+nazwa równa obecnej to sukces bez zmian, nazwa zajęta przez innego to 409 („Username
+already taken.”), przypisanie i commit, a \code{IntegrityError} na unikalnym ograniczeniu
+też daje 409 (zabezpieczenie wyścigu); odpowiedź ma ten sam kształt co \code{GET /users/me}
+(\code{id}, \code{identity_address}, \code{username}, \code{created_at}, \code{last_login},
+\code{is_admin}). Szczegóły endpointu są w części o API backendu.
+
+\section{Uruchomienie i testy backendu (skrót)}
+\label{sec:dane-uruchomienie}
+
+Wymagania lokalnego developmentu backendu: \code{uv}, Python 3.14+ oraz działająca
+instancja PostgreSQL (lub Docker Compose z korzenia). Kolejność: skopiować
+\code{.env.example} do \code{.env}, \code{uv sync}, \code{uv run alembic upgrade head},
+\code{uv run uvicorn main:app --reload} (API pod \code{http://localhost:8000}, interaktywna
+dokumentacja pod \code{/docs}). Kontener czeka na usługę \code{db}, uruchamia migracje i
+startuje uvicorn na porcie 8000. Testy (\code{uv run pytest}) używają SQLite in-memory;
+bramka pokrycia wymaga co najmniej 80\% dla \code{main.py}, \code{models.py},
+\code{database.py} i \code{usernames.py}; zestaw łączy testy jednostkowe z integracyjnymi
+(\code{TestClient}, \code{websocket_connect}) oraz smoke test Alembica, który podnosi
+czystą bazę SQLite do \code{head}. Pełny opis w załącznikach i w części o operacjach.
+
+% SPRZECZNOSC: backend/README.md twierdzi, że CORS jest „hard-coded” w main.py (m.in. playlink.bartek.monster); docs/backend/configuration.md (nowsze) opisuje CORS_ORIGINS sterowane środowiskiem i generowane przez deploy.sh -- przyjęto wersję nowszą.
+% SPRZECZNOSC: analiza z raportu końcowego (01-analiza.tex) podaje CI/CD jako GitHub Actions -> deploy SSH przez Tailscale oraz orkiestrację z Tailscale; docs/architecture.md i README.md opisują Cloudflare Tunnel i wdrożenie pull-based (update.sh, GHCR) -- przyjęto wersję z repo.
+% SPRZECZNOSC: backend/README.md wymienia w models.py tylko User, Nonce, Room, RoomMember, Game i endpointy w main.py; docs/architecture.md opisuje pełniejszy układ (routers/, ws/, Message, RoomEvent, RoomEventRsvp) -- przyjęto nowszy.
+% SPRZECZNOSC: data-model.md przy tabeli room mówi, że wygasłe pokoje czyści „query layer”, a architecture.md i configuration.md -- zadanie w tle co ROOM_CLEANUP_INTERVAL_SECONDS; w tekście podano oba mechanizmy.

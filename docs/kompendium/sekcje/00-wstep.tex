@@ -1,0 +1,29 @@
+\chapter*{Jak czytać ten dokument}
+\addcontentsline{toc}{chapter}{Jak czytać ten dokument}
+
+Kompendium łączy w jednym miejscu trzy dokumenty projektu \textbf{PlayLink Multi-Region}, które
+dotąd żyły osobno: dokument wizji, raport z prac na 18 listopada 2026 roku oraz dokumentację techniczną
+z repozytorium. Treść została scalona i ujednolicona: każdy temat jest opisany raz, a w innych
+miejscach pojawia się tylko odesłanie.
+
+\begin{table}[H]
+\centering\small
+\renewcommand{\arraystretch}{1.25}
+\begin{tabularx}{\textwidth}{@{}p{0.27\textwidth}Y@{}}
+\toprule
+\textbf{Część} & \textbf{Na jakie pytanie odpowiada} \\
+\midrule
+I.\ Wizja projektu & Po co powstaje system, dla kogo, w jakim zakresie, przy jakich założeniach, kosztach i ryzykach oraz po czym poznamy sukces. Zawiera słownik pojęć używanych w całym dokumencie. \\
+II.\ Stan realizacji & Co zostało faktycznie zbudowane i sprawdzone w filarach F1--F7, jak przebiegały kolejne tygodnie prac i jakie wnioski z tego płyną. \\
+III.\ Dokumentacja techniczna & Jak system jest zbudowany: architektura, tożsamość i bezpieczeństwo, model danych, REST API, WebSockety, serwer MCP, frontend, wdrożenie, eksploatacja wieloregionowa, obserwowalność i testy. \\
+Załączniki & Uruchomienie lokalne, zasady współpracy w repozytorium i indeks plików źródłowych. \\
+\bottomrule
+\end{tabularx}
+\caption{Układ kompendium.}
+\end{table}
+
+Czytelnik zainteresowany celem i oceną projektu przeczyta części I i II; osoba rozwijająca lub
+wdrażająca system zacznie od rozdziału o architekturze w części III. Stan opisany w dokumencie
+odpowiada gałęzi \code{main} repozytorium z listopada 2026 roku. Fragmenty dokumentacji pierwotnie
+napisane po angielsku zostały przetłumaczone; nazwy z kodu (pliki, endpointy, zmienne) pozostawiono
+bez zmian.

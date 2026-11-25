@@ -1,0 +1,957 @@
+% =====================================================================
+% Część III — operacje: wdrożenie, runbook, obserwowalność, testowanie
+% =====================================================================
+
+\chapter{Wdrożenie i wydania}
+\label{ch:op-wdrozenie}
+
+Rozdział opisuje lokalne środowisko deweloperskie, infrastrukturę Docker,
+start kontenerów oraz potok CI/wydań. Pełna instrukcja eksploatacji regionów
+(Cloudflare, maszyny Azure, rollback, ćwiczenia awarii) znajduje się w kolejnym
+rozdziale. Źródłami faktów są \code{compose.yaml}, \code{compose.build.yaml},
+\code{compose.ports.yaml}, \code{backend/Dockerfile}, \code{backend/entrypoint.sh},
+\code{frontend/Dockerfile}, \code{.github/workflows/ci.yml},
+\code{.github/workflows/release.yml} oraz katalog \code{deploy/}.
+
+\section{Szybki start lokalny}
+\label{sec:op-start}
+
+\begin{lstlisting}[language=bash]
+# stos EU zbudowany z drzewa roboczego (tryb lokalny)
+deploy/deploy.sh eu
+
+# opcjonalnie: stos US obok
+deploy/deploy.sh us
+\end{lstlisting}
+
+Bez zmiennej \code{PLAYLINK_DOMAIN} w \code{deploy/site.env} skrypt działa w trybie
+lokalnym: sekrety deweloperskie, porty opublikowane na \code{127.0.0.1}, brak tunelu.
+Po starcie dostępne są usługi z tab.~\ref{tab:op-uslugi-lokalne}.
+
+\begin{table}[H]
+\centering\small
+\begin{tabularx}{\textwidth}{@{}p{0.27\textwidth}p{0.33\textwidth}Y@{}}
+\toprule
+\textbf{Usługa} & \textbf{Adres} & \textbf{Uwagi} \\
+\midrule
+Chooser & \code{http://127.0.0.1:3000} & host wejściowy w trybie lokalnym (serwowany przez stos EU) \\
+Frontend EU / US (SvelteKit) & \code{http://localhost:3000} / \code{http://localhost:3001} & build \code{@sveltejs/adapter-node} \\
+Backend EU / US (FastAPI) & \code{http://localhost:8000} / \code{http://localhost:8001} & dokumentacja OpenAPI pod \code{/docs}; sondy \code{/healthz} i \code{/readyz} \\
+Postgres 18 & \code{db:5432} (wewnętrznie) & brak mapowania portu na hosta (patrz niżej) \\
+\bottomrule
+\end{tabularx}
+\caption{Usługi dostępne po lokalnym uruchomieniu.}
+\label{tab:op-uslugi-lokalne}
+\end{table}
+
+\subsection{Skrypt \texttt{deploy/deploy.sh <eu|us> [tag]}}
+
+\begin{table}[H]
+\centering\small
+\begin{tabularx}{\textwidth}{@{}p{0.17\textwidth}Y@{}}
+\toprule
+\textbf{Krok} & \textbf{Zachowanie} \\
+\midrule
+Konfiguracja & Wczytuje \code{deploy/config.env} (wspólne, niesekretne), potem \code{deploy/site.env} (w .gitignore; wzór w \code{site.env.example}) \\
+Tryb & Bez \code{PLAYLINK_DOMAIN}: tryb lokalny (\code{compose.ports.yaml}). Z \code{PLAYLINK_DOMAIN} i \code{TUNNEL_TOKEN_<REGION>}: tryb publiczny przez Cloudflare Tunnel, bez opublikowanych portów; wtedy wymagane są \code{JWT_SECRET} i \code{POSTGRES_PASSWORD} \\
+Plik env & Generuje \code{.run/<region>.env} (tryb 0600): ustawienia wspólne, adresy \code{PUBLIC_*}, \code{CORS_ORIGINS}, sekrety. Token tunelu trafia tylko do \code{cloudflared} \\
+Obrazy & Bez tagu: build z drzewa roboczego (\code{compose.build.yaml}). Z tagiem: pobiera obrazy z \code{ghcr.io} (loguje się, gdy ustawiono \code{GHCR_TOKEN}) \\
+Start & \code{docker compose -p playlink-<region> up -d --wait}; nazwy projektów \code{playlink-eu} / \code{playlink-us} pozwalają uruchomić oba regiony na jednej maszynie \\
+Rollback & Przy nieudanym health-checku wdraża ponownie poprzedni tag z \code{.run/<region>.tag} i kończy się kodem niezerowym \\
+\bottomrule
+\end{tabularx}
+\caption{Działanie \texttt{deploy.sh}.}
+\end{table}
+
+Niepowodzenie logowania do GHCR lub pobrania obrazów kończy skrypt kodem 3;
+\code{deploy/update.sh} nie oznacza wtedy tagu jako nieudanego i ponowi próbę
+przy następnym uruchomieniu.
+
+\subsection{Widoczność portu bazy danych}
+
+Usługa \code{db} w \code{compose.yaml} celowo nie ma dyrektywy \code{ports:}. Reguły
+iptables Dockera omijają UFW i podobne zapory hosta, więc nawet strzeżone
+\code{5432:5432} wystawiłoby Postgresa do internetu. Baza jest osiągalna wyłącznie w
+wewnętrznej sieci compose projektu.
+
+\section{Usługi Docker Compose}
+\label{sec:op-compose}
+
+\code{compose.yaml} opisuje jeden stos regionalny. Dodatkowe pliki dołącza
+\code{deploy.sh}:
+
+\begin{table}[H]
+\centering\small
+\begin{tabularx}{\textwidth}{@{}p{0.25\textwidth}p{0.22\textwidth}Y@{}}
+\toprule
+\textbf{Plik} & \textbf{Dołączany, gdy} & \textbf{Efekt} \\
+\midrule
+\code{compose.build.yaml} & brak tagu & buduje \code{backend} i \code{frontend} z \code{./backend} i \code{./frontend} \\
+\code{compose.ports.yaml} & brak \code{PLAYLINK_DOMAIN} & publikuje \code{127.0.0.1:${BACKEND_PORT}:8000} i \code{127.0.0.1:${FRONTEND_PORT}:3000} \\
+\bottomrule
+\end{tabularx}
+\caption{Pliki compose dołączane przez \texttt{deploy.sh}.}
+\end{table}
+
+Wszystkie usługi czytają plik env wskazany przez \code{APP_ENV_FILE}
+(\code{.run/<region>.env}). Adresowanie odbywa się po nazwach usług w domyślnej
+sieci projektu (np.\ \code{http://backend:8000}); nie ma statycznych adresów IP
+kontenerów. Wolumen \code{postgres_data} (nazwany wolumen Dockera,
+montowany w \code{/var/lib/postgresql}) przeżywa restarty kontenerów; reset bazy
+wymaga ręcznego usunięcia wolumenu.
+
+\subsection{Usługa \texttt{db} (Postgres 18)}
+
+\begin{itemize}
+  \item obraz \code{postgres:18-alpine}; brak portów; wolumen \code{postgres_data:/var/lib/postgresql};
+  \item limity: \code{mem_limit: 320m}, dostrojone \code{shared_buffers} i \code{max_connections};
+  \item healthcheck: \code{pg_isready -U $POSTGRES_USER -d $POSTGRES_DB} --- interwał 10 s, timeout 5 s, 10 prób, \code{start_period} 20 s.
+\end{itemize}
+
+\subsection{Usługa \texttt{backend} (FastAPI)}
+
+\begin{itemize}
+  \item obraz \code{ghcr.io/ioad-modul-sumatywny-26/playlink-backend:${IMAGE_TAG:-local}};
+  \item porty tylko w trybie lokalnym: \code{127.0.0.1:${BACKEND_PORT}:8000};
+  \item zależność od \code{db} z warunkiem \code{service_healthy}; \code{mem_limit: 320m};
+  \item healthcheck: GET \code{http://127.0.0.1:8000/readyz} przez Python \code{urllib} --- interwał 10 s, timeout 5 s, 10 prób, \code{start_period} 30 s.
+\end{itemize}
+
+\subsection{Usługa \texttt{frontend} (SvelteKit)}
+
+\begin{itemize}
+  \item obraz \code{ghcr.io/ioad-modul-sumatywny-26/playlink-frontend:${IMAGE_TAG:-local}}; porty tylko w trybie lokalnym;
+  \item środowisko: \code{BACKEND_INTERNAL_URL=http://backend:8000}, \code{PROTOCOL_HEADER=x-forwarded-proto}; host pochodzi z oryginalnego nagłówka \code{Host};
+  \item zależność od \code{backend} (\code{service_healthy}); \code{mem_limit: 256m};
+  \item healthcheck: \code{bun -e "fetch('http://127.0.0.1:3000/healthz')"} --- interwał 10 s, timeout 5 s, 10 prób.
+\end{itemize}
+
+\code{BACKEND_INTERNAL_URL} służy funkcjom \code{load} i akcjom formularzy SvelteKit
+po stronie serwera do wywołań wewnątrz sieci kontenerów; kod przeglądarki używa
+\code{PUBLIC_BACKEND_URL} i \code{PUBLIC_WS_URL}.
+
+\paragraph{Nie ustawiaj \texttt{ORIGIN}.} Na kontenerze frontendu obsługującym
+zarówno host wejściowy, jak i hosta regionalnego nie wolno ustawiać \code{ORIGIN}.
+\code{@sveltejs/adapter-node} bierze schemat z \code{X-Forwarded-Proto}, a host z
+oryginalnego \code{Host} (cloudflared go zachowuje); stały \code{ORIGIN} uczyniłby
+\code{playlink.<domain>} i \code{playlink-eu.<domain>} nieodróżnialnymi. Zwykły
+localhost po http nie ma nagłówka proxy, dlatego \code{frontend/svelte.config.js}
+wymienia \code{http://localhost:3000} i \code{http://localhost:3001} jako zaufane
+źródła CSRF.
+
+\subsection{Usługa \texttt{cloudflared} (Cloudflare Tunnel)}
+
+\begin{itemize}
+  \item obraz \code{cloudflare/cloudflared:2025.10.0}, polecenie \code{tunnel --no-autoupdate run};
+  \item \code{TUNNEL_TOKEN} (\code{TUNNEL_TOKEN_<REGION>} z \code{site.env}) --- nigdy w linii poleceń;
+  \item profil \code{tunnel}: włączany przez \code{deploy.sh}, gdy ustawiono token; pomijany w trybie lokalnym;
+  \item zależy od zdrowego \code{frontend};
+  \item trasy konfiguruje się w tunelu na Cloudflare: hosty frontendu $\rightarrow$ \code{http://frontend:3000}, hosty API $\rightarrow$ \code{http://backend:8000}.
+\end{itemize}
+
+\section{Start kontenerów}
+\label{sec:op-start-kontenerow}
+
+\subsection{Obraz backendu}
+
+Bazą jest \code{ghcr.io/astral-sh/uv:python3.14-bookworm-slim}. Budowa ma dwa etapy
+\code{uv sync}:
+
+\begin{enumerate}
+  \item \textbf{tylko zależności} --- z kontekstu montowane są \code{uv.lock} i \code{pyproject.toml}, polecenie \code{uv sync --frozen --no-install-project --no-dev}; warstwy są cache'owane, więc edycja kodu nie wymusza ponownego rozwiązywania zależności;
+  \item \textbf{instalacja projektu} --- kopiowanie całego kodu i \code{uv sync --frozen --no-dev}.
+\end{enumerate}
+
+Zmienne: \code{UV_COMPILE_BYTECODE=1}, \code{UV_LINK_MODE=copy}, \code{PATH} z
+\code{/app/.venv/bin}. \code{ENTRYPOINT} jest zerowany (odrzucony entrypoint \code{uv}
+z obrazu bazowego), a użytkownik \code{nonroot} (uid/gid 999) powstaje przy
+budowie. Komenda startowa: \code{CMD ["/app/entrypoint.sh"]}.
+
+\subsection{Entrypoint backendu (\texttt{entrypoint.sh})}
+
+Kolejne kroki:
+
+\begin{enumerate}
+  \item \textbf{pętla gotowości bazy} --- do 30 prób co 2~s; test łączności TCP z hostem \code{db} na porcie \code{5432} surowym gniazdem Pythona; wyjście z pętli przy pierwszym sukcesie, twarde niepowodzenie po wyczerpaniu prób (log „DB not ready yet (i/30)'');
+  \item \code{alembic upgrade head} --- zastosowanie wszystkich oczekujących migracji;
+  \item \code{exec uvicorn main:app --host 0.0.0.0 --port 8000} --- zastąpienie procesu powłoki serwerem ASGI.
+\end{enumerate}
+
+Skrypt działa z \code{set -e}. Ponieważ migracje wykonują się przy każdym starcie,
+rollback obrazu jest bezpieczny tylko wtedy, gdy nieudane wydanie nie wniosło
+migracji (szczegóły w rozdziale o runbooku).
+
+\subsection{Obraz frontendu}
+
+Bazą jest \code{oven/bun:1-slim}; trzy etapy:
+
+\begin{table}[H]
+\centering\small
+\begin{tabularx}{\textwidth}{@{}p{0.15\textwidth}Y@{}}
+\toprule
+\textbf{Etap} & \textbf{Przeznaczenie} \\
+\midrule
+\code{base} & ustawia \code{WORKDIR /usr/src/app} \\
+\code{build} & \code{bun install --frozen-lockfile}, kopiuje źródła, \code{bun run build} \\
+\code{runtime} & kopiuje zależności produkcyjne i wynik \code{build/}, ustawia \code{NODE_ENV=production}, \code{HOST=0.0.0.0}, \code{PORT=3000} \\
+\bottomrule
+\end{tabularx}
+\caption{Etapy obrazu frontendu.}
+\end{table}
+
+Polecenie uruchomieniowe: \code{CMD ["bun", "run", "build/index.js"]}. W obrazie nie ma
+wypieczonego pliku \code{.env}; zmienne środowiskowe wstrzykuje \code{docker compose}
+(\code{env_file} / \code{environment}).
+
+\subsection{Rozpoznawanie Dockera w \texttt{DATABASE\_URL}}
+
+W \code{backend/database.py} (i powielone w \code{alembic/env.py}) działa heurystyka:
+jeśli \code{DATABASE_URL} zawiera \code{@db:} i nie istnieje plik \code{/.dockerenv}, host
+\code{@db:} jest zamieniany na \code{@localhost:}. Dzięki temu ten sam plik \code{.env}
+działa zarówno w Docker Compose (gdzie \code{db} rozwiązuje się przez sieć mostkową),
+jak i w pracy lokalnej z Postgresem na hoście. Pełna lista zmiennych konfiguracyjnych
+jest w części poświęconej architekturze i konfiguracji.
+
+\section{CI i wydania}
+\label{sec:op-ci}
+
+Wydania są oparte na tagach i pull-based; instrukcja operacyjna jest w rozdziale o
+runbooku.
+
+\begin{table}[H]
+\centering\small
+\begin{tabularx}{\textwidth}{@{}p{0.17\textwidth}p{0.25\textwidth}Y@{}}
+\toprule
+\textbf{Workflow} & \textbf{Wyzwalacz} & \textbf{Zadanie} \\
+\midrule
+\code{ci.yml} & PR / push do \code{main} (z pominięciem zmian w \code{docs/**}, \code{prezentacje/**}, \code{**/*.md}) lub wywołanie z Release & lint, testy, round-trip i kontrola dryfu Alembica, walidacja Compose, shellcheck skryptów \code{deploy/*.sh}, build obrazów bez pushu \\
+\code{release.yml} & tag \code{vX.Y.Z} (także \code{vX.Y.Z-*}) & uruchamia CI, buduje i wypycha obrazy backendu i frontendu do GHCR, tworzy GitHub Release \\
+\bottomrule
+\end{tabularx}
+\caption{Workflowy GitHub Actions.}
+\end{table}
+
+\subsection{Zadania CI}
+
+\begin{itemize}
+  \item \code{backend-lint} --- Ruff check i Ruff format check (Python 3.14, uv);
+  \item \code{backend-test} --- pytest z bramką \code{--cov-fail-under=80} dla modułów \code{main}, \code{models}, \code{database}, \code{usernames};
+  \item \code{backend-migrations} --- migracje na prawdziwym \code{postgres:18-alpine}: \code{alembic upgrade head}, round-trip \code{alembic downgrade -1} i ponowny \code{upgrade head}, \code{alembic check} (dryf modeli i migracji);
+  \item \code{frontend-lint} --- ESLint (\code{bun run lint}) i \code{prettier --check};
+  \item \code{frontend-test} --- \code{bun run test} (Vitest);
+  \item \code{compose-config} --- walidacja plików compose (profile \code{tunnel} i \code{observability}, \code{compose.observability.yaml}) oraz \code{shellcheck -x deploy/*.sh};
+  \item \code{build-test} --- build obrazów bez pushu.
+\end{itemize}
+
+\subsection{Wydanie obrazów}
+
+\code{release.yml} wykonuje kolejno: zadanie \code{verify} (to samo CI), macierz
+\code{build-push} (backend i frontend; \code{linux/amd64}, cache GHA, provenance i SBOM,
+argumenty \code{APP_VERSION} i \code{GIT_SHA}) oraz \code{release} (GitHub Release;
+tag \code{vX.Y.Z-rc.N} pozostaje pre-release, więc VM śledzące „latest'' go nie
+pobierają). Tagi obrazów: tag wydania, \code{major.minor}, \code{major} oraz pełny SHA.
+
+\subsection{Wdrożenie pull-based}
+
+Nie ma workflowów wdrożeniowych. Każda VM regionu ma timer systemd (co 2 minuty,
+instalowany przez \code{deploy/cloud-init.yaml}) uruchamiający
+\code{deploy/update.sh <region>} (rys.~\ref{fig:op-wdrozenie-pull}):
+
+\begin{enumerate}
+  \item ustala najnowsze GitHub Release albo \code{PLAYLINK_TAG} z \code{site.env}, jeśli ustawiono;
+  \item pomija, gdy ten tag już działa lub wcześniej zawiódł (\code{.run/<region>.tag}, \code{.run/<region>.failed});
+  \item tylko US: czeka, aż \code{/healthz} regionu EU zgłosi tę samą wersję --- wadliwe wydanie zatrzymuje się na EU;
+  \item wykonuje checkout tagu i \code{deploy/deploy.sh <region> <tag>}, które pobiera obrazy i cofa wdrożenie przy nieudanym health-checku.
+\end{enumerate}
+
+Maszyny nigdy nie budują obrazów. Do wdrożeń nie są potrzebne sekrety GitHub;
+pakiety GHCR muszą być publiczne albo należy ustawić \code{GHCR_USER} / \code{GHCR_TOKEN}
+w \code{site.env}. Rollback to zmiana tagu, nie przebudowa. VM regionów tworzy
+\code{deploy/azure-vm.sh} (bez portów przychodzących).
+
+\fig{wdrozenie-pull.png}{0.85}{Wdrożenie pull-based: wydanie na GHCR, timery na maszynach regionów, kolejność EU $\rightarrow$ US.}
+\label{fig:op-wdrozenie-pull}
+
+% =====================================================================
+\chapter{Eksploatacja wieloregionowa (runbook)}
+\label{ch:op-runbook}
+
+\section{Bieżące wdrożenie testowe}
+\label{sec:op-biezace}
+
+\begin{table}[H]
+\centering\small
+\begin{tabularx}{\textwidth}{@{}p{0.13\textwidth}p{0.2\textwidth}p{0.17\textwidth}Y@{}}
+\toprule
+\textbf{Region} & \textbf{Lokalizacja Azure} & \textbf{Grupa zasobów / VM} & \textbf{Nazwy publiczne} \\
+\midrule
+EU & \code{polandcentral} & \code{playlink-eu} & \code{playlink.nikodemnowak.pl}, \code{playlink-eu.nikodemnowak.pl}, \code{playlink-eu-api.nikodemnowak.pl} \\
+US & \code{denmarkeast} (zastępczo) & \code{playlink-us} & \code{playlink-us.nikodemnowak.pl}, \code{playlink-us-api.nikodemnowak.pl} \\
+Logi i metryki & \code{polandcentral} & \code{playlink-ops} & \code{playlink-grafana.nikodemnowak.pl}, \code{playlink-metrics.nikodemnowak.pl}, \code{playlink-logs.nikodemnowak.pl} (rozdział o obserwowalności) \\
+\bottomrule
+\end{tabularx}
+\caption{Wdrożenie testowe.}
+\end{table}
+
+\begin{itemize}
+  \item Subskrypcja: Azure for Students --- zezwala tylko na regiony europejskie, więc stos „US'' działa w Danii do czasu sfinansowania maszyny w USA; mechanizm jest identyczny.
+  \item Tunele \code{playlink-eu} / \code{playlink-us} / \code{playlink-ops} należą do konta Cloudflare właściciela domeny \code{nikodemnowak.pl}.
+  \item VM regionów są przypięte do \code{PLAYLINK_TAG=v0.2.0-rc.2}. Przed pierwszym wydaniem bez przyrostka rc należy zdjąć przypięcie (i uruchomić \code{deploy/azure-env.sh eu} / \code{us}), inaczej zostaną na rc.2. VM ops śledzi gałąź (\code{PLAYLINK_OPS_REF}, domyślnie \code{main}), a nie tagi.
+  \item Obrazy w GHCR są prywatne; VM pobierają je tokenem \code{read:packages} z \code{site.env}. Upublicznienie pakietów znosi tę potrzebę.
+\end{itemize}
+
+\subsection{Codzienne operacje (z dowolnej maszyny)}
+
+Po zainstalowaniu Azure CLI i sklonowaniu repozytorium:
+
+\begin{lstlisting}[language=bash]
+az login                      # konto z subskrypcją Azure for Students
+deploy/azure.sh status        # stan zasilania, wersja, kontenery
+deploy/azure.sh stop          # dealokacja wszystkich VM (brak opłat za compute)
+deploy/azure.sh start         # start wszystkich; stos działa po ok. 2 minutach
+deploy/azure.sh logs eu       # log updatera i kontenery jednego regionu
+\end{lstlisting}
+
+Bez argumentu polecenia dotyczą \code{eu}, \code{us} i \code{ops} (gdy istnieje);
+\code{stop} / \code{start} / \code{logs} przyjmują też jeden z nich. Dane przeżywają
+zatrzymanie: Postgres leży na dysku systemowym.
+
+\code{deploy/site.env} (sekrety, tokeny tuneli) istnieje tylko na maszynie, która
+utworzyła VM, i na samych VM. Aby pracować z innej maszyny, odtwarza się go z obu VM:
+
+\begin{lstlisting}[language=bash]
+deploy/azure.sh site-env eu   # PLAYLINK_DOMAIN, TUNNEL_TOKEN_EU, JWT_SECRET, ...
+deploy/azure.sh site-env us   # dodaje TUNNEL_TOKEN_US
+\end{lstlisting}
+
+\section{Topologia}
+\label{sec:op-topologia}
+
+Nazwy hostów wynikają z \code{PLAYLINK_DOMAIN} i pozostają jeden poziom pod domeną,
+ponieważ darmowy Universal SSL Cloudflare obejmuje wyłącznie \code{*.<domain>}.
+
+\begin{table}[H]
+\centering\small
+\begin{tabularx}{\textwidth}{@{}p{0.38\textwidth}p{0.12\textwidth}Y@{}}
+\toprule
+\textbf{Host} & \textbf{Tunel} & \textbf{Usługa compose} \\
+\midrule
+\code{playlink.<domain>} & EU & \code{frontend:3000} (wejście i chooser) \\
+\code{playlink-eu.<domain>} & EU & \code{frontend:3000} \\
+\code{playlink-eu-api.<domain>} & EU & \code{backend:8000} \\
+\code{playlink-us.<domain>} & US & \code{frontend:3000} \\
+\code{playlink-us-api.<domain>} & US & \code{backend:8000} \\
+\bottomrule
+\end{tabularx}
+\caption{Hosty publiczne i ich trasy.}
+\end{table}
+
+Każdy region uruchamia \code{db}, \code{backend}, \code{frontend} i \code{cloudflared} jako
+osobny projekt compose (\code{playlink-eu}, \code{playlink-us}). Tunel jest jedynym
+wejściem; w trybie publicznym nie jest publikowany żaden port.
+\code{playlink.<domain>} wskazuje na stos EU i serwuje wybór regionu: gdy EU leży
+w całości, host wejściowy też, ale \code{playlink-us.<domain>} pozostaje osiągalny
+bezpośrednio.
+
+\section{Jedno polecenie wdrożenia}
+\label{sec:op-jedno-polecenie}
+
+\code{deploy/deploy.sh <eu|us> [tag]} jest jedynym poleceniem wdrożenia i działa tak
+samo na laptopie i na VM regionu: \code{deploy/deploy.sh eu} buduje obrazy z drzewa
+roboczego, \code{deploy/deploy.sh us v0.2.0} pobiera obrazy \code{ghcr.io} dla danego
+tagu. Skrypt czyta \code{deploy/config.env} i \code{deploy/site.env}, zapisuje env
+kontenerów do \code{.run/<region>.env}, startuje stos przez \code{up --wait} i przy braku
+zdrowia wraca do poprzedniego tagu (\code{.run/<region>.tag}).
+
+Wspólne, niesekretne ustawienia z \code{deploy/config.env} obejmują m.in.:
+\code{GITHUB_REPO=ioad-modul-sumatywny-26/playlink}, \code{POSTGRES_USER}/\code{POSTGRES_DB}
+=\code{playlink}, \code{JWT_ALGORITHM=HS256}, \code{NONCE_EXPIRATION_MINUTES=5},
+\code{JWT_EXPIRATION_MINUTES=60}, \code{ROOM_CLEANUP_INTERVAL_SECONDS=60},
+\code{DEFAULT_RATE_LIMIT=10/minute}, \code{WS_RATE_LIMIT_MAX_MESSAGES=10},
+\code{WS_RATE_LIMIT_TIME_WINDOW_SECONDS=10} oraz \code{TRUSTED_PROXY_HOSTS}
+(\code{127.0.0.1}, \code{::1}, \code{172.16.0.0/12}, \code{192.168.0.0/16}, \code{10.0.0.0/8}) ---
+peerzy uprawnieni do ustawiania \code{CF-Connecting-IP}: cloudflared i kontener frontendu.
+
+\subsection{Tryb lokalny}
+
+Bez \code{PLAYLINK_DOMAIN} stos działa na localhost z sekretami deweloperskimi i bez
+tunelu: EU --- frontend \code{http://localhost:3000}, API \code{http://localhost:8000};
+US --- frontend \code{http://localhost:3001}, API \code{http://localhost:8001}. Chooser
+jest pod \code{http://127.0.0.1:3000}. Oba regiony mogą działać na jednej maszynie.
+
+\subsection{Tryb publiczny}
+
+W \code{deploy/site.env} ustawia się \code{PLAYLINK_DOMAIN}, \code{TUNNEL_TOKEN_<REGION>},
+\code{JWT_SECRET} i \code{POSTGRES_PASSWORD}. \code{JWT_SECRET} musi być identyczny we
+wszystkich regionach (\code{openssl rand -hex 32}). Skrypt generuje \code{CORS_ORIGINS}
+(host wejściowy i oba frontendy) oraz adresy \code{PUBLIC_*} z domeny.
+
+\section{Cloudflare}
+\label{sec:op-cloudflare}
+
+\begin{enumerate}
+  \item Utwórz po jednym \textbf{zdalnie zarządzanym} tunelu na region w Zero Trust (np.\ \code{playlink-eu}, \code{playlink-us}).
+  \item Dodaj publiczne hosty z tabeli topologii. Adresy usług muszą być nazwami usług Dockera, nie \code{localhost}: hosty frontendu $\rightarrow$ \code{http://frontend:3000}, hosty API $\rightarrow$ \code{http://backend:8000}.
+  \item Token każdego tunelu (zaczyna się od \code{eyJh...}) wpisz do \code{deploy/site.env} jako \code{TUNNEL_TOKEN_EU} / \code{TUNNEL_TOKEN_US}.
+  \item DNS musi być proxied. SSL/TLS: \textbf{Full}, Always Use HTTPS, minimalne TLS 1.2. Wyłącz Rocket Loader.
+  \item Cache: omijaj hosty \code{-api}, \code{/ws/*}, \code{/healthz}, \code{/readyz}; zasoby statyczne mogą być cache'owane.
+  \item WebSockety działają przez tunel; zachowaj istniejący heartbeat co 30 s.
+\end{enumerate}
+
+Token tunelu identyfikuje dokładnie jeden tunel. \textbf{Nie} używa się jednego
+tokenu w obu regionach w nadziei na wybór regionu: powstają wtedy repliki HA tego
+samego hosta, a Cloudflare rozkłada ruch losowo. Zmiana domeny (np.\ na domenę
+współpracownika) oznacza zmianę \code{PLAYLINK_DOMAIN} i nowe tunele; nic więcej się
+nie zmienia.
+
+\section{Maszyny Azure}
+\label{sec:op-azure}
+
+Wymagania: \code{az login} oraz w lokalnym \code{deploy/site.env} wartości
+\code{PLAYLINK_DOMAIN}, token tunelu regionu, \code{JWT_SECRET} i \code{POSTGRES_PASSWORD}.
+
+\begin{lstlisting}[language=bash]
+deploy/azure-vm.sh eu polandcentral
+deploy/azure-vm.sh us denmarkeast
+\end{lstlisting}
+
+Azure for Students ogranicza wdrożenia do \code{polandcentral}, \code{germanywestcentral},
+\code{francecentral}, \code{denmarkeast} i \code{spaincentral} (polityka „Allowed resource
+deployment regions''), więc drugi region to odległy region europejski, a nie USA.
+Rozmiar \code{Standard_B2ats_v2} wyczerpał pulę pojemności dla tej subskrypcji w
+Germany West Central, France Central i później Spain Central; przed utworzeniem VM
+należy to sprawdzić:
+
+\begin{lstlisting}[language=bash]
+az vm list-skus -l <location> --size Standard_B2ats_v2 --all --query "[].restrictions[].type"
+\end{lstlisting}
+
+Ograniczenie typu \code{Location} oznacza niedostępność; \code{Zone} wyklucza tylko
+niektóre strefy (skrypt tworzy VM niestrefowe).
+
+Dla każdego regionu skrypt tworzy grupę zasobów \code{playlink-<region>} z jedną VM
+\code{Standard_B2ats_v2} (Ubuntu 24.04, dysk 64 GB Premium P6) i \textbf{bez żadnych
+reguł NSG dla ruchu przychodzącego}. \code{cloud-init.yaml} instaluje Dockera, dodaje
+plik swap 2 GB, klonuje repozytorium do \code{/opt/playlink} i włącza
+\code{playlink-update.timer}. Następnie skrypt przesyła \code{site.env} na VM przez
+\code{az vm run-command} i wyzwala pierwszą aktualizację.
+
+Administracja również odbywa się przez \code{az vm run-command}; SSH nie jest potrzebne.
+Po zmianie \code{deploy/site.env} (sekrety, \code{PLAYLINK_TAG}, \code{GHCR_TOKEN})
+uruchamia się \code{deploy/azure-env.sh <region>}: wysyła plik, czyści znacznik
+nieudanego wydania i wyzwala aktualizację. Log aktualizatora:
+
+\begin{lstlisting}[language=bash]
+az vm run-command invoke -g playlink-eu -n playlink-eu --command-id RunShellScript \
+  --scripts 'journalctl -u playlink-update -n 50 --no-pager'
+\end{lstlisting}
+
+Region usuwa się poleceniem \code{az group delete -n playlink-<region>}. Jeśli VM
+z 1~GiB pamięci wyczerpuje pamięć przy czterech kontenerach, należy zmienić
+rozmiar na \code{Standard_B1ms} (2~GiB) i odnotować koszt.
+
+\section{Wydanie i wdrażanie stopniowe}
+\label{sec:op-wydanie}
+
+\begin{lstlisting}[language=bash]
+git tag -a v0.1.0 -m "multi-region deploy"
+git push origin v0.1.0
+\end{lstlisting}
+
+\begin{enumerate}
+  \item \code{release.yml} uruchamia CI, wypycha obrazy \code{playlink-backend} i \code{playlink-frontend} do GHCR i tworzy GitHub Release.
+  \item VM są pull-based: timer systemd (co 2 minuty) uruchamia \code{deploy/update.sh <region>}, który wdraża najnowsze wydanie albo \code{PLAYLINK_TAG} z \code{site.env}.
+  \item Wdrożenie stopniowe: US czeka, aż \code{/healthz} EU zgłosi daną wersję. Wydanie, które nie przejdzie health-checku, zatrzymuje się na EU; tag trafia do \code{.run/<region>.failed} i nie jest ponawiany. Wydanie, którego obrazów jeszcze nie da się pobrać, jest ponawiane przy następnym przebiegu.
+  \item Sekrety GitHub nie są potrzebne. Pakiety GHCR muszą być publiczne albo trzeba ustawić \code{GHCR_USER} / \code{GHCR_TOKEN} (token z \code{read:packages}) w \code{site.env}.
+\end{enumerate}
+
+Weryfikacja:
+
+\begin{lstlisting}[language=bash]
+curl -fsS https://playlink-eu-api.<domain>/healthz
+curl -fsS https://playlink-us-api.<domain>/healthz
+curl -I https://playlink-eu.<domain>/
+curl -I https://playlink-us.<domain>/
+curl -I https://playlink.<domain>/
+\end{lstlisting}
+
+Host wejściowy otwarty w przeglądarce na czystym profilu sonduje oba regiony i
+przekierowuje do szybszego żywego; parametr \code{?region=us} lub \code{?region=eu}
+wymusza region.
+
+\section{Rollback}
+\label{sec:op-rollback}
+
+\paragraph{Automatyczny.} Jeśli \code{up --wait} się nie powiedzie, \code{deploy.sh}
+wdraża ponownie poprzedni tag. Backend wykonuje \code{alembic upgrade head} przy
+starcie, więc to działa tylko wtedy, gdy nieudane wydanie nie dodało migracji;
+w przeciwnym razie trzeba najpierw obniżyć wersję bazy
+(\code{docker compose -p playlink-<region> run --rm backend alembic downgrade <revision>})
+albo iść naprzód. Migracje powinny być wstecznie zgodne, aby poprzedni obraz
+działał na nowym schemacie.
+
+\paragraph{Ręczny.} Ustaw \code{PLAYLINK_TAG=<poprzedni tag>} w \code{deploy/site.env}
+regionu (timer wdroży go sam) albo na VM:
+
+\begin{lstlisting}[language=bash]
+cd /opt/playlink
+bash deploy/deploy.sh eu v0.1.0
+\end{lstlisting}
+
+\section{Ćwiczenia awarii}
+\label{sec:op-awarie}
+
+Wykonywane na maszynie regionu; nazwy projektów to \code{playlink-eu} / \code{playlink-us}.
+
+\begin{table}[H]
+\centering\small
+\begin{tabularx}{\textwidth}{@{}p{0.17\textwidth}p{0.36\textwidth}Y@{}}
+\toprule
+\textbf{Ćwiczenie} & \textbf{Polecenie} & \textbf{Oczekiwany efekt} \\
+\midrule
+Awaria backendu (EU) & \code{docker compose -p playlink-eu stop backend} & \code{playlink-eu-api/healthz} zawodzi; sonda wejścia wybiera US; \code{playlink-us} pozostaje zdrowy \\
+Awaria tunelu (EU) & \code{docker compose -p playlink-eu stop cloudflared} & hosty EU zwracają Cloudflare 1033/502; US działa \\
+Awaria bazy (EU) & \code{docker compose -p playlink-eu stop db} & \code{/readyz} zwraca 503, backend raportuje niezdrowy (nie jest restartowany); US bez zmian \\
+Powrót regionu & \code{docker compose -p playlink-eu start db backend cloudflared} & zdrowie wraca; wygasłe pokoje są sprzątane przez TTL \\
+\bottomrule
+\end{tabularx}
+\caption{Ćwiczenia awarii.}
+\end{table}
+
+Dla raportu F5 należy zapisać czas wykrycia, czas przełączenia i czas
+odzyskania. Host wejściowy opiera się na EU, więc całkowita awaria EU wyłącza
+także wejście; należy udokumentować, że \code{playlink-us.<domain>} jest
+bezpośrednim rozwiązaniem zastępczym.
+
+\section{Rozwiązywanie problemów}
+\label{sec:op-problemy}
+
+\begin{itemize}
+  \item \textbf{Cloudflare 1033} --- brak zdrowego konektora. Sprawdź \code{docker compose -p playlink-<region> logs cloudflared} pod kątem „Registered tunnel connection''; token ma zaczynać się od \code{eyJh...} i należeć do tunelu, do którego należy rekord DNS. UUID ani klucz API nie jest tokenem tunelu.
+  \item \textbf{Cloudflare 502} --- konektor działa, ale adres usługi jest błędny. Użyj \code{http://frontend:3000} / \code{http://backend:8000}, nie \code{localhost}.
+  \item \textbf{403 CSRF przy formularzach} --- frontend musi dostawać \code{X-Forwarded-Proto} i oryginalny \code{Host}; nie ustawiaj \code{ORIGIN} na kontenerze obsługującym host wejściowy i regionalny.
+  \item \textbf{429 dla wszystkich} --- backend widzi konektor/frontend jako jednego klienta. Sprawdź, czy \code{TRUSTED_PROXY_HOSTS} (IP lub CIDR) obejmuje sieć Dockera i czy SSR przekazuje \code{CF-Connecting-IP}.
+  \item \textbf{\code{password authentication failed} po odtworzeniu bazy} --- wolumen Postgresa zainicjowano innym hasłem. Użyj tego samego \code{POSTGRES_PASSWORD} albo świadomie odtwórz wolumen.
+  \item \textbf{OOM / pętla restartów} --- sprawdź \code{docker stats} i \code{dmesg}; zmniejsz \code{mem_limit}, dodaj swap albo zmień rozmiar na \code{Standard_B1ms}.
+  \item \textbf{GHCR denied} --- pakiet jest prywatny; upublicznij go albo ustaw \code{GHCR_USER} / \code{GHCR_TOKEN} w \code{site.env}.
+  \item \textbf{US zostaje na starej wersji} --- oczekiwane, dopóki EU nie zgłasza nowej wersji w \code{/healthz} lub po nieudanym wydaniu EU; sprawdź log aktualizatora.
+\end{itemize}
+
+\section{Koszty i utrzymanie}
+\label{sec:op-koszty}
+
+\begin{itemize}
+  \item 750 darmowych godzin \code{Standard_B2ats_v2} to jedna pula miesięczna, nie na VM: jedna VM działająca cały miesiąc ją zużywa, druga jest opłacana z kredytu studenckiego (około 7--8 USD miesięcznie). Dwa dyski 64 GB P6 są bezpłatne; dwa publiczne adresy IP Standard kosztują około 3--4 USD miesięcznie za sztukę, jeśli nie są pokryte. Rzeczywistą kwotę należy sprawdzić w Cost Management.
+  \item Gdy nie trwają testy, VM należy dealokować (\code{deploy/azure.sh stop}); zdealokowana VM nie zużywa godzin compute.
+  \item Dostępność \code{Standard_B2ats_v2} zmienia się w czasie (Germany West Central, France Central i Spain Central odmówiły); Poland Central i Denmark East działają obecnie.
+  \item Tokeny tuneli należy rotować po wycieku; token pozwala uruchomić konektor tego tunelu.
+\end{itemize}
+
+% =====================================================================
+\chapter{Obserwowalność}
+\label{ch:op-obserwowalnosc}
+
+Jedno miejsce do oglądania logów i zużycia zasobów każdego regionu:
+\textbf{Grafana} (dashboardy), \textbf{VictoriaLogs} (logi) i \textbf{VictoriaMetrics}
+(metryki). Każdy region uruchamia obok aplikacji dwa małe kontenery:
+\textbf{Vector} (wysyła logi i metryki) oraz \textbf{cAdvisor} (mierzy każdy kontener).
+
+\fig{obserwowalnosc.png}{0.85}{Obserwowalność: agenci Vector w regionach EU i US wysyłają dane przez Cloudflare Tunnel do stosu centralnego (VictoriaMetrics, VictoriaLogs, Grafana).}
+
+Regiony nawiązują wyłącznie połączenia wychodzące, więc nadal nie wystawiają żadnego
+portu. Stos centralny („ops'') działa na dowolnej maszynie z Dockerem: laptopie do
+demonstracji albo małej VM Azure do użytku stałego. Połączenie jest szyfrowane
+(HTTPS z basic auth przez Cloudflare Tunnel).
+
+\section{Uruchomienie lokalne}
+
+W \code{deploy/site.env} ustaw \code{OBS_PASSWORD} (dowolne hasło), następnie:
+
+\begin{lstlisting}[language=bash]
+bash deploy/observability.sh up     # Grafana na http://127.0.0.1:3300, user admin
+bash deploy/deploy.sh eu            # regiony wysyłają dane po ustawieniu OBS_PASSWORD
+bash deploy/deploy.sh us
+\end{lstlisting}
+
+Otwórz dashboard \textbf{PlayLink regions}. Regiony na tej samej maszynie docierają
+do stosu przez \code{host.docker.internal}; oba współdzielą wykresy CPU i pamięci
+hosta. \code{bash deploy/observability.sh down} zatrzymuje stos; dane zostają w
+wolumenach Dockera (14 dni).
+
+\section{Tryb publiczny (regiony i VM ops na Azure)}
+
+\begin{enumerate}
+  \item \textbf{Cloudflare}: jeszcze jeden tunel, \code{playlink-ops}, z trzema hostami publicznymi: \code{playlink-metrics.<domain>} $\rightarrow$ \code{http://victoriametrics:8428}, \code{playlink-logs.<domain>} $\rightarrow$ \code{http://victorialogs:9428}, \code{playlink-grafana.<domain>} $\rightarrow$ \code{http://grafana:3000}. Jego token to \code{TUNNEL_TOKEN_OBS}.
+  \item \textbf{\texttt{deploy/site.env}}: \code{OBS_PASSWORD} (długie, losowe: \code{openssl rand -hex 16}), \code{OBS_USER} (domyślnie \code{playlink}) i \code{TUNNEL_TOKEN_OBS}. Regiony zaczynają wysyłać po ustawieniu \code{OBS_PASSWORD} do hostów \code{playlink-metrics} / \code{playlink-logs} (\code{OBS_METRICS_URL} / \code{OBS_LOGS_URL} je nadpisują).
+  \item \textbf{VM ops}: \code{bash deploy/azure-vm.sh ops polandcentral} tworzy \code{playlink-ops} (ten sam rozmiar co regiony, bez portu przychodzącego), uruchamia stos i konektor tunelu oraz utrzymuje go na bieżąco z gałęzi \code{main} (\code{PLAYLINK_OPS_REF} wskazuje inną gałąź). Grafana jest wtedy pod \code{https://playlink-grafana.<domain>}; po ustawieniu \code{CF_ACCESS_TEAM} logowanie odbywa się przez Cloudflare Access jako viewer, a konto \code{admin} z \code{OBS_PASSWORD} (z VM lub localhost) jest kontem administratora.
+  \item \textbf{Regiony}: nowe ustawienia wypycha się przez \code{bash deploy/azure-env.sh eu} i \code{us}. Następne wdrożenie wydania uruchamia oba kontenery na VM; nie są częścią żadnego starszego wydania.
+\end{enumerate}
+
+\code{deploy/azure.sh status|start|stop} obejmuje VM ops, gdy już istnieje. VM ops
+pobiera i wdraża swoją gałąź co 2 minuty, więc scalać do niej należy tylko
+zrecenzowane zmiany. Gdy stos nie działa, agenci przechowują do 256 MB logów na
+dysku i wysyłają je po jego powrocie.
+
+\section{Co jest zbierane}
+
+\begin{table}[H]
+\centering\small
+\begin{tabularx}{\textwidth}{@{}p{0.34\textwidth}p{0.25\textwidth}Y@{}}
+\toprule
+\textbf{Dane} & \textbf{Źródło} & \textbf{Gdzie szukać} \\
+\midrule
+Logi kontenerów (backend, frontend, db); backend pisze JSON & Vector \code{docker_logs} & panele Logs; pola \code{service}, \code{region}, \code{level}, \code{event}, \code{request_id} \\
+Zdarzenia biznesowe \code{login}, \code{room_created}, \code{room_joined}, \code{room_left}, \code{room_closed}, \code{member_kicked} & backend \code{log_event} & pole \code{event}, licznik \code{playlink_events_total} \\
+Id żądania w każdej linii logu backendu i jako nagłówek odpowiedzi \code{X-Request-ID} & middleware backendu & pole \code{request_id} \\
+Błędy serwerowe frontendu (\code{server_error}) i błędy w przeglądarce (\code{client_error}) & \code{hooks.server.ts}, \code{hooks.client.ts} $\rightarrow$ \code{POST /api/client-errors} & \code{level:ERROR service:frontend} \\
+CPU, pamięć, dysk, obciążenie hosta & Vector \code{host_metrics} & \code{host_*} \\
+CPU, pamięć i sieć każdego kontenera (panel sieci sumuje je) & cAdvisor & \code{container_*}, etykieta \code{container_label_com_docker_compose_service} \\
+Żądania, kody statusu, opóźnienia, otwarte WebSockety & backend \code{/metrics} & \code{playlink_*} \\
+\bottomrule
+\end{tabularx}
+\caption{Zbierane dane.}
+\end{table}
+
+\code{/metrics} odpowiada tylko w sieci compose: żądanie, które przyszło przez
+Cloudflare (ma \code{CF-Connecting-IP}), dostaje 404. \code{/api/client-errors} zachowuje
+najwyżej 1,5 KB stosu na raport, pięć raportów na załadowanie strony i 20 na minutę
+na adres.
+
+Zapytania do wypróbowania w Grafana $\rightarrow$ Explore $\rightarrow$ Logs:
+
+\begin{lstlisting}
+level:ERROR                      bledy ze wszystkich regionow
+service:backend level:WARNING    limity zapytan i ostrzezenia
+event:room_created region:us     pokoje utworzone w US
+request_id:a1be49ec35a04a5e      wszystko, co zrobilo jedno zadanie
+\end{lstlisting}
+
+\section{Pytanie logów przez MCP}
+
+Lokalny serwer MCP (\code{backend/mcp_server}) ma dwa dodatkowe narzędzia:
+\code{search_logs} (LogsQL) i \code{query_metrics} (PromQL). Działają po ustawieniu
+adresów tam, gdzie działa serwer MCP:
+
+\begin{lstlisting}
+PLAYLINK_LOGS_URL=https://playlink-logs.<domain>
+PLAYLINK_METRICS_URL=https://playlink-metrics.<domain>
+PLAYLINK_OBS_USER=playlink
+PLAYLINK_OBS_PASSWORD=<OBS_PASSWORD>
+\end{lstlisting}
+
+Bez nich te dwa narzędzia odpowiadają, że nie są skonfigurowane; narzędzia pokojów
+działają bez logowania.
+
+\section{Zużycie zasobów (pomiar lokalny, na kontener)}
+
+\begin{table}[H]
+\centering\small
+\begin{tabular}{@{}lr@{}}
+\toprule
+\textbf{Komponent} & \textbf{Pamięć} \\
+\midrule
+backend / db / frontend & $\sim$90 / $\sim$30 / $\sim$13 MB \\
+Vector (agent) / cAdvisor & $\sim$65 / $\sim$15 MB \\
+Grafana / VictoriaMetrics / VictoriaLogs & $\sim$200 / $\sim$100 / $\sim$12 MB \\
+\bottomrule
+\end{tabular}
+\caption{Zużycie pamięci komponentów.}
+\end{table}
+
+Region z agentem potrzebuje około 0,25 GB, stos centralny około 0,35 GB, więc oba
+mieszczą się na VM z 1 GB z plikiem swap.
+
+\section{Ograniczenia i bezpieczeństwo}
+
+\begin{itemize}
+  \item Vector i cAdvisor czytają dane kontenerów przez gniazdo Dockera i \code{/var/lib/docker} (montowania tylko do odczytu), co na tym hoście jest równoważne uprawnieniom roota. Vector dostaje wyłącznie ustawienia \code{OBS_*}, nigdy sekrety aplikacji.
+  \item Punkty zapisu i odczytu (\code{playlink-metrics}, \code{playlink-logs}) współdzielą jednego użytkownika basic auth: należy użyć długiego, losowego \code{OBS_PASSWORD}. \code{playlink-grafana} stoi za Cloudflare Access (Zero Trust Free, aplikacja „PlayLink Grafana'', polityka „Team emails''): aby wpuścić współpracownika, dodaje się jego adres do tej polityki. Z \code{CF_ACCESS_TEAM} (domena zespołu, np.\ \code{myteam.cloudflareaccess.com}) w \code{deploy/site.env} Grafana ufa podpisanemu tokenowi Access i loguje osoby po e-mailu jako viewerów (akceptowane są tylko tokeny tej aplikacji Access, \code{CF_ACCESS_AUD}), więc jedynym logowaniem jest Access; bez niej Grafana pyta o \code{admin} i \code{OBS_PASSWORD}.
+  \item Grafana ustawia hasło administratora tylko przy pierwszym utworzeniu swojej bazy. Po zmianie \code{OBS_PASSWORD} uruchom na tej maszynie \code{docker exec playlink-obs-grafana-1 grafana cli admin reset-admin-password <nowe>}.
+  \item Agenci startują po tym, jak wydanie jest zdrowe, i nigdy nie powodują niepowodzenia wdrożenia. Aby wyłączyć wysyłkę, usuń \code{OBS_PASSWORD} i uruchom na VM \code{docker compose -p playlink-<region> --profile observability down vector cadvisor}.
+  \item Linie logów zawierają skrócone adresy portfeli (\code{0x1234…abcd}), bez tokenów i treści wiadomości.
+  \item \textbf{Analityka brzegowa Cloudflare} (ruch, kraje, żądania zablokowane przed dotarciem do serwera) nie jest zbierana: wymaga tokenu API i dodatkowego eksportera. Dashboardy pokazują to, co dociera do serwerów.
+\end{itemize}
+
+% =====================================================================
+\chapter{Testowanie}
+\label{ch:op-testowanie}
+
+PlayLink ma zautomatyzowany zestaw testów backendu (pytest) i frontendu (Vitest),
+uzupełniony o testy migracji, wydajnościowe i ręczną weryfikację realtime.
+Rozdział łączy dokumentację operacyjną (\code{docs/operations/testing.md}) z
+dokumentacją testową raportu końcowego (19.06.2026). Stan wydania z dokumentacji
+testowej z 19.06.2026: backend 135/135 testów, frontend 61/61 testów, pokrycie linii
+backendu 89,86\% (próg CI 80\%), pokrycie frontendu 41,26\% (wynik informacyjny),
+Ruff i ESLint bez uwag, build obrazów poprawny. Od tego czasu zestaw urósł (m.in.
+\code{test_mcp.py}, \code{test_observability.py}, \code{test_health.py},
+\code{test_rate_limit_key.py}, \code{regions.test.ts}, \code{clientErrors.server.test.ts});
+w repozytorium znajduje się obecnie 165 funkcji \code{test_*} w backendzie.
+
+\section{Rodzaje testów}
+\label{sec:op-rodzaje-testow}
+
+Wyróżniono sześć rodzajów testów (wymagane minimum to pięć):
+
+\begin{table}[H]
+\centering\small
+\begin{tabularx}{\textwidth}{@{}p{0.2\textwidth}p{0.19\textwidth}Yp{0.12\textwidth}@{}}
+\toprule
+\textbf{Rodzaj} & \textbf{Narzędzie} & \textbf{Zakres} & \textbf{Liczba (19.06)} \\
+\midrule
+Jednostkowe & pytest, Vitest & funkcje pomocnicze, walidacja, store'y, metryka Haversine & $\sim$25 \\
+Integracyjne / API & FastAPI TestClient & endpointy REST przez całą aplikację (SQLite in-memory) & $\sim$54 \\
+WebSocket / realtime & TestClient WS & rozgłaszanie ramek czatu i zdarzeń (34 połączenia WS) & $\sim$45 \\
+Bezpieczeństwa & pytest + eth\_account & replay, wygasły nonce, fałszywy admin, podrobione podpisy & $\sim$10 \\
+Migracji (smoke) & pytest + Alembic & migracja do \code{head}, weryfikacja schematu; w CI round-trip na Postgresie & 1 (+CI) \\
+Kontraktowe (frontend) & Vitest & server-loadery i akcje SvelteKit (\code{+page.server.ts}) & $\sim$20 \\
+\bottomrule
+\end{tabularx}
+\caption{Rodzaje testów w projekcie PlayLink.}
+\end{table}
+
+Dodatkowo dokumentacja testowa wyróżnia testy wydajnościowe (obciążeniowe REST i
+ręczny pomiar opóźnienia realtime) oraz testy procesu CI.
+
+\begin{itemize}
+  \item \textbf{Jednostkowe} --- izolowana logika bez bazy i sieci: parsowanie adresów administratorów, \code{hash_nonce}, walidacja nazw użytkownika; we frontendzie podpisywanie, store'y i odległość lobby (Haversine). Narzędzia: pytest, Vitest + jsdom.
+  \item \textbf{Integracyjne / API} --- żądania HTTP przez całą aplikację FastAPI z \code{TestClient} i SQLite in-memory (fixture nadpisuje \code{get_session}); uwierzytelnianie, cykl życia pokoju, panel administratora, kick; sprawdzane są kody statusu i stan bazy.
+  \item \textbf{WebSocket / realtime} --- \code{TestClient.websocket_connect} do weryfikacji rozgłaszania ramek \code{event_update}, \code{rsvp_update}, \code{roster_update}, \code{room_closed}, \code{member_kicked}.
+  \item \textbf{Bezpieczeństwa} --- scenariusze ataków (replay, wygasły nonce, eskalacja uprawnień, podrobione podpisy EIP-191) z realnym podpisywaniem kluczem (\code{eth_account}).
+  \item \textbf{Migracji (smoke)} --- \code{alembic upgrade head} na pustej bazie i sprawdzenie ośmiu tabel; w CI także na realnym PostgreSQL z round-tripem i \code{alembic check}.
+  \item \textbf{Kontraktowe frontendu} --- import server-loaderów i akcji SvelteKit z zamockowanymi \code{fetch} i \code{cookies}; przekierowania, strażnicy autoryzacji, walidacja formularzy. To nie są testy end-to-end: nie startują serwera deweloperskiego.
+\end{itemize}
+
+\section{Środowisko testowe}
+\label{sec:op-srodowisko-testow}
+
+\begin{table}[H]
+\centering\small
+\begin{tabularx}{\textwidth}{@{}p{0.3\textwidth}Y@{}}
+\toprule
+\textbf{Element} & \textbf{Konfiguracja (pomiary z 19.06.2026)} \\
+\midrule
+Backend & Python 3.14, FastAPI 0.135.1, pytest 9.0.2, pytest-cov 7.1.0 \\
+Frontend & SvelteKit 2, Svelte 5, TypeScript 5.9, Vitest 4.1.9, jsdom 29.1.1 \\
+Baza testów jednostkowych & SQLite in-memory, osobna baza dla każdej funkcji testowej \\
+Baza integracyjna / migracje & PostgreSQL 18 w Dockerze; Alembic upgrade/downgrade/check \\
+Kontenery & Docker Compose: db, backend, frontend \\
+System wykonawczy pomiarów & Windows 11 + Docker Desktop \\
+CI & GitHub Actions: Ubuntu, Python 3.14, Bun \\
+\bottomrule
+\end{tabularx}
+\caption{Środowisko testowe.}
+\end{table}
+
+\section{Testy backendu}
+\label{sec:op-testy-backend}
+
+Backend używa \textbf{pytest} z pokryciem przez \textbf{pytest-cov}. Wszystkie testy
+działają na efemerycznej bazie SQLite in-memory, więc nie jest potrzebna instancja
+Postgresa.
+
+\begin{lstlisting}[language=bash]
+cd backend
+uv run pytest
+uv run pytest -v                # szczegolowy wynik
+uv run pytest -k test_auth      # tylko testy auth
+uv run pytest --cov=main --cov=models --cov=database --cov=usernames
+\end{lstlisting}
+
+Bramka CI:
+
+\begin{lstlisting}[language=bash]
+uv run pytest \
+  --cov=main --cov=models --cov=database --cov=usernames \
+  --cov-report=term-missing:skip-covered \
+  --cov-fail-under=80
+\end{lstlisting}
+
+Wymusza co najmniej \textbf{80\% pokrycia linii} czterech modułów. Konfiguracja z
+\code{backend/pyproject.toml}: \code{pythonpath = ["."]}, \code{testpaths = ["tests"]},
+\code{env = ["DATABASE_URL=sqlite://", "JWT_SECRET=..."]} (\code{pytest-env}); testy
+zawsze widzą \code{DATABASE_URL=sqlite://} i stały \code{JWT_SECRET}.
+
+\subsection{Fixture'y (\texttt{conftest.py})}
+
+\begin{itemize}
+  \item \code{session} (zakres funkcji) --- silnik SQLite in-memory (\code{sqlite://}) ze \code{StaticPool} i \code{check_same_thread=False}; tworzy wszystkie tabele i zasila tabelę \code{game} pięcioma tytułami (Quake III Arena, Diablo II, StarCraft, Half-Life, Unreal Tournament); silnik jest zwalniany w \code{finally}. \code{StaticPool} unika problemów wątkowych SQLite.
+  \item \code{client} --- nadpisuje zależność \code{get_session} testową sesją; zwraca \code{fastapi.testclient.TestClient}; po teście czyści \code{dependency_overrides}.
+  \item \code{disable_rate_limit} (autouse) --- \code{app.state.limiter.enabled = False}, by endpointy były wywoływalne bez limitera.
+\end{itemize}
+
+\subsection{Pokrycie według plików testowych}
+
+\begin{longtable}{@{}p{0.27\textwidth}p{0.69\textwidth}@{}}
+\toprule
+\textbf{Plik testowy} & \textbf{Zakres} \\
+\midrule
+\endhead
+\code{test_auth.py} (7) & ścieżka uwierzytelniania: nonce, weryfikacja podpisu EIP-191, \code{GET /users/me}, łańcuch unieważniania nonce \\
+\code{test_auth_edges.py} (9) & przypadki brzegowe: hashowanie nonce, replay, wygasły nonce, zły format podpisu, JWT wygasły / bez \code{sub} / dla nieistniejącego użytkownika, sfałszowane roszczenie admina \\
+\code{test_rooms.py} (9) & dołączanie/opuszczanie: wymóg uwierzytelnienia, 404, duplikat nazwy (409), limit 3 pokoi na użytkownika, pełny pokój, opuszczenie przez nie-członka \\
+\code{test_rooms_lifecycle.py} (15) & CRUD pokoju z metadanymi: walidacja \code{lobby_location}, zbyt długi \code{description} (422), nieznana lokalizacja (400), automatyczne dodanie własnej gry, endpoint \code{/lobby-locations} \\
+\code{test_room_events.py} (33) & planowanie wydarzeń (PUT/GET/DELETE), upsert RSVP i idempotencja, zmiana terminu czyści RSVP, wygaszanie, rozgłoszenia WS (\code{event_update}, \code{rsvp_update}, \code{roster_update}), zgodność payloadów \\
+\code{test_chat.py} (12) & czat WS: zły token / brak członkostwa / brak pokoju, rozgłoszenie, odtwarzanie historii, odrzucenie zbyt dużych wiadomości, weryfikacja podpisu EIP-191 (poprawny, zmodyfikowany, zły podpisujący, nieaktualny znacznik czasu, brak podpisu, historia z podpisem) \\
+\code{test_kick.py} (7) & kick przez admina: wymóg uwierzytelnienia, nie można wyrzucić admina, usunięcie RSVP i ponowne dołączenie, przekazanie twórcy, rozłączenie WS (4409) i powiadomienia, admin poza limitem 3 pokoi, flaga \code{is_admin} \\
+\code{test_admin.py} (16) & wymuszanie uprawnień admina (401/403), kaskadowe usunięcie pokoju (wiadomości, wydarzenia, RSVP, członkowie) i rozgłoszenie \code{room_closed}, CRUD gier z flagą \code{force} \\
+\code{test_admin_edges.py} (2) & przycinanie nazwy gry, powiadomienia WS przy wymuszonym usunięciu gry w wielu pokojach \\
+\code{test_users.py} (11) & walidacja nazw (stoplista, wulgaryzmy, format), \code{PATCH /users/me} (sukces, idempotencja, zły format, konflikt, brak uwierzytelnienia) \\
+\code{test_cleanup.py} (2) & sprzątanie wygasłych pokojów przez \code{get_rooms_payload} \\
+\code{test_helpers.py} (9) & \code{_parse_admin_addresses}, \code{is_admin_address}, \code{hash_nonce}, \code{_iso}, \code{_members_payload}, \code{_msg_dict}, sprzątanie martwych gniazd w \code{ConnectionManager}/\code{RoomChatManager} \\
+\code{test_migrations.py} (1) & smoke test Alembica: migracje na pustym SQLite, asercja 8 tabel i kolumn \code{description}, \code{communicator_link}, \code{requirements} (pokój) oraz \code{starts_at}, \code{ends_at}, \code{created_by}, \code{updated_at} (\code{RoomEvent}) \\
+\code{test_health.py} (3), \code{test_mcp.py} (15), \code{test_observability.py} (8), \code{test_rate_limit_key.py} (6) & sondy zdrowia, serwer MCP, endpointy i zdarzenia obserwowalności, klucz limitera (dodane po 19.06; liczby z liczenia funkcji w repozytorium) \\
+\bottomrule
+\end{longtable}
+
+\paragraph{Testy WebSocket.} \code{TestClient} obsługuje WebSockety przez
+\code{client.websocket_connect("/ws/rooms/{room_name}/chat?token=...")}. Testy z
+\code{test_chat.py}, \code{test_room_events.py}, \code{test_kick.py}, \code{test_admin.py} i
+\code{test_admin_edges.py} wymieniają prawdziwe ramki WS z instancją aplikacji.
+
+\paragraph{Migracje.} \code{test_migrations.py} uruchamia \code{alembic upgrade head} na
+świeżym SQLite w \code{tmp_path} i sprawdza schemat. Osobne zadanie CI
+\code{backend-migrations} stosuje migracje na prawdziwym kontenerze Postgres oraz
+robi round-trip \code{alembic downgrade -1} + \code{upgrade head} i \code{alembic check}.
+
+\section{Testy frontendu}
+\label{sec:op-testy-frontend}
+
+Frontend używa \textbf{Vitest} ze środowiskiem \textbf{jsdom}; wszystkie testy są
+jednostkowe lub integracyjne, bez uruchamiania przeglądarki.
+
+\begin{lstlisting}[language=bash]
+cd frontend
+bun run test
+bun run test -- --coverage
+\end{lstlisting}
+
+Konfiguracja z \code{frontend/vite.config.js}: \code{globals: true} (\code{describe},
+\code{it}, \code{expect}, \code{vi} bez importu; typy przez \code{vitest/globals}),
+\code{environment: 'jsdom'} (\code{document}, \code{window}, \code{sessionStorage},
+\code{FormData}), \code{setupFiles: ['./src/test/setup.ts']} (matchery
+\code{@testing-library/jest-dom}).
+
+\begin{longtable}{@{}p{0.3\textwidth}p{0.66\textwidth}@{}}
+\toprule
+\textbf{Plik testowy} & \textbf{Zakres} \\
+\midrule
+\endhead
+\code{signing.test.ts} & kanoniczny format wiadomości czatu: znaki specjalne, \code{buildChatSigningMessage}, \code{signChatMessage} \\
+\code{signingKey.test.ts} & \code{saveSigningKey}, \code{loadSigner}, \code{clearSigningKey}: obieg przez \code{sessionStorage}, usuwanie błędnego klucza \\
+\code{roomsStore.test.ts} & strażnicy typów \code{isNullableString} i \code{isRoomSummary} \\
+\code{chatStore.test.ts} & walidatory i \code{parseFrame}: \code{isChatMessage}, \code{isRoomMember}, \code{isRsvpStatus}, \code{isRsvpEntry}, \code{isRoomEventState}, ramki message/nieznana/zły JSON \\
+\code{lobbyLocations.test.ts} & \code{isLobbyLocation}, \code{lobbyLocationLabel}, \code{distanceKm} (Haversine: zero, Londyn--Frankfurt $\sim$640 km), \code{nearestLobbyLocation}, \code{FALLBACK_LOBBY_LOCATION} \\
+\code{hintsContext.svelte.test.ts} & klasa \code{HintsState}: inicjalizacja, \code{set()}, \code{clear()}; runy Svelte 5 (\code{$state}) \\
+\code{auth.page.server.test.ts} & \code{+page.server.ts}: brak sesji $\rightarrow$ \code{user: null}, ważny token, nieprawidłowy token czyszczony; akcje login (brak tokenu, zapis cookie) i logout \\
+\code{profile.page.server.test.ts} & load i akcja aktualizacji: przekierowanie bez sesji, profil z API, wymóg uwierzytelnienia, odrzucenie pustej nazwy, PATCH \\
+\code{rooms.page.server.test.ts} & load bez logowania i z użytkownikiem; \code{create} odrzuca brak uwierzytelnienia i pól; \code{addGame} odrzuca pustą nazwę \\
+\code{rooms.name.page.server.test.ts} & przekierowanie 303 do \code{/rooms}; \code{setRsvp} odrzuca brak uwierzytelnienia i zły status; \code{kickMember} odrzuca brak członka; regresja \code{closeRoom} \\
+\code{regions.test.ts}, \code{clientErrors.server.test.ts} & regiony oraz endpoint błędów klienta (dodane po 19.06) \\
+\bottomrule
+\end{longtable}
+
+Cztery testy tras (\code{auth}, \code{profile}, \code{rooms}, \code{rooms.name}) wywołują
+server-loadery i akcje bezpośrednio, mockując \code{$env/dynamic/public},
+\code{$env/dynamic/private}, \code{jwt-decode}, \code{globalThis.fetch} i obiekt
+\code{cookies}.
+
+\section{Przykładowe fragmenty testów}
+
+\begin{lstlisting}[language=Python,caption={Test jednostkowy hashowania nonce (\texttt{backend/tests/test\_helpers.py}).}]
+def test_hash_nonce_is_stable_and_not_plaintext():
+    nonce = "challenge-value"
+    hashed = main.hash_nonce(nonce)
+
+    assert hashed == main.hash_nonce(nonce)
+    assert hashed != nonce
+    assert len(hashed) == 64
+\end{lstlisting}
+
+\begin{lstlisting}[language=Python,caption={Kaskadowe zamknięcie pokoju (\texttt{backend/tests/test\_admin.py}).}]
+res = client.delete("/rooms/doomed", headers=headers)
+assert res.status_code == 200
+assert res.json()["status"] == "closed"
+
+assert session.exec(select(Room)).first() is None
+assert session.exec(select(Message)).all() == []
+assert session.exec(select(RoomEvent)).all() == []
+assert session.exec(select(RoomEventRsvp)).all() == []
+assert session.exec(select(RoomMember)).all() == []
+\end{lstlisting}
+
+\section{Katalog przypadków testowych}
+\label{sec:op-katalog}
+
+Przypadki reprezentują wszystkie warstwy systemu; status PASS oznacza wynik w
+środowisku z 19.06.2026.
+
+\begin{longtable}{@{}p{0.11\textwidth}p{0.24\textwidth}p{0.36\textwidth}p{0.2\textwidth}@{}}
+\toprule
+\textbf{Id} & \textbf{Przypadek} & \textbf{Kroki i oczekiwany wynik} & \textbf{Źródło} \\
+\midrule
+\endhead
+UNIT-01 & hashowanie nonce & skrót tego samego nonce jest identyczny, inny nonce daje inny skrót, skrót różni się od jawnej wartości (SHA-256, 64 znaki) & \code{test_helpers.py} \\
+UNIT-02 & walidacja nazwy użytkownika & niepoprawny format i pozycje ze stoplisty są odrzucane, poprawne akceptowane, brak fałszywych trafień & \code{test_users.py} \\
+UNIT-03 & odległość i wybór lobby & 0 km dla tych samych punktów, Londyn--Frankfurt w oczekiwanym zakresie, dla Londynu wybrane \code{eu-west} & \code{lobbyLocations.test.ts} \\
+INT-01 & logowanie challenge-response & \code{POST /auth/request-nonce}, podpis EIP-191, \code{POST /auth/verify}, \code{GET /users/me}; 200, token JWT, poprawna nazwa & \code{test_auth.py} \\
+INT-02 & cykl życia pokoju & utworzenie, twórca w \code{members}, dołączenie drugiego, opuszczenie; \code{members} i \code{players_active} zgodne z operacjami & \code{test_rooms_lifecycle.py} \\
+INT-03 & wydarzenie i RSVP & planowanie, RSVP jako upsert (\code{present}/\code{maybe}/\code{absent}), zmiana terminu czyści deklaracje & \code{test_room_events.py} \\
+INT-04 & administracyjne zamknięcie pokoju & \code{DELETE /rooms/{name}}; pokój i dane zależne znikają, użytkownik pozostaje, HTTP 200 & \code{test_admin.py} \\
+FUN-01 & sesja użytkownika & login zapisuje JWT jako cookie httpOnly/sameSite, logout je usuwa & \code{auth.page.server.test.ts} \\
+FUN-02 & zmiana nazwy użytkownika & pusta nazwa odrzucona, poprawna przekazana do \code{PATCH /users/me} & \code{profile.page.server.test.ts} \\
+FUN-03 & zamknięcie pokoju z Admin Preview (regresja) & POST do \code{?/closeRoom} jako FormData, \texttt{DELETE /rooms/Lobby\%202}, bez błędu 415 & \code{rooms.name.page.server.test.ts} \\
+RT-01 & rozgłoszenie wiadomości czatu & dwa połączenia WS dostają zgodną ramkę \code{message} & \code{test_chat.py} \\
+RT-02 & wydarzenie i lista członków & \code{event_update}, \code{rsvp_update}, \code{roster_update} zgodne z payloadem REST & \code{test_room_events.py} \\
+RT-03 & odłączenie wyrzuconego uczestnika & oba połączenia dostają \code{message}, \code{roster_update}, \code{member_kicked} i kończą się kodem 4409 & \code{test_kick.py} \\
+SEC-01 & replay nonce & pierwsza weryfikacja udana, druga odrzucona (\code{used_at}) & \code{test_auth_edges.py} \\
+SEC-02 & wygasły JWT & \code{GET /users/me} zwraca 401 & \code{test_auth_edges.py} \\
+SEC-03 & brak eskalacji admina & token z \code{is_admin=true} nie zastępuje \code{ADMIN_ADDRESSES}; HTTP 403 & \code{test_auth_edges.py} \\
+SEC-04 & zmodyfikowana podpisana wiadomość & zmiana treści po podpisaniu: wiadomość odrzucona, niezapisana jako zweryfikowana & \code{test_chat.py} \\
+MIG-01 & schemat z pełnego łańcucha Alembic & \code{upgrade head} na pustej bazie; obecne wszystkie tabele i kluczowe kolumny & \code{test_migrations.py} \\
+CI-01 & bramka jakości przed wdrożeniem & testy, lint, migracje i build obrazów w GitHub Actions & \code{ci.yml} \\
+\bottomrule
+\end{longtable}
+
+Wcześniejsza wersja raportu końcowego przedstawia osobno dziesięć wybranych przypadków
+TC-01--TC-10 (m.in.\ parsowanie \code{ADMIN_ADDRESSES}: wejście \code{" 0xABC , 0xdef "}
+daje zbiór znormalizowanych adresów małymi literami; limit 3 aktywnych pokojów --- czwarty
+pokój jest odrzucany); są one podzbiorem powyższego katalogu.
+
+\section{Testy wydajnościowe}
+\label{sec:op-wydajnosc}
+
+Test obciążeniowy wykonano na osobnym kontenerze backendu połączonym z lokalnym
+PostgreSQL (skrypt \code{scripts/load_test.py}); limit REST podniesiono wyłącznie na
+czas pomiaru, aby mierzyć przepustowość, a nie celową ochronę 10/min.
+
+\begin{table}[H]
+\centering\small
+\begin{tabularx}{\textwidth}{@{}p{0.1\textwidth}p{0.27\textwidth}Y@{}}
+\toprule
+\textbf{Id} & \textbf{Scenariusz} & \textbf{Wynik} \\
+\midrule
+PERF-01 & \code{GET /rooms}, 200 żądań, współbieżność 10 & 200/200 odpowiedzi 200; średnia 53,021 ms; mediana 43,108 ms; p95 71,431 ms; 169,47 żąd./s \\
+PERF-02 & \code{GET /rooms}, 300 żądań, współbieżność 30 & 300/300 odpowiedzi 200; średnia 191,964 ms; mediana 124,447 ms; p95 999,600 ms; 134,07 żąd./s \\
+PERF-03 & opóźnienie aktualizacji realtime (ręczny pomiar klient--klient, sieć lokalna i eduroam) & około 60 ms w typowych warunkach i około 600 ms w obciążonej sieci eduroam; wymóg poniżej 1000 ms spełniony \\
+\bottomrule
+\end{tabularx}
+\caption{Wyniki testów wydajnościowych (19.06.2026).}
+\end{table}
+
+\section{Automatyzacja i regresje}
+\label{sec:op-testy-ci}
+
+Zielony wynik wszystkich zadań CI jest warunkiem scalenia PR do \code{main} oraz
+wydania obrazów (workflow \code{release.yml} wywołuje \code{ci.yml}); zadania opisano w
+rozdziale o wdrożeniu i wydaniach. Jako regresję udokumentowano zamykanie pokoju z
+Admin Preview (nazwa pokoju ze spacją kodowana w URL, akcja SvelteKit \code{closeRoom},
+test FUN-03).
+
+\paragraph{Ograniczenia.} Poza zakresem pozostają testy długotrwałe (soak), formalny
+audyt penetracyjny zewnętrznego zespołu oraz pomiary produkcyjne przy setkach
+rzeczywistych użytkowników.
+
+% SPRZECZNOSC: raport końcowy i dokumentacja testowa (czerwiec 2026) wskazują pipeline `.github/workflows/cicd.yml` z zadaniem `deploy` i Node 22; w repozytorium istnieją `ci.yml` i `release.yml` bez zadań wdrożeniowych (wdrożenie pull-based) — przyjęto repozytorium.
+% SPRZECZNOSC: liczby testów (135 backend / 61 frontend) pochodzą z 19.06.2026; w repozytorium jest dziś 165 funkcji test_* w backendzie i ok. 69 bloków it() we frontendzie (bez parametryzacji).
+% SPRZECZNOSC: docs/operations/testing.md wskazuje 8 tabel w teście migracji; nie weryfikowano liczby po późniejszych migracjach.
+% SPRZECZNOSC: scripts/load_test.py wskazany w dokumentacji testowej nie występuje w katalogu scripts/ repozytorium.

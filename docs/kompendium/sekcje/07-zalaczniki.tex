@@ -1,0 +1,213 @@
+% =====================================================================
+% Załączniki: uruchomienie lokalne, zasady współpracy, indeks źródeł
+% =====================================================================
+
+\chapter{Uruchomienie lokalne}
+\label{ch:zal-uruchomienie}
+
+\section{Wymagania i polecenia}
+\label{sec:zal-polecenia}
+
+Środowisko lokalne wymaga Dockera (Docker Compose). Bez \code{PLAYLINK_DOMAIN} w
+\code{deploy/site.env} skrypt \code{deploy/deploy.sh} działa w trybie lokalnym: buduje
+obrazy z drzewa roboczego, używa sekretów deweloperskich i publikuje porty na
+localhost.
+
+\begin{lstlisting}[language=bash]
+deploy/deploy.sh eu    # EU: frontend :3000, API :8000
+deploy/deploy.sh us    # opcjonalny drugi region: frontend :3001, API :8001
+\end{lstlisting}
+
+\begin{itemize}
+  \item chooser --- \code{http://127.0.0.1:3000};
+  \item aplikacja EU --- \code{http://localhost:3000}; API EU (dokumentacja OpenAPI pod \code{/docs}) --- \code{http://localhost:8000};
+  \item aplikacja US --- \code{http://localhost:3001}; API US --- \code{http://localhost:8001};
+  \item PostgreSQL --- wewnątrz sieci compose każdego regionu (brak portu na hoście).
+\end{itemize}
+
+Stosy to projekty compose \code{playlink-eu} i \code{playlink-us}; wygenerowane pliki
+env trafiają do \code{.run/<region>.env}. Uruchamianie poszczególnych usług poza
+Dockerem opisują \code{backend/README.md} i \code{frontend/README.md}.
+
+\section{Skrypt \texttt{scripts/local-up.sh}}
+\label{sec:zal-localup}
+
+Skrypt uruchamia Playlink lokalnie (bez Cloudflare): \code{deploy.sh} plus
+idempotentne zasilenie danymi demonstracyjnymi.
+
+\begin{lstlisting}[language=bash]
+bash scripts/local-up.sh                       # tylko EU
+bash scripts/local-up.sh --both                # EU + US
+bash scripts/local-up.sh --both --lab-limits   # dodatkowo podniesione limity (eksperyment F4)
+\end{lstlisting}
+
+Kroki skryptu:
+
+\begin{enumerate}
+  \item sprawdza Dockera (\code{docker version});
+  \item startuje region EU (\code{bash deploy/deploy.sh eu}), a przy \code{--both} także US;
+  \item czeka (do 60 prób co 2 s) na \code{/healthz} backendu EU, a przy \code{--both} --- US;
+  \item przy \code{--lab-limits} poprawia \code{.run/<region>.env}: \code{DEFAULT_RATE_LIMIT=1000/minute} i \code{WS_RATE_LIMIT_MAX_MESSAGES=100}, po czym odtwarza kontener backendu;
+  \item zasila region EU skryptem \code{scripts/seed_local.py} (uruchamianym wewnątrz kontenera backendu) i ustawia wygaśnięcie trzech pokojów demonstracyjnych (\code{q3-fragfest}, \code{d2-baal-runs}, \code{sc-broodwar}) na 7 dni.
+\end{enumerate}
+
+Zasilenie danymi ma sens głównie dla regionu EU. Zatrzymanie stosów:
+\code{docker compose -p playlink-eu -f compose.yaml down} (analogicznie
+\code{playlink-us}).
+
+\section{Dane demonstracyjne (\texttt{scripts/seed\_local.py})}
+\label{sec:zal-seed}
+
+Skrypt jest idempotentny: jeśli istnieją jakiekolwiek pokoje, niczego nie tworzy
+ani nie usuwa. Adres bazowy API pochodzi z \code{PLAYLINK_BASE_URL} (domyślnie
+\code{http://localhost:8000}). Skrypt:
+
+\begin{itemize}
+  \item wyprowadza konto z mnemoniku demonstracyjnego i loguje się przepływem challenge-response (\code{POST /auth/request-nonce}, podpis komunikatu \code{Sign in to Playlink\nNonce: <nonce>}, \code{POST /auth/verify});
+  \item ustawia nazwę użytkownika \code{demo_host} (\code{PATCH /users/me}), jeśli jest wolna;
+  \item tworzy trzy pokoje przez \code{POST /rooms} (409 oznacza, że pokój już istnieje).
+\end{itemize}
+
+\begin{table}[H]
+\centering\small
+\begin{tabularx}{\textwidth}{@{}p{0.2\textwidth}p{0.2\textwidth}p{0.15\textwidth}p{0.08\textwidth}Y@{}}
+\toprule
+\textbf{Pokój} & \textbf{Gra} & \textbf{Lobby} & \textbf{Max} & \textbf{Opis / wymagania} \\
+\midrule
+\code{q3-fragfest} & Quake III Arena & \code{eu-central} & 8 & Casual CPMA fragfest; zalecany mod CPMA \\
+\code{d2-baal-runs} & Diablo II & \code{eu-west} & 4 & Ladder Baal runs, softcore; tylko postacie ladder \\
+\code{sc-broodwar} & StarCraft & \code{na-east} & 2 & trening 1v1 Brood War; łatka 1.16.1 \\
+\bottomrule
+\end{tabularx}
+\caption{Pokoje demonstracyjne.}
+\end{table}
+
+\paragraph{Logowanie demonstracyjne.} Na stronie IDENTITY wkleja się mnemonik:
+\code{test test test test test test test test test test test junk}. Jest to publiczny
+mnemonik wyłącznie testowy; nie wolno go używać poza środowiskiem lokalnym.
+
+\section{Logi, metryki i MCP lokalnie}
+\label{sec:zal-obs-mcp}
+
+\begin{itemize}
+  \item Logi i metryki: \code{bash deploy/observability.sh up} (Grafana \code{http://127.0.0.1:3300}, użytkownik \code{admin}, hasło \code{OBS_PASSWORD} z \code{deploy/site.env}); szczegóły w części o operacjach.
+  \item Azure: \code{bash deploy/azure.sh start|stop|status}.
+  \item MCP: serwer \code{backend/mcp_server} działa zawsze na własnej maszynie i rozmawia z API PlayLink po HTTP. Lokalnie bez konfiguracji używa \code{http://localhost:8000} (EU) i \code{http://localhost:8001} (US); zdalnie wskazuje się wdrożone regiony zmiennymi \code{PLAYLINK_DOMAIN} i \code{PLAYLINK_REGIONS=eu,us}. Wymagane narzędzia to Git i uv. Pełna instrukcja (Claude Code, Claude Desktop, Cursor, Antigravity) znajduje się w sekcji „Model Context Protocol'' pliku \code{README.md}; narzędzia \code{search_logs} i \code{query_metrics} wymagają dodatkowo \code{PLAYLINK_LOGS_URL}, \code{PLAYLINK_METRICS_URL}, \code{PLAYLINK_OBS_USER} i \code{PLAYLINK_OBS_PASSWORD}. Weryfikacja: polecenie \code{check_platform_health} powinno raportować każdy region jako \code{reachable}.
+\end{itemize}
+
+\section{Eksperyment F4}
+\label{sec:zal-f4}
+
+Po uruchomieniu stosu (z \code{--lab-limits}) eksperyment F4 startuje się poleceniami:
+
+\begin{lstlisting}[language=bash]
+cd experiments/f4 && python -m venv .venv && . .venv/bin/activate
+pip install -r requirements.txt && python run.py
+\end{lstlisting}
+
+% =====================================================================
+\chapter{Zasady współpracy}
+\label{ch:zal-wspolpraca}
+
+Zasady z pliku \code{CONTRIBUTING.md}, obowiązujące wszystkich współtwórców.
+
+\section{Przepływ Kanban}
+\label{sec:zal-kanban}
+
+Prace prowadzi się metodą Kanban; żaden kod nie powstaje bez odpowiadającego mu
+zgłoszenia (issue). Stany: Todo $\rightarrow$ In progress (po otwarciu gałęzi)
+$\rightarrow$ Awaiting review (po oznaczeniu PR jako gotowego) $\rightarrow$ Done (po
+zatwierdzeniu; issue zostaje zamknięte); uwagi recenzenta cofają zadanie do In progress.
+
+\begin{enumerate}
+  \item \textbf{Wybór zadania} --- zgłoszenie z tablicy Kanban (projekt GitHub organizacji \code{ioad-modul-sumatywny-26}) albo nowe.
+  \item \textbf{Przypisanie} --- przeniesienie do kolumny In Progress i przypisanie siebie.
+  \item \textbf{Implementacja} --- gałąź funkcjonalna.
+  \item \textbf{Recenzja} --- Pull Request automatycznie przenosi zgłoszenie do Awaiting Review.
+  \item \textbf{Scalenie} --- po akceptacji i zielonym CI przez Squash and Merge, co automatycznie przenosi zgłoszenie do Done i zamyka je.
+\end{enumerate}
+
+\section{Strategia gałęzi}
+
+Gałęzie muszą mieć jeden z prefiksów: \code{feat/} (nowe funkcje, np.\ \code{feat/auth-system}),
+\code{fix/} (poprawki błędów, np.\ \code{fix/login-error}), \code{docs/} (dokumentacja),
+\code{chore/} (utrzymanie, zależności itp.), \code{ci/} (zmiany potoków CI/CD).
+
+\section{Konwencja commitów}
+
+Uproszczona wersja Conventional Commits, format \code{<type>: <description>}.
+Typy: \code{feat}, \code{fix}, \code{docs}, \code{refactor} (zmiana niebędąca ani
+poprawką, ani nową funkcją), \code{test}, \code{chore} (zależności, proces budowania).
+Przykład: \code{feat: implement BIP39 signature verification}.
+
+\section{Standardy Pull Requestów}
+
+\begin{itemize}
+  \item \textbf{Powiązanie z zgłoszeniem} --- w opisie PR zawsze \texttt{Closes \#<numer>}.
+  \item \textbf{Atomowość} --- PR dotyczy jednego zadania; małe, częste PR łatwiej recenzować.
+  \item \textbf{Walidacja CI} --- lint i testy muszą przechodzić przed prośbą o recenzję.
+  \item \textbf{Akceptacje} --- co najmniej jedna akceptacja od współpracownika (ochrona gałęzi nie jest jeszcze skonfigurowana; egzekwowane konwencją).
+  \item \textbf{Scalanie} --- Squash and Merge, aby historia \code{main} pozostała liniowa.
+\end{itemize}
+
+\section{Kontrola jakości}
+
+\begin{itemize}
+  \item \textbf{Backend}: \code{uv run pytest}. Po zmianie dowolnego schematu SQLModel należy wygenerować migrację (\code{uv run alembic revision --autogenerate -m "..."}) i zatwierdzić ją razem ze zmianą modelu.
+  \item \textbf{Frontend}: \code{bun run check} (svelte-check + TypeScript), \code{bun run lint} (ESLint), \code{bun run format} (Prettier).
+  \item \textbf{Lint i formatowanie}: obsługuje \code{prek} (uruchamiacz hooków pre-commit), który przed każdym commitem wykonuje na zmienionych plikach \code{ruff check --fix} i \code{ruff format}. Wszystkie hooki (także ESLint i Prettier dla frontendu) na całym kodzie: \code{prek run --all-files}.
+\end{itemize}
+
+Szczegóły potoku CI opisano w części o operacjach (rozdział o wdrożeniu i wydaniach).
+
+% =====================================================================
+\chapter{Indeks źródeł}
+\label{ch:zal-zrodla}
+
+Kompendium powstało przez scalenie poniższych materiałów repozytorium
+\code{playlink} (stan na listopad 2026). Gdy źródła były sprzeczne, wygrywało
+nowsze; sprzeczności odnotowano w komentarzach \texttt{\% SPRZECZNOSC} w plikach
+sekcji.
+
+\section{Pliki źródłowe}
+
+\begin{longtable}{@{}p{0.43\textwidth}p{0.53\textwidth}@{}}
+\toprule
+\textbf{Plik w repozytorium} & \textbf{Wykorzystanie} \\
+\midrule
+\endhead
+\code{docs/dokument-wizji.tex} (PDF: \code{docs/dokument-wizji.pdf}) & część I: wizja, cele, zakres, wymagania, ryzyka, koszty, roadmapa, kryteria \\
+\code{docs/raport/raport.tex} (obrazy w \code{docs/raport/obrazy}) & część II: raport z 18.11.2026 (F1--F7, MCP, Azure, backlog, jakość, wnioski), załącznik „uruchomienie'' \\
+\code{docs/dziennik-etapu.md} & część II: dziennik etapu \\
+\code{experiments/f4/README.md}, \code{experiments/f4/results} & część II: eksperyment F4 \\
+\code{docs/architecture.md}, \code{docs/index.md} & architektura i mapa dokumentacji \\
+\code{docs/backend/*.md} (\code{api-reference}, \code{configuration}, \code{data-model}, \code{migrations}, \code{realtime}) & architektura, API, model danych, migracje, konfiguracja, protokoły WebSocket \\
+\code{backend/docs/auth-flow.md}, \code{backend/README.md}, \code{backend/mcp_server/README.md} & tożsamość i uwierzytelnianie, serwer MCP, uruchamianie backendu \\
+\code{docs/frontend/*.md} (\code{routes}, \code{library}, \code{components}), \code{frontend/README.md} & frontend SvelteKit \\
+\code{docs/operations/deployment.md}, \code{runbook-regions.md}, \code{observability.md}, \code{testing.md} & część operacyjna: wdrożenie, runbook, obserwowalność, testowanie \\
+\code{deploy/*.sh}, \code{deploy/config.env}, \code{.github/workflows/ci.yml}, \code{release.yml} & weryfikacja faktów operacyjnych \\
+\code{prezentacje/raport_koncowy/} (\code{sekcje/03-testowanie.tex}, \code{dokumentacja-testow.tex}, \code{dokumentacja-testowa-playlink.pdf}, \code{diagramy}, \code{obrazy}) & raport końcowy: testowanie, diagramy ER/klas/komponentów/sekwencji/UC, zrzuty ekranu \\
+\code{docs/diagrams/*.png} (źródła \code{*.puml}) & diagramy architektury regionów, MCP, obserwowalności, wdrożenia pull-based, wyboru regionu \\
+\code{README.md} (główny) & dostęp, wydania, funkcje, architektura, MCP, organizacja projektu, szybki start \\
+\code{scripts/local-up.sh}, \code{scripts/seed_local.py} & załącznik: uruchomienie lokalne \\
+\code{CONTRIBUTING.md} & załącznik: zasady współpracy \\
+\bottomrule
+\end{longtable}
+
+\section{Prezentacje}
+
+Prezentacje nie weszły do treści kompendium; leżą w repozytorium w plikach:
+
+\begin{table}[H]
+\centering\small
+\begin{tabularx}{\textwidth}{@{}p{0.5\textwidth}Y@{}}
+\toprule
+\textbf{Plik} & \textbf{Opis} \\
+\midrule
+\code{docs/prezentacja/prezentacja.html} & prezentacja w HTML \\
+\code{docs/PlayLink - final presentation.pptx} & prezentacja końcowa (PowerPoint) \\
+\code{prezentacje/raport_koncowy/raport.pdf} & raport końcowy w PDF \\
+\bottomrule
+\end{tabularx}
+\caption{Lokalizacja prezentacji.}
+\end{table}
