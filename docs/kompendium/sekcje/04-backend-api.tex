@@ -1,0 +1,1541 @@
+% Część III — interfejsy backendu: REST API, protokoły czasu rzeczywistego, serwer MCP
+% Źródła: docs/backend/api-reference.md, docs/backend/realtime.md, backend/mcp_server/README.md,
+% README.md (sekcja MCP), zweryfikowane z kodem backend/ (routers/, ws/, serializers.py, config.py).
+
+\chapter{REST API}
+\label{ch:api-rest}
+
+Rozdział jest kompletną referencją interfejsu REST platformy PlayLink. Serwer to aplikacja Python
+FastAPI uruchamiana przez \code{uv}. Odpowiedzi są w formacie JSON, o ile nie zaznaczono inaczej.
+Interaktywna specyfikacja OpenAPI jest dostępna pod adresem \code{/docs} działającego serwera.
+Kod endpointów mieści się w modułach \code{backend/routers/} (\code{auth}, \code{users}, \code{rooms},
+\code{events}, \code{games}, \code{chat}) oraz w \code{backend/main.py} (sondy zdrowia).
+Model danych, koncepcję uwierzytelniania i zmienne konfiguracyjne opisuje część o architekturze;
+tutaj podano je tylko w zakresie niezbędnym do korzystania z API.
+
+\section{Informacje ogólne}
+\label{sec:api-ogolne}
+
+\subsection{Adresy bazowe}
+
+\begin{tabularx}{\textwidth}{lY}
+\toprule
+Środowisko & Adres \\
+\midrule
+Lokalne (rozwój) & \code{http://localhost:8000} \\
+Produkcja & \code{https://playlink.bartek.monster} \\
+\bottomrule
+\end{tabularx}
+
+\subsection{Uwierzytelnianie}
+\label{sec:api-auth}
+
+Endpointy wymagające uwierzytelnienia oczekują nagłówka HTTP \code{Authorization} w schemacie
+OAuth2 \emph{Password Bearer}:
+
+\begin{lstlisting}
+Authorization: Bearer <jwt>
+\end{lstlisting}
+
+Token JWT uzyskuje się z \code{POST /auth/verify} (sekcja o grupie Auth). Jest to standardowy
+JWT HS256 o konfigurowalnym czasie życia (domyślnie 60 minut, zmienna \code{JWT_EXPIRATION_MINUTES}).
+Zależność FastAPI to \code{OAuth2PasswordBearer(tokenUrl="auth/verify", auto_error=False)}:
+brak lub nieprawidłowy token daje \code{401} bez przekierowania. Endpointy oznaczone w tabeli jako
+\emph{Admin} wymagają dodatkowo, by adres z tokenu znajdował się na liście \code{ADMIN_ADDRESSES};
+lista jest autorytatywna, więc sfałszowany claim \code{is_admin} w JWT nie daje dostępu.
+
+\subsection{Ograniczanie liczby żądań}
+
+Każdy endpoint REST (poza sondami \code{/healthz} i \code{/readyz}) jest chroniony przez
+\code{slowapi} z limitem domyślnym ze zmiennej \code{DEFAULT_RATE_LIMIT} (domyślnie
+\code{"10/minute"}). Przekroczenie limitu daje odpowiedź \code{429 Too Many Requests}
+z treścią w rodzaju \code{{"detail": "Rate limit exceeded: 10 per 1 minute"}}
+(lub z wartością skonfigurowaną).
+
+\subsection{Błędy globalne}
+
+\begin{tabularx}{\textwidth}{lY}
+\toprule
+Status & Warunek \\
+\midrule
+\code{422 Unprocessable Entity} & Treść żądania nie przechodzi walidacji Pydantic (brakujące pola, błędy typów, naruszenie ograniczeń); zwracany automatycznie przez FastAPI. \\
+\code{429 Too Many Requests} & Przekroczony limit żądań. \\
+\bottomrule
+\end{tabularx}
+
+\section{Przegląd endpointów}
+\label{sec:api-przeglad}
+
+Kolumna \emph{Autoryzacja}: „---” (publiczny), „JWT” (wymagany token), „Admin” (token i adres na
+liście administratorów).
+
+\begin{longtable}{@{}l p{5.6cm} l p{3.4cm}@{}}
+\toprule
+Metoda & Ścieżka & Autoryzacja & Opis \\
+\midrule
+\endhead
+\code{GET} & \code{/} & --- & Zgodna wstecznie sonda zdrowia \\
+\code{GET} & \code{/healthz} & --- & Sonda żywotności z regionem i wersją (bez limitu żądań) \\
+\code{GET} & \code{/readyz} & --- & Sonda gotowości z kontrolą bazy (bez limitu żądań) \\
+\code{POST} & \code{/auth/request-nonce} & --- & Jednorazowy nonce uwierzytelniający \\
+\code{POST} & \code{/auth/verify} & --- & Weryfikacja podpisu i wydanie JWT \\
+\code{GET} & \code{/users/me} & JWT & Profil zalogowanego użytkownika \\
+\code{PATCH} & \code{/users/me} & JWT & Zmiana nazwy użytkownika \\
+\code{GET} & \code{/rooms} & --- & Lista aktywnych pokoi \\
+\code{GET} & \code{/lobby-locations} & --- & Lista obsługiwanych lokalizacji lobby \\
+\code{GET} & \code{/rooms/{room_name}} & --- & Szczegóły jednego pokoju \\
+\code{GET} & \code{/games} & --- & Lista kategorii gier \\
+\code{POST} & \code{/rooms} & JWT & Utworzenie pokoju \\
+\code{POST} & \code{/rooms/{room_name}/join} & JWT & Dołączenie do pokoju \\
+\code{POST} & \code{/rooms/{room_name}/leave} & JWT & Opuszczenie pokoju \\
+\code{POST} & \code{/rooms/{room_name}/members/}\newline\code{{member_address}/kick} & Admin & Usunięcie członka z pokoju \\
+\code{GET} & \code{/rooms/{room_name}/event} & --- & Zaplanowane wydarzenie pokoju \\
+\code{PUT} & \code{/rooms/{room_name}/event} & JWT & Zaplanowanie lub zmiana wydarzenia \\
+\code{DELETE} & \code{/rooms/{room_name}/event} & JWT & Odwołanie wydarzenia \\
+\code{PUT} & \code{/rooms/{room_name}/event/rsvp} & JWT & Ustawienie RSVP wywołującego \\
+\code{POST} & \code{/games} & Admin & Dodanie kategorii gry \\
+\code{DELETE} & \code{/games/{name}} & Admin & Usunięcie kategorii gry \\
+\code{DELETE} & \code{/rooms/{room_name}} & Admin & Zamknięcie pokoju \\
+\bottomrule
+\end{longtable}
+
+Endpointy WebSocket (\code{/ws/rooms}, \code{/ws/rooms/{room_name}/chat}) opisuje kolejny rozdział.
+Poza tabelą istnieje jeszcze \code{GET /metrics} (metryki Prometheus), wyłączony ze schematu OpenAPI:
+jest odczytywany wyłącznie w sieci Compose, a żądania przychodzące przez Cloudflare
+(nagłówek \code{cf-connecting-ip}) dostają \code{404}. Szczegóły w części o obserwowalności.
+
+\section{Zdrowie (Health)}
+\label{sec:api-health}
+
+\subsection{\texttt{GET /}}
+
+Podstawowa sonda zdrowia, bez uwierzytelniania.
+
+\begin{lstlisting}[language=Python]
+200 OK
+{ "status": "ok", "service": "playlink-auth" }
+\end{lstlisting}
+
+\subsection{\texttt{GET /healthz}}
+
+Tania sonda żywotności używana przez selektor regionu i healthchecki kontenerów. Nie dotyka bazy
+danych i celowo \emph{nie} podlega limitowi żądań. Odpowiedź ma nagłówek \code{Cache-Control: no-store}.
+Pola \code{region}, \code{version} i \code{commit} pochodzą ze zmiennych \code{REGION},
+\code{APP_VERSION} i \code{GIT_SHA}.
+
+\begin{lstlisting}[language=Python]
+200 OK
+{ "status": "ok", "region": "eu", "version": "v0.1.0", "commit": "abc1234" }
+\end{lstlisting}
+
+\subsection{\texttt{GET /readyz}}
+
+Sonda gotowości wykonująca \code{SELECT 1} w PostgreSQL. Gdy baza jest niedostępna, zwraca
+\code{503} (\code{{"detail": "database unavailable"}}). Używana przez healthcheck Compose;
+sonda regionu w przeglądarce powinna korzystać z \code{/healthz}.
+
+\begin{lstlisting}[language=Python]
+200 OK
+{ "status": "ready", "region": "eu" }
+\end{lstlisting}
+
+\section{Auth}
+\label{sec:api-auth-endpointy}
+
+\subsection{\texttt{POST /auth/request-nonce}}
+
+Żąda jednorazowego nonce'a dla adresu tożsamości Ethereum. Nonce jest przed zapisem haszowany
+(SHA-256); wartość jawna jest zwracana tylko raz i musi zostać podpisana EIP-191 \code{personal_sign}
+w kroku weryfikacji. Poprzednie niewykorzystane nonce'y tego adresu są automatycznie unieważniane.
+Jeżeli użytkownik o danym adresie nie istnieje, rekord jest tworzony (upsert). Nonce wygasa po
+\code{NONCE_EXPIRATION_MINUTES} (domyślnie 5).
+
+\textbf{Parametr zapytania}
+
+\begin{tabularx}{\textwidth}{llY}
+\toprule
+Pole & Typ & Ograniczenia \\
+\midrule
+\code{address} & \code{string} & Poprawny adres Ethereum (hex, prefiks \code{0x}, 42 znaki); konwertowany do sumy kontrolnej EIP-55. \\
+\bottomrule
+\end{tabularx}
+
+\begin{lstlisting}[language=Python]
+200 OK
+{ "nonce": "550e8400-e29b-41d4-a716-446655440000" }
+\end{lstlisting}
+
+\textbf{Błędy:} \code{400 Bad Request} --- \code{address} nie ma poprawnego formatu
+(\code{{"detail": "Invalid identity address format"}}).
+
+\subsection{\texttt{POST /auth/verify}}
+
+Weryfikuje podpis EIP-191 \code{personal_sign} złożony pod nonce'em i wydaje JWT. Podpisywany
+komunikat ma postać:
+
+\begin{lstlisting}
+Sign in to Playlink\nNonce: {nonce}
+\end{lstlisting}
+
+Po sukcesie nonce zostaje oznaczony jako użyty, pole \code{last_login} użytkownika jest
+aktualizowane i zwracany jest token.
+
+\textbf{Treść żądania (\code{VerifyRequest})}
+
+\begin{tabularx}{\textwidth}{llY}
+\toprule
+Pole & Typ & Ograniczenia \\
+\midrule
+\code{address} & \code{string} & Poprawny adres Ethereum (zgodny z sumą kontrolną EIP-55). \\
+\code{nonce} & \code{string} & Jawny nonce zwrócony przez \code{POST /auth/request-nonce}. \\
+\code{signature} & \code{string} & Podpis EIP-191 w hex (prefiks \code{0x}, 132 znaki) komunikatu powyżej, złożony kluczem prywatnym odpowiadającym \code{address}. \\
+\bottomrule
+\end{tabularx}
+
+\begin{lstlisting}[language=Python]
+200 OK
+{ "token": "eyJhbGciOiJIUzI1NiIs...", "username": "alice_42", "is_admin": false }
+\end{lstlisting}
+
+\begin{tabularx}{\textwidth}{llY}
+\toprule
+Pole & Typ & Opis \\
+\midrule
+\code{token} & \code{string} & JWT HS256. Czas życia: \code{JWT_EXPIRATION_MINUTES} (domyślnie 60 min). Claimy: \code{sub} (adres w sumie kontrolnej), \code{username}, \code{is_admin}, \code{iat}, \code{exp}, \code{iss} (\code{"playlink-auth"}). \\
+\code{username} & \code{string} & Nazwa wyświetlana; generowana automatycznie, jeśli nie ustawiona (format \code{user_<8 znaków hex>}). \\
+\code{is_admin} & \code{boolean} & Czy adres jest na liście \code{ADMIN_ADDRESSES}. Klient nie może opierać się na claimach JWT, by omijać tę kontrolę na endpointach administracyjnych. \\
+\bottomrule
+\end{tabularx}
+
+\textbf{Błędy}
+
+\begin{tabularx}{\textwidth}{lY}
+\toprule
+Status & Warunek \\
+\midrule
+\code{400} & Nieprawidłowy format \code{address} (\code{"Invalid identity address format"}). \\
+\code{401} & Nonce nie istnieje, został już użyty lub wygasł (\code{"Invalid or expired challenge"}). \\
+\code{401} & Nieprawidłowy format podpisu --- odzyskanie adresu się nie powiodło (\code{"Invalid signature format"}). \\
+\code{401} & Odzyskany adres nie zgadza się z \code{address} (\code{"Identity verification failed"}). \\
+\bottomrule
+\end{tabularx}
+
+\section{Użytkownicy}
+\label{sec:api-users}
+
+\subsection{\texttt{GET /users/me}}
+
+Zwraca profil uwierzytelnionego użytkownika (wymagany JWT).
+
+\begin{lstlisting}[language=Python]
+200 OK
+{
+  "id": 1,
+  "identity_address": "0x742d35Cc6634C0532925a3b844Bc9e7595f2bD18",
+  "username": "alice_42",
+  "created_at": "2026-06-18T12:00:00Z",
+  "last_login": "2026-06-18T14:30:00Z",
+  "is_admin": false
+}
+\end{lstlisting}
+
+\begin{tabularx}{\textwidth}{llY}
+\toprule
+Pole & Typ & Opis \\
+\midrule
+\code{id} & \code{integer} & Wewnętrzny identyfikator użytkownika. \\
+\code{identity_address} & \code{string} & Adres Ethereum (suma kontrolna EIP-55). \\
+\code{username} & \code{string | null} & Nazwa wyświetlana lub \code{null}, jeśli nie ustawiona. \\
+\code{created_at} & \code{string} & Znacznik czasu ISO 8601 z sufiksem \code{Z}. \\
+\code{last_login} & \code{string | null} & Czas ostatniego udanego \code{POST /auth/verify}. \\
+\code{is_admin} & \code{boolean} & Czy adres jest na liście \code{ADMIN_ADDRESSES}. \\
+\bottomrule
+\end{tabularx}
+
+\textbf{Błędy:} \code{401} --- brak lub nieprawidłowy JWT (\code{"Not authenticated"},
+\code{"Token expired"}, \code{"Invalid token"}); \code{404} --- brak rekordu użytkownika
+(\code{"User not found"}; po poprawnym uwierzytelnieniu nie powinno się zdarzyć).
+
+\subsection{\texttt{PATCH /users/me}}
+
+Zmienia nazwę użytkownika (wymagany JWT). Treść żądania (\code{UpdateUserRequest}):
+pole \code{username} (\code{string}), 3--20 znaków; dozwolone litery \code{a-zA-Z}, cyfry,
+podkreślenie \code{_} i łącznik \code{-}. Nazwa nie może pasować do żadnego wpisu listy wulgaryzmów
+(LDNOOBW, angielska), sprawdzanej dla całego ciągu oraz dla każdego tokenu rozdzielonego znakami
+\code{_}/\code{-}. Ustawienie nazwy identycznej z obecną zwraca profil bez zmian.
+
+Odpowiedź \code{200 OK} ma taki sam kształt jak \code{GET /users/me}.
+
+\begin{tabularx}{\textwidth}{lY}
+\toprule
+Status & Warunek \\
+\midrule
+\code{400} & Błędny format nazwy (\code{"Username must be 3-20 characters: letters, numbers, _ or -."}). \\
+\code{400} & Nazwa zawiera wulgaryzmy (\code{"Username contains inappropriate language."}). \\
+\code{401} & Brak lub nieprawidłowy JWT. \\
+\code{404} & Brak rekordu użytkownika. \\
+\code{409} & Nazwa zajęta przez innego użytkownika (\code{"Username already taken."}). \\
+\bottomrule
+\end{tabularx}
+
+\section{Pokoje}
+\label{sec:api-rooms}
+
+\subsection{\texttt{GET /rooms}}
+
+Lista aktywnych (niewygasłych) pokoi; bez uwierzytelniania. Endpoint zwraca surowe obiekty modelu ORM
+\code{Room} jako tablicę JSON.
+
+\begin{lstlisting}[language=Python]
+200 OK
+[
+  {
+    "name": "dm-arena",
+    "game": "Quake III Arena",
+    "lobby_location": "eu-central",
+    "players_max": 8,
+    "description": "Casual deathmatch",
+    "communicator_link": "https://discord.gg/example",
+    "requirements": "Microphone preferred",
+    "created_by": "0x742d35Cc6634C0532925a3b844Bc9e7595f2bD18",
+    "created_at": "2026-06-18T12:00:00Z",
+    "expires_at": "2026-06-18T13:00:00Z",
+    "members": []
+  }
+]
+\end{lstlisting}
+
+Bogatszy widok (z \code{member_addresses}, \code{players_active} i zagnieżdżonym \code{event}) daje
+\code{GET /rooms/{room_name}}.
+
+\begin{tabularx}{\textwidth}{llY}
+\toprule
+Pole & Typ & Opis \\
+\midrule
+\code{name} & \code{string} & Unikalna nazwa pokoju. \\
+\code{game} & \code{string} & Nazwa kategorii gry. \\
+\code{lobby_location} & \code{string} & Kod lokalizacji lobby (np. \code{"eu-central"}). \\
+\code{players_max} & \code{integer} & Maksymalna liczba członków. \\
+\code{description} & \code{string | null} & Opis (maks. 500 znaków). \\
+\code{communicator_link} & \code{string | null} & Link do komunikatora głosowego/tekstowego (maks. 500 znaków). \\
+\code{requirements} & \code{string | null} & Wymagania wobec graczy (maks. 1000 znaków). \\
+\code{created_by} & \code{string} & Adres tożsamości twórcy pokoju. \\
+\code{created_at} & \code{string} & Znacznik czasu ISO 8601. \\
+\code{expires_at} & \code{string} & Znacznik czasu ISO 8601. Domyślnie pokój wygasa 60 minut po utworzeniu (automatycznie przedłużane po zaplanowaniu wydarzenia). \\
+\code{members} & \code{array} & Lista obiektów \code{User}; w praktyce pusta tablica --- skład pokoju zwraca \code{GET /rooms/{room_name}}. \\
+\bottomrule
+\end{tabularx}
+
+\subsection{\texttt{GET /rooms/\{room\_name\}}}
+
+Pełne szczegóły pokoju, w tym lista członków i zaplanowane wydarzenie; bez uwierzytelniania.
+Parametr ścieżki \code{room_name} to unikalna nazwa pokoju.
+
+\begin{lstlisting}[language=Python]
+200 OK
+{
+  "name": "dm-arena",
+  "game": "Quake III Arena",
+  "lobby_location": "eu-central",
+  "players_max": 8,
+  "players_active": 2,
+  "member_addresses": [
+    "0x742d35Cc6634C0532925a3b844Bc9e7595f2bD18",
+    "0x1234567890abcdef1234567890abcdef12345678"
+  ],
+  "members": [
+    { "address": "0x742d35Cc6634C0532925a3b844Bc9e7595f2bD18",
+      "username": "alice_42", "is_admin": false }
+  ],
+  "description": "Casual deathmatch",
+  "communicator_link": "https://discord.gg/example",
+  "requirements": "Microphone preferred",
+  "created_by": "0x742d35Cc6634C0532925a3b844Bc9e7595f2bD18",
+  "expires_at": "2026-06-18T13:00:00Z",
+  "event": null
+}
+\end{lstlisting}
+
+\begin{tabularx}{\textwidth}{llY}
+\toprule
+Pole & Typ & Opis \\
+\midrule
+\code{name}, \code{game}, \code{lobby_location}, \code{players_max} & & Jak w \code{GET /rooms}. \\
+\code{players_active} & \code{integer} & Bieżąca liczba członków. \\
+\code{member_addresses} & \code{array[string]} & Adresy tożsamości wszystkich członków. \\
+\code{members} & \code{array[object]} & Szczegółowa lista członków: \code{{ address, username, is_admin }}. \\
+\code{description}, \code{communicator_link}, \code{requirements} & \code{string | null} & Opis, link do komunikatora, wymagania. \\
+\code{created_by} & \code{string} & Adres twórcy. \\
+\code{expires_at} & \code{string} & Czas wygaśnięcia (ISO 8601). \\
+\code{event} & \code{object | null} & Zaplanowane wydarzenie lub \code{null}; kształt jak w odpowiedzi \code{GET /rooms/{room_name}/event}. \\
+\bottomrule
+\end{tabularx}
+
+\textbf{Błędy:} \code{404} --- pokój nie istnieje (\code{"Room not found"}).
+
+\subsection{\texttt{POST /rooms}}
+
+Tworzy nowy pokój; twórca jest automatycznie dodawany jako członek. Wymagany JWT.
+
+\textbf{Efekty uboczne.} Rozgłasza zaktualizowaną listę pokoi przez \code{/ws/rooms} do wszystkich
+słuchaczy kanału globalnego. Jeśli nazwa gry jest nowa, rekord \code{Game} powstaje automatycznie
+(\code{_ensure_game}, na końcu kolejności sortowania). Przed sprawdzeniem unikalności nazwy
+endpoint usuwa wygasłe pokoje (wraz z ich wiadomościami).
+
+\textbf{Limit.} Użytkownik niebędący administratorem może mieć najwyżej \textbf{3 aktywne pokoje}
+(liczone są pokoje, w których \code{created_by} równa się adresowi wywołującego).
+
+\textbf{Treść żądania (\code{CreateRoomRequest})}
+
+\begin{tabularx}{\textwidth}{llY}
+\toprule
+Pole & Typ & Ograniczenia \\
+\midrule
+\code{name} & \code{string} & Unikalna nazwa pokoju; nie może już istnieć. \\
+\code{game} & \code{string} & Nazwa kategorii gry, 1--100 znaków; nieistniejąca gra jest tworzona automatycznie. \\
+\code{lobby_location} & \code{string} & Jeden z 10 obsługiwanych kodów (patrz \code{GET /lobby-locations}); 1--50 znaków. \\
+\code{players_max} & \code{integer} & Maksymalna liczba członków (API nie narzuca poza typem \code{integer} żadnego minimum ani maksimum). \\
+\code{description} & \code{string | null} & Maks. 500 znaków. \\
+\code{communicator_link} & \code{string | null} & Poprawny URL (Pydantic \code{HttpUrl}), jeśli podany; zapisywany jako tekst. \\
+\code{requirements} & \code{string | null} & Maks. 1000 znaków. \\
+\bottomrule
+\end{tabularx}
+
+\begin{lstlisting}[language=Python]
+201 Created
+{ "status": "created", "room": "dm-arena" }
+\end{lstlisting}
+
+\begin{tabularx}{\textwidth}{lY}
+\toprule
+Status & Warunek \\
+\midrule
+\code{400} & Osiągnięty limit 3 pokoi (\code{"You can create a maximum of 3 rooms."}). \\
+\code{400} & Pusta nazwa gry po przycięciu (\code{"Game name is required"}). \\
+\code{400} & Nieznany kod lokalizacji (\code{"Unsupported lobby location"}). \\
+\code{401} & Brak lub nieprawidłowy JWT. \\
+\code{409} & Nazwa pokoju zajęta (\code{"Room name already taken"}). \\
+\code{422} & Błąd walidacji Pydantic (np. \code{players_max} nie jest liczbą, \code{communicator_link} nie jest URL-em, \code{description} dłuższy niż 500 znaków). \\
+\bottomrule
+\end{tabularx}
+
+\subsection{\texttt{POST /rooms/\{room\_name\}/join}}
+
+Dołącza wywołującego do pokoju (wymagany JWT).
+
+\textbf{Efekty uboczne:} rozgłoszenie listy pokoi przez \code{/ws/rooms} oraz ramka \code{roster_update}
+na kanał czatu pokoju.
+
+\begin{lstlisting}[language=Python]
+200 OK
+{ "status": "joined", "room": "dm-arena" }
+\end{lstlisting}
+
+\begin{tabularx}{\textwidth}{lY}
+\toprule
+Status & Warunek \\
+\midrule
+\code{400} & Wywołujący jest już członkiem (\code{"You are already in this room"}). \\
+\code{400} & Pokój pełny --- liczba członków $\geq$ \code{players_max} (\code{"Room is full"}). \\
+\code{401} & Brak lub nieprawidłowy JWT. \\
+\code{404} & Pokój nie istnieje (\code{"Room not found"}) lub brak rekordu użytkownika (\code{"User not found"}). \\
+\bottomrule
+\end{tabularx}
+
+\subsection{\texttt{POST /rooms/\{room\_name\}/leave}}
+
+Opuszcza pokój (wymagany JWT). RSVP wywołującego na wydarzenie pokoju (jeśli istnieje) jest
+automatycznie usuwane.
+
+\textbf{Efekty uboczne:} rozgłoszenie listy pokoi przez \code{/ws/rooms}; ramka \code{roster_update}
+na kanał czatu; jeżeli opuszczający miał RSVP --- także ramka \code{event_update} z nowym stanem wydarzenia.
+
+\begin{lstlisting}[language=Python]
+200 OK
+{ "status": "left", "room": "dm-arena" }
+\end{lstlisting}
+
+\textbf{Błędy:} \code{400} --- wywołujący nie jest członkiem (\code{"You are not in this room"});
+\code{401} --- brak/nieprawidłowy JWT; \code{404} --- pokój lub użytkownik nie istnieje
+(\code{"Room not found"}, \code{"User not found"}).
+
+\subsection{\texttt{POST /rooms/\{room\_name\}/members/\{member\_address\}/kick}}
+
+Usuwa z pokoju członka niebędącego administratorem. Wyłącznie administratorzy (adresy z
+\code{ADMIN_ADDRESSES}). Parametr \code{member_address} to adres tożsamości usuwanego członka;
+wyszukiwanie nie rozróżnia wielkości liter.
+
+\textbf{Efekty uboczne}
+\begin{itemize}[nosep]
+  \item Jeśli usunięty był twórcą pokoju, własność przechodzi na kopiącego administratora (zmiana \code{room.created_by}).
+  \item RSVP usuniętego członka (jeśli istnieje) jest kasowane.
+  \item W czacie pokoju zapisywana jest wiadomość systemowa: \code{"{username} was removed from the room by an administrator."}
+  \item Na kanał czatu pokoju trafiają ramki (w tej kolejności): \code{message}, \code{roster_update}, \code{event_update} (jeśli istnieje wydarzenie) i \code{member_kicked}.
+  \item Rozgłoszenie zaktualizowanej listy pokoi przez \code{/ws/rooms}.
+  \item Aktywne połączenia czatu usuniętego członka są zamykane kodem \code{4409}.
+\end{itemize}
+
+\begin{lstlisting}[language=Python]
+200 OK
+{
+  "status": "kicked",
+  "member_address": "0x1234567890abcdef1234567890abcdef12345678",
+  "member_username": "bob_99",
+  "created_by": "0x742d35Cc6634C0532925a3b844Bc9e7595f2bD18",
+  "ownership_transferred": false
+}
+\end{lstlisting}
+
+\begin{tabularx}{\textwidth}{llY}
+\toprule
+Pole & Typ & Opis \\
+\midrule
+\code{status} & \code{string} & \code{"kicked"}. \\
+\code{member_address} & \code{string} & Adres usuniętego członka. \\
+\code{member_username} & \code{string} & Nazwa usuniętego członka. \\
+\code{created_by} & \code{string} & Twórca pokoju po operacji (mógł się zmienić). \\
+\code{ownership_transferred} & \code{boolean} & Czy własność pokoju przeszła na administratora. \\
+\bottomrule
+\end{tabularx}
+
+\begin{tabularx}{\textwidth}{lY}
+\toprule
+Status & Warunek \\
+\midrule
+\code{401} & Brak lub nieprawidłowy JWT. \\
+\code{403} & Wywołujący nie jest administratorem (\code{"Admin privileges required"}). \\
+\code{403} & Cel jest administratorem (\code{"Administrators cannot be kicked"}). \\
+\code{404} & Pokój nie istnieje (\code{"Room not found"}) lub użytkownik nie istnieje (\code{"User not found"}). \\
+\code{409} & Cel nie jest członkiem pokoju (\code{"User is not a room member"}). \\
+\bottomrule
+\end{tabularx}
+
+\subsection{\texttt{DELETE /rooms/\{room\_name\}}}
+
+Zamyka (usuwa) pokój; wyłącznie administrator. Kaskadowo usuwa wiadomości czatu, zaplanowane
+wydarzenie i wszystkie RSVP.
+
+\textbf{Efekty uboczne:} ramka \code{{"type": "room_closed", "room": "{room_name}"}} na kanał czatu
+pokoju (klienci są przekierowywani) oraz rozgłoszenie listy pokoi przez \code{/ws/rooms}.
+
+\begin{lstlisting}[language=Python]
+200 OK
+{ "status": "closed", "room": "dm-arena" }
+\end{lstlisting}
+
+\textbf{Błędy:} \code{401} --- brak/nieprawidłowy JWT; \code{403} --- brak uprawnień administratora
+(\code{"Admin privileges required"}); \code{404} --- pokój nie istnieje (\code{"Room not found"}).
+
+\section{Wydarzenia pokoju i RSVP}
+\label{sec:api-events}
+
+Każdy pokój ma co najwyżej jedno zaplanowane wydarzenie. Przeglądać harmonogram może każdy, ale
+RSVP mogą ustawiać tylko członkowie, a planować i odwoływać --- tylko twórca pokoju.
+
+\subsection{\texttt{GET /rooms/\{room\_name\}/event}}
+
+Zwraca zaplanowane wydarzenie razem z listą RSVP; endpoint publiczny.
+
+\begin{lstlisting}[language=Python]
+200 OK
+{
+  "starts_at": "2026-06-20T18:00:00Z",
+  "ends_at": "2026-06-20T20:00:00Z",
+  "created_by": "0x742d35Cc6634C0532925a3b844Bc9e7595f2bD18",
+  "created_at": "2026-06-18T12:00:00Z",
+  "updated_at": "2026-06-18T12:00:00Z",
+  "rsvps": [
+    { "address": "0x742d35Cc6634C0532925a3b844Bc9e7595f2bD18",
+      "username": "alice_42", "status": "present",
+      "updated_at": "2026-06-18T12:05:00Z" }
+  ]
+}
+\end{lstlisting}
+
+\begin{tabularx}{\textwidth}{llY}
+\toprule
+Pole & Typ & Opis \\
+\midrule
+\code{starts_at}, \code{ends_at} & \code{string} & Początek i koniec wydarzenia (ISO 8601). \\
+\code{created_by} & \code{string} & Adres twórcy pokoju, który zaplanował wydarzenie. \\
+\code{created_at}, \code{updated_at} & \code{string} & Znaczniki utworzenia i ostatniej zmiany. \\
+\code{rsvps} & \code{array[object]} & Lista RSVP: \code{{ address, username, status ("present"|"absent"|"maybe"), updated_at }}. \\
+\bottomrule
+\end{tabularx}
+
+\textbf{Błędy:} \code{404} --- pokój nie istnieje (\code{"Room not found"}) lub brak wydarzenia
+(\code{"No event scheduled"}).
+
+\subsection{\texttt{PUT /rooms/\{room\_name\}/event}}
+
+Tworzy lub zastępuje wydarzenie pokoju. Tylko twórca pokoju (adres z JWT musi równać się
+\code{room.created_by}, bez rozróżniania wielkości liter). \code{expires_at} pokoju jest automatycznie
+przedłużane do \code{ends_at} + 30 minut (okres karencji), o ile nowy termin jest późniejszy.
+Jeśli okno czasowe istniejącego wydarzenia ulega zmianie, wszystkie dotychczasowe RSVP są usuwane
+--- członkowie muszą potwierdzić obecność ponownie.
+
+\textbf{Efekty uboczne:} ramka \code{event_update} na kanał czatu pokoju; gdy zmienił się czas
+wygaśnięcia pokoju --- także rozgłoszenie listy pokoi przez \code{/ws/rooms}.
+
+\textbf{Treść żądania (\code{ScheduleEventRequest})}
+
+\begin{tabularx}{\textwidth}{llY}
+\toprule
+Pole & Typ & Ograniczenia \\
+\midrule
+\code{starts_at} & \code{datetime} & Musi leżeć w przyszłości (UTC); wartość bez strefy jest traktowana jako UTC. \\
+\code{ends_at} & \code{datetime} & Musi być późniejsze niż \code{starts_at}; wartość bez strefy jest traktowana jako UTC. \\
+\bottomrule
+\end{tabularx}
+
+Odpowiedź \code{200 OK} ma taki sam kształt jak \code{GET /rooms/{room_name}/event}.
+
+\begin{tabularx}{\textwidth}{lY}
+\toprule
+Status & Warunek \\
+\midrule
+\code{400} & \code{starts_at} nie leży w przyszłości (\code{"starts_at must be in the future"}). \\
+\code{400} & \code{ends_at} nie jest późniejsze niż \code{starts_at} (\code{"ends_at must be after starts_at"}). \\
+\code{401} & Brak lub nieprawidłowy JWT. \\
+\code{403} & Wywołujący nie jest twórcą (\code{"Only the room creator can schedule an event"}). \\
+\code{404} & Pokój nie istnieje (\code{"Room not found"}). \\
+\bottomrule
+\end{tabularx}
+
+\subsection{\texttt{DELETE /rooms/\{room\_name\}/event}}
+
+Odwołuje wydarzenie i kasuje wszystkie RSVP; tylko twórca pokoju. \textbf{Efekt uboczny:} ramka
+\code{{"type": "event_update", "event": null}} na kanał czatu pokoju.
+
+\begin{lstlisting}[language=Python]
+200 OK
+{ "status": "cancelled", "room": "dm-arena" }
+\end{lstlisting}
+
+\textbf{Błędy:} \code{401} --- brak/nieprawidłowy JWT; \code{403} --- wywołujący nie jest twórcą
+(\code{"Only the room creator can cancel the event"}); \code{404} --- pokój nie istnieje lub brak
+wydarzenia (\code{"Room not found"}, \code{"No event scheduled"}).
+
+\subsection{\texttt{PUT /rooms/\{room\_name\}/event/rsvp}}
+
+Ustawia (upsert) RSVP wywołującego na wydarzenie pokoju. Tylko aktualni członkowie pokoju; jedno
+RSVP na użytkownika na wydarzenie (poprzedni status jest nadpisywany). \textbf{Efekt uboczny:} ramka
+\code{rsvp_update} na kanał czatu pokoju.
+
+Treść żądania (\code{SetRsvpRequest}): pole \code{status} (\code{string}) o wartości \code{"present"},
+\code{"absent"} lub \code{"maybe"} (wartości enuma \code{RsvpStatus}).
+
+\begin{lstlisting}[language=Python]
+200 OK
+{
+  "address": "0x742d35Cc6634C0532925a3b844Bc9e7595f2bD18",
+  "username": "alice_42",
+  "status": "present",
+  "updated_at": "2026-06-18T12:05:00Z"
+}
+\end{lstlisting}
+
+\begin{tabularx}{\textwidth}{lY}
+\toprule
+Status & Warunek \\
+\midrule
+\code{401} & Brak lub nieprawidłowy JWT. \\
+\code{403} & Wywołujący nie jest członkiem (\code{"Only room members can RSVP to the event"}). \\
+\code{404} & Pokój, użytkownik lub wydarzenie nie istnieje (\code{"Room not found"}, \code{"User not found"}, \code{"No event scheduled"}). \\
+\bottomrule
+\end{tabularx}
+
+\section{Lokalizacje lobby}
+\label{sec:api-lobby}
+
+\subsection{\texttt{GET /lobby-locations}}
+
+Zwraca listę obsługiwanych lokalizacji lobby z etykietami i przybliżonymi współrzędnymi
+geograficznymi oraz kod lokalizacji domyślnej (\code{"eu-central"}). Lista jest zdefiniowana
+w \code{backend/config.py} (\code{LOBBY_LOCATIONS}).
+
+\begin{lstlisting}[language=Python]
+200 OK
+{
+  "default": "eu-central",
+  "locations": [
+    { "code": "na-east",      "label": "North America East",  "lat": 39.0,  "lon": -77.0 },
+    { "code": "na-west",      "label": "North America West",  "lat": 37.8,  "lon": -122.4 },
+    { "code": "eu-west",      "label": "Europe West",         "lat": 51.5,  "lon": -0.1 },
+    { "code": "eu-central",   "label": "Europe Central",      "lat": 50.1,  "lon": 8.7 },
+    { "code": "eu-north",     "label": "Europe North",        "lat": 59.3,  "lon": 18.1 },
+    { "code": "sa-east",      "label": "South America East",  "lat": -23.6, "lon": -46.6 },
+    { "code": "asia-east",    "label": "Asia East",           "lat": 35.7,  "lon": 139.7 },
+    { "code": "asia-south",   "label": "Asia South",          "lat": 1.3,   "lon": 103.8 },
+    { "code": "oceania",      "label": "Oceania",             "lat": -33.9, "lon": 151.2 },
+    { "code": "africa-south", "label": "Africa South",        "lat": -26.2, "lon": 28.0 }
+  ]
+}
+\end{lstlisting}
+
+Pola: \code{default} (\code{string}) --- domyślny kod lokalizacji; \code{locations} (\code{array[object]})
+--- obiekty \code{{ code, label, lat, lon }}.
+
+\section{Gry}
+\label{sec:api-games}
+
+\subsection{\texttt{GET /games}}
+
+Lista kategorii gier uporządkowana wg \code{sort_order}. Pięć gier domyślnych jest zasiewanych
+przy pierwszym uruchomieniu; kolejne dodają i usuwają endpointy administracyjne.
+
+\begin{lstlisting}[language=Python]
+200 OK
+["Quake III Arena", "Diablo II", "StarCraft", "Half-Life", "Unreal Tournament"]
+\end{lstlisting}
+
+\subsection{\texttt{POST /games}}
+
+Dodaje kategorię gry na końcu kolejności sortowania. Wymagany administrator. Treść żądania
+(\code{CreateGameRequest}): \code{name} (\code{string}), 1--100 znaków, przycinana po stronie serwera.
+
+\begin{lstlisting}[language=Python]
+201 Created
+{ "name": "Team Fortress 2", "sort_order": 6 }
+\end{lstlisting}
+
+\textbf{Błędy:} \code{400} --- pusta nazwa po przycięciu (\code{"Game name is required"});
+\code{401} --- brak/nieprawidłowy JWT; \code{403} --- brak uprawnień administratora
+(\code{"Admin privileges required"}); \code{409} --- gra już istnieje (\code{"Game already exists"}).
+
+\subsection{\texttt{DELETE /games/\{name\}}}
+
+Usuwa kategorię gry. Jeśli istnieją pokoje z tą grą, żądanie jest odrzucane kodem \code{409}, chyba
+że ustawiono parametr zapytania \code{force=true}; wtedy pokoje są najpierw zamykane (taka sama
+kaskada jak w \code{DELETE /rooms/{room_name}}). Wymagany administrator.
+
+\textbf{Efekty uboczne (przy \code{force=true}):} każdy dotknięty pokój jest czyszczony (wiadomości,
+wydarzenie, RSVP, członkowie), na kanał czatu każdego z nich trafia ramka \code{room_closed}, a lista
+pokoi jest rozgłaszana przez \code{/ws/rooms}.
+
+\begin{tabularx}{\textwidth}{llllY}
+\toprule
+Parametr & Miejsce & Typ & Domyślnie & Opis \\
+\midrule
+\code{name} & ścieżka & \code{string} & --- & Nazwa gry. \\
+\code{force} & zapytanie & \code{boolean} & \code{false} & Jeśli \code{true}, zamyka wszystkie pokoje z tą grą przed jej usunięciem. \\
+\bottomrule
+\end{tabularx}
+
+\begin{lstlisting}[language=Python]
+200 OK
+{ "status": "deleted", "game": "Team Fortress 2", "rooms_closed": ["dm-arena", "ctf-base"] }
+\end{lstlisting}
+
+Pole \code{rooms_closed} (\code{array[string]}) to nazwy zamkniętych pokoi (pusta tablica, gdy brak).
+
+\begin{tabularx}{\textwidth}{lY}
+\toprule
+Status & Warunek \\
+\midrule
+\code{401} & Brak lub nieprawidłowy JWT. \\
+\code{403} & Brak uprawnień administratora (\code{"Admin privileges required"}). \\
+\code{404} & Gra nie istnieje (\code{"Game not found"}). \\
+\code{409} & Istnieją aktywne pokoje z tą grą, a \code{force} nie jest \code{true} (\code{"There are N active rooms currently playing this game."}). \\
+\bottomrule
+\end{tabularx}
+
+\section{Odesłania}
+
+Encje (\code{Room}, \code{RoomMember}, \code{Message}, \code{RoomEvent}, \code{RoomEventRsvp},
+\code{User}, \code{Nonce}, \code{Game}) opisuje rozdział o modelu danych w części o architekturze;
+zmienne środowiskowe (\code{DATABASE_URL}, \code{JWT_SECRET}, \code{JWT_ALGORITHM},
+\code{NONCE_EXPIRATION_MINUTES}, \code{JWT_EXPIRATION_MINUTES}, \code{DEFAULT_RATE_LIMIT},
+\code{ADMIN_ADDRESSES}, \code{ROOM_CLEANUP_INTERVAL_SECONDS} i inne) --- rozdział o konfiguracji
+w tej samej części.
+
+% =====================================================================
+
+\chapter{Komunikacja w czasie rzeczywistym}
+\label{ch:realtime}
+
+PlayLink udostępnia dwa endpointy WebSocket: \textbf{globalny kanał listy pokoi} (bez uwierzytelniania)
+oraz \textbf{kanał czatu pokoju} (uwierzytelniany tokenem JWT w parametrze zapytania). Oba są
+obsługiwane przez dwa rejestry połączeń w pamięci procesu: \code{ConnectionManager} i
+\code{RoomChatManager} (\code{backend/ws/managers.py}). Handlery znajdują się w
+\code{backend/routers/chat.py} (\code{websocket_rooms}, \code{websocket_chat}), serializery w
+\code{backend/serializers.py} (\code{get_rooms_payload}, \code{_members_payload},
+\code{_serialize_event_state}, \code{_msg_dict}), weryfikacja podpisu w \code{backend/security.py}
+(\code{_chat_signing_message}, \code{_verify_chat_signature}), a stałe (\code{CHAT_SIGNATURE_SKEW_SECONDS},
+\code{SYSTEM_SENDER_ADDRESS}, \code{WS_LIMITS}, \code{MAX_MSGS}, \code{WINDOW}) w
+\code{backend/config.py}. Po stronie klienta odpowiadają im \code{roomsStore.ts}, \code{chatStore.ts}
+i \code{signing.ts} (szczegóły w części o froncie).
+
+\section{Menedżery połączeń}
+\label{sec:rt-managery}
+
+\subsection{\texttt{ConnectionManager} --- globalna lista pokoi}
+
+\begin{tabularx}{\textwidth}{lY}
+\toprule
+Element & Opis \\
+\midrule
+\code{active_connections} & \code{list[WebSocket]}: każde podłączone gniazdo \code{/ws/rooms}. \\
+\code{connect(ws)} & Korutyna: akceptuje gniazdo i dodaje je do listy. \\
+\code{disconnect(ws)} & Usuwa gniazdo z listy (bez efektu, gdy go nie ma). \\
+\code{broadcast(data: str)} & Korutyna: wysyła tekst do \emph{każdego} połączenia; gniazda, które zgłaszają wyjątek przy wysyłce, są usuwane. \\
+\bottomrule
+\end{tabularx}
+
+Nieosiągalne przeglądarki (zamknięta karta, utrata sieci) są usuwane leniwie przy najbliższym
+rozgłoszeniu. Po stronie serwera nie ma heartbeatu.
+
+\subsection{\texttt{RoomChatManager} --- czat pokoju}
+
+\begin{tabularx}{\textwidth}{lY}
+\toprule
+Element & Opis \\
+\midrule
+\code{rooms} & \code{dict[str, dict[WebSocket, str]]}: \code{nazwa_pokoju -> { WebSocket -> adres_tożsamości }}. \\
+\code{connect(room, ws, address)} & Akceptuje gniazdo i rejestruje je pod kluczem pokoju. \\
+\code{disconnect(room, ws)} & Wyrejestrowuje jedno gniazdo; klucz pokoju jest usuwany, gdy zostanie pusty. \\
+\code{broadcast(room, payload: str)} & Wysyła tekst do \emph{każdego} połączenia w pokoju; nieaktywne gniazda są usuwane. \\
+\code{disconnect_user(room, address, code=4409)} & Zamyka każde gniazdo uwierzytelnione jako \code{address} (bez rozróżniania wielkości liter). \\
+\bottomrule
+\end{tabularx}
+
+\section{Kanał \texttt{/ws/rooms} --- globalna lista pokoi}
+\label{sec:rt-rooms}
+
+\begin{lstlisting}
+GET /ws/rooms
+\end{lstlisting}
+
+\subsection{Połączenie}
+
+\begin{itemize}[nosep]
+  \item \textbf{Brak uwierzytelniania.} Gniazdo jest akceptowane bezwarunkowo i rejestrowane w \code{ConnectionManager}.
+  \item Serwer natychmiast wysyła jako pierwszą ramkę bieżącą listę aktywnych pokoi w JSON.
+  \item Następnie gniazdo trwa w pętli \code{receive_text()}, cicho zużywając dane przychodzące (żadna wiadomość od klienta nie wywołuje akcji).
+\end{itemize}
+
+\subsection{Ramki wychodzące}
+
+Kanał wysyła jeden typ ramki: \textbf{goły tablicowy JSON} z podsumowaniami pokoi (bez opakowującego
+pola \code{type}). Element tablicy:
+
+\begin{lstlisting}[language=Python]
+{
+  "name": "duel-arena",
+  "game": "Quake III Arena",
+  "lobby_location": "eu-central",
+  "players_active": 2,
+  "players_max": 4,
+  "member_addresses": ["0xAbc...", "0xDef..."],
+  "description": "Looking for a duel partner",
+  "communicator_link": "https://discord.gg/abc123",
+  "requirements": "Microphone required",
+  "expires_at": "2026-06-19T12:00:00Z"
+}
+\end{lstlisting}
+
+\begin{tabularx}{\textwidth}{llY}
+\toprule
+Pole & Typ & Opis \\
+\midrule
+\code{name} & \code{string} & Unikalna nazwa pokoju. \\
+\code{game} & \code{string} & Nazwa kategorii gry. \\
+\code{lobby_location} & \code{string} & Kod lokalizacji lobby (np. \code{eu-central}; pełna lista w rozdziale o REST). \\
+\code{players_active} & \code{number} & Bieżąca liczba członków (\code{len(r.members)}). \\
+\code{players_max} & \code{number} & Pojemność ustawiona przy tworzeniu. \\
+\code{member_addresses} & \code{string[]} & Adresy tożsamości aktualnych członków (suma kontrolna). \\
+\code{description} & \code{string | null} & Opis pokoju. \\
+\code{communicator_link} & \code{string | null} & Zewnętrzny link do komunikatora. \\
+\code{requirements} & \code{string | null} & Wymagania. \\
+\code{expires_at} & \code{string} & ISO 8601 z sufiksem \code{Z}. \\
+\bottomrule
+\end{tabularx}
+
+\subsection{Kiedy następuje rozgłoszenie}
+
+Wywołanie \code{ConnectionManager.broadcast(get_rooms_payload(session))} następuje po każdej
+mutacji zmieniającej widoczny zbiór pokoi:
+
+\begin{tabularx}{\textwidth}{lY}
+\toprule
+Zdarzenie & Endpoint / źródło \\
+\midrule
+Pokój utworzony & \code{POST /rooms} \\
+Dołączenie do pokoju & \code{POST /rooms/{name}/join} \\
+Opuszczenie pokoju & \code{POST /rooms/{name}/leave} \\
+Członek usunięty & \code{POST /rooms/{name}/members/{addr}/kick} \\
+Pokój zamknięty (admin) & \code{DELETE /rooms/{name}} \\
+Gra usunięta (admin) & \code{DELETE /games/{name}} (zamyka wszystkie pokoje tej gry) \\
+Pokój wygasł (tło) & \code{cleanup_expired_rooms_task}, co \code{ROOM_CLEANUP_INTERVAL_SECONDS} (domyślnie 60 s) \\
+Zmiana czasu wygaśnięcia pokoju & pośrednio, przy ustawieniu/zmianie wydarzenia (\code{PUT /rooms/{name}/event}) \\
+\bottomrule
+\end{tabularx}
+
+\subsection{Usuwanie wygasłych pokoi}
+
+Wygasłe pokoje (\code{Room.expires_at <= now}) są usuwane synchronicznie wewnątrz
+\code{get_rooms_payload()} przy \emph{każdym} wywołaniu, więc rozgłoszenie nigdy nie zawiera
+nieaktualnych wpisów. Osobne zadanie w tle \code{cleanup_expired_rooms_task} (interwał
+\code{ROOM_CLEANUP_INTERVAL_SECONDS}) usuwa pokoje (wraz z wiadomościami, wydarzeniem i RSVP),
+które wygasły między kolejnymi pobraniami listy, i rozgłasza odświeżoną listę.
+
+\textbf{Uwaga:} zadanie czyszczące \emph{nie} wysyła ramek \code{room_closed} na kanał czatu --- odświeża
+tylko listę globalną. Połączenia czatu z wygasłym pokojem pozostają otwarte, dopóki klient nie wyśle
+wiadomości (wtedy kontrola członkostwa kończy połączenie kodem 4403) lub się nie rozłączy.
+
+\section{Kanał \texttt{/ws/rooms/\{room\_name\}/chat} --- czat pokoju}
+\label{sec:rt-chat}
+
+\begin{lstlisting}
+GET /ws/rooms/{room_name}/chat?token=<JWT>
+\end{lstlisting}
+
+\subsection{Połączenie i uwierzytelnianie}
+
+\begin{enumerate}[nosep]
+  \item \textbf{JWT w parametrze zapytania.} Parametr \code{token} niesie JWT HS256 uzyskany przy logowaniu. Przeglądarki nie mogą ustawiać własnych nagłówków WebSocket, więc token przekazuje się w URL.
+  \item Serwer dekoduje JWT funkcją \code{_decode_jwt()}, by wydobyć adres tożsamości (claim \code{sub}). Niepowodzenie $\to$ zamknięcie kodem \textbf{4401}.
+  \item Pokój musi istnieć w bazie. Brak $\to$ kod \textbf{4404}.
+  \item Wywołujący musi być aktualnym członkiem pokoju. Brak $\to$ kod \textbf{4403}.
+\end{enumerate}
+
+Po przejściu wszystkich kontroli gniazdo jest rejestrowane w \code{RoomChatManager.connect()}.
+
+\subsection{Kody zamknięcia}
+
+\begin{tabularx}{\textwidth}{llY}
+\toprule
+Kod & Znaczenie & Kiedy wysyłany \\
+\midrule
+4401 & Unauthorized & JWT brakuje, wygasł lub jest nieprawidłowy. \\
+4403 & Forbidden --- nie członek & Wywołujący nie jest na liście członków (sprawdzane przy połączeniu \emph{oraz} po każdej wiadomości przychodzącej). \\
+4404 & Not Found & Pokój o danej nazwie nie istnieje. \\
+4409 & Członkostwo zakończone & \code{disconnect_user} po usunięciu przez administratora; ponowne połączenie kończy się kodem 4403. \\
+4429 & Rate limited & Przekroczono limit wiadomości dla adresu. \\
+\bottomrule
+\end{tabularx}
+
+We froncie kody \textbf{4403} i \textbf{4409} ustawiają \code{kicked = true} i wyłączają ponowne łączenie;
+pozostałe kody uruchamiają ponowne łączenie z wykładniczym wycofywaniem (backoff).
+
+\subsection{Ponowna kontrola członkostwa}
+
+Po każdej wiadomości przychodzącej serwer odpytuje bezpośrednio tabelę łączącą \code{RoomMember}
+(nie pamięć podręczną relacji ORM):
+
+\begin{lstlisting}[language=Python]
+membership = session.exec(
+    select(RoomMember).where(
+        RoomMember.room_id == room.id,
+        RoomMember.user_id == user.id,
+    )
+).first()
+\end{lstlisting}
+
+Jeśli wiersza członkostwa nie ma, gniazdo jest zamykane kodem \textbf{4403}. Dzięki temu
+usunięty lub wyrzucony członek nie może dalej pisać, nawet jeśli jego gniazdo pozostało otwarte.
+
+\subsection{Limit wiadomości na adres}
+
+Dla każdego adresu tożsamości działa okno przesuwne:
+
+\begin{tabularx}{\textwidth}{llllY}
+\toprule
+Zmienna & Zmienna env & Domyślnie & & Opis \\
+\midrule
+\code{MAX_MSGS} & \code{WS_RATE_LIMIT_MAX_MESSAGES} & 10 & & Maks. liczba wiadomości w oknie na adres. \\
+\code{WINDOW} & \code{WS_RATE_LIMIT_TIME_WINDOW_SECONDS} & 10 & & Długość okna w sekundach. \\
+\bottomrule
+\end{tabularx}
+
+Stan limitu przechowuje globalny słownik \code{WS_LIMITS: dict[str, list[float]]} (w pamięci,
+\textbf{niewspółdzielony} między procesami roboczymi). Przy każdej wiadomości przychodzącej serwer
+usuwa znaczniki starsze niż \code{WINDOW}, sprawdza, czy liczba $\geq$ \code{MAX_MSGS}, a po
+przekroczeniu zamyka gniazdo kodem \textbf{4429}. Kontrola odbywa się przed parsowaniem JSON, więc
+liczą się także wiadomości niepoprawne.
+
+\subsection{Typy ramek wychodzących}
+\label{sec:rt-ramki-wychodzace}
+
+Każda ramka wychodząca to obiekt JSON z polem \code{type} (łańcuch) i polami zależnymi od typu.
+
+\begin{tabularx}{\textwidth}{l>{\raggedright\arraybackslash}p{0.33\textwidth}Y}
+\toprule
+\code{type} & Kiedy & Zawartość \\
+\midrule
+\code{history} & Zaraz po połączeniu, przed pętlą odczytu & Ostatnie 50 wiadomości w kolejności chronologicznej. \\
+\code{message} & Po zapisie nowej wiadomości (także systemowej) & Pojedyncza wiadomość, do wszystkich w pokoju. \\
+\code{event_update} & Wydarzenie utworzone, zmienione, odwołane lub zmiana RSVP przy opuszczeniu/kicku & Pełny stan wydarzenia lub \code{null}. \\
+\code{rsvp_update} & Członek ustawił swoje RSVP & Pojedynczy wpis RSVP. \\
+\code{roster_update} & Dołączenie, opuszczenie lub kick & Pełna aktualna lista członków. \\
+\code{room_closed} & Administrator zamknął pokój lub usunął grę & Nazwa pokoju. \\
+\code{member_kicked} & Administrator usunął członka & Dane usuniętego i właściciela pokoju. \\
+\code{error} & Odrzucona wiadomość przychodząca & Pole \code{detail}. \\
+\bottomrule
+\end{tabularx}
+
+\paragraph{\texttt{history}.} Zawiera 50 ostatnich wiadomości w porządku chronologicznym.
+
+\begin{lstlisting}[language=Python]
+{
+  "type": "history",
+  "messages": [
+    {
+      "id": 1,
+      "sender_address": "0xAbc...",
+      "sender_username": "player1",
+      "content": "gg",
+      "created_at": "2026-06-18T20:00:00Z",
+      "signature": "0x1234...",
+      "sent_at": "2026-06-18T20:00:00.000Z",
+      "verified": true
+    }
+  ]
+}
+\end{lstlisting}
+
+\paragraph{\texttt{message}.} Rozgłaszana do każdego połączenia w pokoju po zapisaniu nowej wiadomości.
+
+\begin{lstlisting}[language=Python]
+{
+  "type": "message",
+  "message": {
+    "id": 42,
+    "sender_address": "0xAbc...",
+    "sender_username": "player1",
+    "content": "Hello!",
+    "created_at": "2026-06-18T20:01:00Z",
+    "signature": "0x1234...",
+    "sent_at": "2026-06-18T20:01:00.000Z",
+    "verified": true
+  }
+}
+\end{lstlisting}
+
+Pola obiektu wiadomości (\code{_msg_dict}):
+
+\begin{tabularx}{\textwidth}{llY}
+\toprule
+Pole & Typ & Opis \\
+\midrule
+\code{id} & \code{number} & Klucz główny (autoinkrementacja). \\
+\code{sender_address} & \code{string} & Adres tożsamości nadawcy (suma kontrolna). \\
+\code{sender_username} & \code{string} & Nazwa nadawcy (ustalana w chwili rozgłoszenia). \\
+\code{content} & \code{string} & Treść wiadomości. \\
+\code{created_at} & \code{string} & Czas serwera, ISO 8601 z \code{Z}. \\
+\code{signature} & \code{string | null} & Podpis EIP-191 w hex lub \code{null} (wiadomość niepodpisana). \\
+\code{sent_at} & \code{string | null} & Podpisany znacznik czasu klienta (ISO 8601) lub \code{null}. \\
+\code{verified} & \code{boolean} & \code{true}, gdy wiadomość ma podpis; podpis jest weryfikowany przy zapisie, a wiadomości z błędnym podpisem w ogóle nie trafiają do bazy. \\
+\code{kind} & \code{string} & \emph{(opcjonalne, tylko dla nadawcy systemowego)} \code{"system"}. \\
+\bottomrule
+\end{tabularx}
+
+Wiadomość z \code{kind: "system"} jest wstrzykiwana przez serwer jako ogłoszenie (np. o usunięciu
+członka przez administratora); jej \code{sender_address} to \code{"__system__"}, a nazwa nadawcy
+to \code{"System"}.
+
+\paragraph{\texttt{event\_update}.} Wysyłana przy utworzeniu, zmianie lub odwołaniu wydarzenia, a także
+gdy zmienia się zbiór RSVP (opuszczenie pokoju lub kick członka z RSVP).
+
+\begin{lstlisting}[language=Python]
+{
+  "type": "event_update",
+  "event": {
+    "starts_at": "2026-06-20T18:00:00Z",
+    "ends_at": "2026-06-20T21:00:00Z",
+    "created_by": "0xAbc...",
+    "created_at": "2026-06-18T12:00:00Z",
+    "updated_at": "2026-06-18T12:30:00Z",
+    "rsvps": [
+      { "address": "0xAbc...", "username": "player1",
+        "status": "present", "updated_at": "2026-06-18T12:30:00Z" }
+    ]
+  }
+}
+\end{lstlisting}
+
+Pole \code{event} to pełny stan wydarzenia albo \code{null} po odwołaniu. Pola obiektu: \code{starts_at},
+\code{ends_at}, \code{created_by} (adres twórcy pokoju, który zaplanował wydarzenie), \code{created_at},
+\code{updated_at} oraz \code{rsvps} (tablica wpisów, po jednym na członka, który odpowiedział).
+Wpis RSVP: \code{address}, \code{username}, \code{status} (\code{"present"}, \code{"absent"} lub
+\code{"maybe"}) i \code{updated_at}.
+
+\paragraph{\texttt{rsvp\_update}.} Wysyłana, gdy pojedynczy członek ustawia RSVP
+(\code{PUT /rooms/{name}/event/rsvp}).
+
+\begin{lstlisting}[language=Python]
+{
+  "type": "rsvp_update",
+  "rsvp": {
+    "address": "0xDef...", "username": "player2",
+    "status": "maybe", "updated_at": "2026-06-18T13:00:00Z"
+  }
+}
+\end{lstlisting}
+
+Frontend scala ramkę z lokalnym stanem wydarzenia, zastępując istniejący wpis z tego samego adresu
+(deduplikacja adresów bez rozróżniania wielkości liter).
+
+\paragraph{\texttt{roster\_update}.} Wysyłana przy dołączeniu, opuszczeniu lub usunięciu członka.
+
+\begin{lstlisting}[language=Python]
+{
+  "type": "roster_update",
+  "members": [
+    { "address": "0xAbc...", "username": "player1", "is_admin": false },
+    { "address": "0xDef...", "username": "player2", "is_admin": true }
+  ]
+}
+\end{lstlisting}
+
+Pole \code{members} to \emph{pełna} bieżąca lista (nie różnica) i zastępuje stan klienta. Element:
+\code{address}, \code{username}, \code{is_admin} (czy adres jest na liście \code{ADMIN_ADDRESSES}).
+
+\paragraph{\texttt{room\_closed}.} Wysyłana, gdy administrator usuwa pokój albo usuwa grę (co kaskadowo
+zamyka wszystkie jej pokoje).
+
+\begin{lstlisting}[language=Python]
+{ "type": "room_closed", "room": "duel-arena" }
+\end{lstlisting}
+
+Frontend ustawia \code{closed = true}, zamyka gniazdo i wyłącza ponowne łączenie.
+
+\paragraph{\texttt{member\_kicked}.} Wysyłana po usunięciu członka przez administratora
+(\code{POST /rooms/{name}/members/{addr}/kick}).
+
+\begin{lstlisting}[language=Python]
+{
+  "type": "member_kicked",
+  "member_address": "0xAbc...",
+  "member_username": "player1",
+  "created_by": "0xAdmin...",
+  "ownership_transferred": true
+}
+\end{lstlisting}
+
+\begin{tabularx}{\textwidth}{llY}
+\toprule
+Pole & Typ & Opis \\
+\midrule
+\code{member_address} & \code{string} & Adres usuniętego członka. \\
+\code{member_username} & \code{string} & Nazwa usuniętego członka. \\
+\code{created_by} & \code{string} & Adres \emph{nowego} właściciela pokoju (po ewentualnym przekazaniu). \\
+\code{ownership_transferred} & \code{boolean} & \code{true}, gdy usunięty był właścicielem pokoju. \\
+\bottomrule
+\end{tabularx}
+
+Frontend aktualizuje \code{owner} na \code{created_by}; jeśli \code{member_address} zgadza się z adresem
+bieżącej sesji, ustawia \code{kicked = true} i zamyka gniazdo. Bezpośrednio po tej ramce serwer wywołuje
+\code{disconnect_user()} dla usuniętego adresu (kod zamknięcia 4409).
+
+\paragraph{\texttt{error}.} Wysyłana, gdy walidacja po stronie serwera odrzuca wiadomość przychodzącą
+(np. niepoprawny podpis).
+
+\begin{lstlisting}[language=Python]
+{ "type": "error", "detail": "signature_invalid" }
+\end{lstlisting}
+
+Frontend loguje ostrzeżenie; stan się nie zmienia. Odrzucona wiadomość \emph{nigdy} nie jest zapisywana
+w bazie.
+
+\subsection{Ramki przychodzące (klient $\to$ serwer)}
+\label{sec:rt-ramki-przychodzace}
+
+Klient wysyła \textbf{jeden} typ ramki --- wiadomość czatu: obiekt JSON z co najmniej polem \code{content}.
+
+\textbf{Niepodpisana (starszy klient / klient bez klucza):}
+
+\begin{lstlisting}[language=Python]
+{ "content": "Hello, everyone!" }
+\end{lstlisting}
+
+\textbf{Podpisana (EIP-191):}
+
+\begin{lstlisting}[language=Python]
+{
+  "content": "Hello, everyone!",
+  "sent_at": "2026-06-18T20:01:00.000Z",
+  "signature": "0x..."
+}
+\end{lstlisting}
+
+\begin{tabularx}{\textwidth}{llY}
+\toprule
+Pole & Wymagane & Opis \\
+\midrule
+\code{content} & tak & Treść; przycinana, niepusta, $\leq$ 1000 znaków. \\
+\code{sent_at} & z \code{signature} & Znacznik czasu klienta (ISO 8601) wchodzący do podpisywanego komunikatu. \\
+\code{signature} & nie & Podpis EIP-191 w hex pod kanonicznym komunikatem (patrz następna sekcja). \\
+\bottomrule
+\end{tabularx}
+
+\textbf{Potok walidacji po stronie serwera}
+\begin{enumerate}[nosep]
+  \item Kontrola członkostwa po każdej wiadomości --- brak członkostwa: zamknięcie kodem 4403.
+  \item Kontrola limitu --- przekroczenie: zamknięcie kodem 4429.
+  \item Parsowanie JSON; wiadomość niepoprawna jest ignorowana (bez odpowiedzi).
+  \item Przycięcie \code{content}; pusta lub dłuższa niż 1000 znaków jest ignorowana (bez odpowiedzi i bez zamykania gniazda).
+  \item Jeśli obecny jest \code{signature}: weryfikacja przez \code{_verify_chat_signature()}; przy niepowodzeniu serwer wysyła \code{{"type": "error", "detail": "signature_invalid"}} i pomija zapis (gniazdo \emph{nie} jest zamykane).
+  \item Utworzenie wiersza \code{Message}, commit i rozgłoszenie \code{{"type": "message", "message": ...}} do wszystkich połączeń pokoju.
+\end{enumerate}
+
+\fig{sekwencja-czat.png}{0.85}{Sekwencja wysłania podpisanej wiadomości czatu (EIP-191): kontrola członkostwa i limitu, weryfikacja podpisu, zapis i rozgłoszenie.}
+
+\section{Podpisywanie wiadomości (EIP-191)}
+\label{sec:rt-podpis}
+
+Wiadomości czatu mogą być podpisane kryptograficznie kluczem ECDSA nadawcy wyprowadzonym z BIP39,
+dzięki czemu serwer dowodzi autorstwa end-to-end, a nie polega wyłącznie na JWT. Mechanizm jest
+\textbf{opcjonalny}: klient bez klucza podpisującego wysyła wiadomości niepodpisane (\code{verified: false}).
+
+\subsection{Kanoniczny komunikat}
+
+Serwer i frontend budują dokładnie ten sam łańcuch:
+
+\begin{lstlisting}
+PlayLink signed chat message
+room={room_name}
+sent_at={sent_at}
+content={content}
+\end{lstlisting}
+
+\begin{itemize}[nosep]
+  \item \textbf{Białe znaki są istotne.} Cztery linie są łączone literalnym \texttt{\textbackslash n} (0x0A); bez końcowego znaku nowej linii.
+  \item \code{room} to surowa nazwa pokoju (przy łączeniu kodowana w URL, przechowywana zdekodowana).
+  \item \code{sent_at} to wygenerowany przez klienta łańcuch ISO 8601 przekazany w ładunku wiadomości.
+  \item \code{content} to przycięta treść wiadomości.
+\end{itemize}
+
+Implementacja serwera (\code{_chat_signing_message}):
+
+\begin{lstlisting}[language=Python]
+def _chat_signing_message(room_name: str, content: str, sent_at: str) -> str:
+    return (
+        "PlayLink signed chat message\n"
+        f"room={room_name}\n"
+        f"sent_at={sent_at}\n"
+        f"content={content}"
+    )
+\end{lstlisting}
+
+Odpowiednik we froncie (\code{buildChatSigningMessage} w \code{signing.ts}):
+
+\begin{lstlisting}[language=Java]
+export function buildChatSigningMessage(room: string, content: string, sentAt: string): string {
+    return `PlayLink signed chat message\nroom=${room}\nsent_at=${sentAt}\ncontent=${content}`;
+}
+\end{lstlisting}
+
+Interfejs \code{ChatSigner} i użycie \code{signChatMessage} opisuje część o froncie.
+
+\subsection{Weryfikacja podpisu}
+
+Serwer weryfikuje podpis funkcją \code{_verify_chat_signature(room_name, content, sent_at, signature, address) -> bool}:
+
+\begin{tabularx}{\textwidth}{lY}
+\toprule
+Krok & Szczegóły \\
+\midrule
+Parsowanie \code{sent_at} & Musi być poprawnym ISO 8601 (\code{datetime.fromisoformat()}). \\
+Strefa czasowa & Znaczniki bez strefy są traktowane jako UTC. \\
+Dryf zegara & \code{abs(now - sent_at)} musi być $\leq$ \textbf{120 sekund} (\code{CHAT_SIGNATURE_SKEW_SECONDS}) --- ochrona przed powtórzeniem (replay). \\
+Odzyskanie sygnatariusza & \code{encode_defunct(text=canonical_message)}, następnie \code{Account.recover_message(message, signature)}. \\
+Porównanie & Odzyskany adres (małe litery) porównywany z deklarowanym \code{address} (małe litery). \\
+\bottomrule
+\end{tabularx}
+
+\subsection{Okno powtórzeń}
+
+\code{CHAT_SIGNATURE_SKEW_SECONDS = 120} jest stałą w kodzie (nie jest konfigurowalna). Podpisy poza
+oknem są odrzucane jako \code{signature_invalid}.
+
+\subsection{\texttt{SYSTEM\_SENDER\_ADDRESS}}
+
+Wiadomości generowane przez system (m.in. powiadomienia o usunięciu członka) używają stałego adresu
+\code{"__system__"} i zawsze mają w ładunku \code{kind: "system"}. Są wstawiane przez serwer
+i nie są podpisywane.
+
+% =====================================================================
+
+\chapter{Serwer MCP}
+\label{ch:mcp}
+
+Serwer Model Context Protocol (MCP) umożliwia asystentom AI (Claude Desktop, Claude Code, Cursor,
+Antigravity) bezpieczną inspekcję platformy PlayLink w trybie \textbf{tylko do odczytu} (zgłoszenie \#95):
+stanu platformy, obsługiwanych gier retro, aktywnych pokoi LFG i zdrowia regionów. Kod znajduje się
+w \code{backend/mcp_server} (\code{server.py}, \code{__main__.py}). Serwer nie loguje się do PlayLink
+i nie wykonuje żadnych mutacji --- odpytuje publiczne endpointy REST i, opcjonalnie, stos obserwowalności.
+Miejsce MCP w planie realizacji i jego rola w ocenie projektu opisano w części o realizacji.
+
+\fig{mcp.png}{0.9}{Serwer MCP uruchamiany lokalnie na komputerze użytkownika: odpytuje API lokalne (Docker) lub produkcyjne (Azure i Cloudflare) oraz opcjonalnie logi i metryki.}
+
+\section{Narzędzia (tools)}
+\label{sec:mcp-tools}
+
+\begin{tabularx}{\textwidth}{p{5.8cm}Y}
+\toprule
+Narzędzie & Opis \\
+\midrule
+\code{list_games(region: str = "eu")} & Lista obsługiwanych gier retro. \\
+\code{list_rooms(}\newline\code{region: str = "eu",}\newline\code{game: str | None = None)} & Aktywne pokoje LFG z opcjonalnym filtrem po grze. \\
+\code{get_room_details(}\newline\code{room_name: str,}\newline\code{region: str = "eu")} & Szczegóły pokoju (gracze, komunikator, opis, wydarzenia). \\
+\code{check_platform_health()} & Status endpointów \code{/healthz} i \code{/readyz} oraz opóźnienie dla wszystkich skonfigurowanych regionów. \\
+\code{search_logs(}\newline\code{query: str = "level:ERROR",}\newline\code{minutes: int = 60,}\newline\code{limit: int = 50)} & Logi wszystkich regionów (VictoriaLogs, LogsQL), od najnowszych. \\
+\code{query_metrics(query: str)} & Zapytanie PromQL do metryk (CPU, pamięć, zadania HTTP). \\
+\bottomrule
+\end{tabularx}
+
+\section{Zasoby (resources)}
+\label{sec:mcp-resources}
+
+\subsection{Sparametryzowane per region}
+
+\begin{tabularx}{\textwidth}{lY}
+\toprule
+URI & Opis \\
+\midrule
+\code{playlink://{region}/games} & Lista gier dla wybranego regionu (np. \code{playlink://eu/games}, \code{playlink://us/games}). \\
+\code{playlink://{region}/rooms} & Aktywne pokoje w wybranym regionie (np. \code{playlink://eu/rooms}). \\
+\code{playlink://{region}/rooms/{room_name}} & Szczegóły pokoju w wybranym regionie. \\
+\bottomrule
+\end{tabularx}
+
+\subsection{Zbiorcze (multi-region)}
+
+\begin{tabularx}{\textwidth}{lY}
+\toprule
+URI & Opis \\
+\midrule
+\code{playlink://games} & Lista gier ze sprawdzonych, dostępnych regionów. \\
+\code{playlink://rooms} & Zagregowane podsumowanie aktywnych pokoi ze wszystkich skonfigurowanych regionów. \\
+\code{playlink://rooms/{room_name}} & Wyszukiwanie pokoju we wszystkich skonfigurowanych regionach. \\
+\code{playlink://status} & Stan zdrowia i dostępności bazy dla wszystkich regionów w JSON. \\
+\bottomrule
+\end{tabularx}
+
+\section{Uruchamianie}
+\label{sec:mcp-uruchomienie}
+
+\textbf{stdio} (domyślny tryb dla asystentów AI):
+
+\begin{lstlisting}[language=bash]
+uv run --project backend python -m mcp_server
+\end{lstlisting}
+
+\textbf{sse / streamable-http} (sieciowo):
+
+\begin{lstlisting}[language=bash]
+uv run --project backend python backend/mcp_server/server.py --transport sse --port 8080
+\end{lstlisting}
+
+Parametry wiersza poleceń (\code{server.py}): \code{--transport} (\code{stdio}, \code{sse},
+\code{streamable-http}; domyślnie \code{stdio}), \code{--host} (domyślnie \code{127.0.0.1}),
+\code{--port} (domyślnie \code{8080}).
+
+\section{Zmienne środowiskowe i konfiguracja regionów}
+\label{sec:mcp-konfiguracja}
+
+Regiony i adresy API są wykrywane dynamicznie, w następującej kolejności:
+
+\begin{enumerate}[nosep]
+  \item \code{PLAYLINK_REGIONS}: mapa JSON (np. \code{{"eu": "http://localhost:8000", "us": "http://localhost:8001"}}) albo lista rozdzielona przecinkami (\code{eu,us,asia}).
+  \item Zmienne per region: \code{PLAYLINK_<REGION>_API} oraz \code{PUBLIC_REGION_<REGION>_API} (np. \code{PLAYLINK_EU_API}, \code{PUBLIC_REGION_US_API}).
+  \item \code{PLAYLINK_DOMAIN}: po ustawieniu serwer wyprowadza adresy w formacie \code{https://playlink-<region>-api.<PLAYLINK_DOMAIN>}.
+  \item Wartości domyślne: EU (\code{http://localhost:8000}), US (\code{http://localhost:8001}).
+\end{enumerate}
+
+\subsection{Logi i metryki (opcjonalnie)}
+
+Narzędzia \code{search_logs} i \code{query_metrics} działają po ustawieniu \code{PLAYLINK_LOGS_URL},
+\code{PLAYLINK_METRICS_URL}, \code{PLAYLINK_OBS_USER} (domyślnie \code{playlink}) oraz
+\code{PLAYLINK_OBS_PASSWORD}; opis w części o obserwowalności (dokument
+\code{docs/operations/observability.md}). Bez nich odpowiadają, że nie są skonfigurowane; pozostałe
+narzędzia nie wymagają logowania. Na produkcji adresy mają postać
+\code{https://playlink-logs.<domena>} i \code{https://playlink-metrics.<domena>} (basic auth, hasło
+\code{OBS_PASSWORD} wdrożenia --- należy je uzyskać od opiekuna projektu i nigdy nie commitować).
+
+\section{Konfiguracja w asystentach AI}
+\label{sec:mcp-klienci}
+
+Serwer MCP zawsze działa na komputerze użytkownika (Windows, macOS lub Linux) i komunikuje się
+z API PlayLink wyłącznie przez HTTP. Różni się tylko miejsce, w którym działa API:
+
+\begin{tabularx}{\textwidth}{llY}
+\toprule
+Przypadek & API & Potrzebne \\
+\midrule
+Lokalny & \code{localhost:8000} (EU) i \code{localhost:8001} (US) z \code{deploy/deploy.sh} & Docker \\
+Zdalny & Wdrożone regiony, np. na Azure & Domena i opcjonalnie hasło do logów \\
+\bottomrule
+\end{tabularx}
+
+\subsection{Instalacja narzędzi i kodu}
+
+Potrzebne są Git oraz \code{uv} (menedżer pakietów Pythona, sam instaluje właściwą wersję Pythona):
+
+\begin{tabularx}{\textwidth}{lYY}
+\toprule
+System & Git & uv \\
+\midrule
+Windows (PowerShell) & \code{winget install Git.Git} & \code{powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"} \\
+macOS (Terminal) & \code{xcode-select --install} lub \code{brew install git} & \code{curl -LsSf https://astral.sh/uv/install.sh | sh} lub \code{brew install uv} \\
+Linux (powłoka) & \code{sudo apt install git} (Debian/Ubuntu), \code{sudo dnf install git} (Fedora) & \code{curl -LsSf https://astral.sh/uv/install.sh | sh} \\
+\bottomrule
+\end{tabularx}
+
+Po instalacji należy otworzyć nowy terminal i sprawdzić \code{git --version} oraz \code{uv --version}.
+Następnie:
+
+\begin{lstlisting}[language=bash]
+git clone https://github.com/ioad-modul-sumatywny-26/playlink.git
+cd playlink/backend
+uv sync
+pwd          # Windows PowerShell: (Get-Location).Path
+\end{lstlisting}
+
+Wypisana ścieżka to bezwzględna ścieżka do \code{backend}, używana dalej. Typowe wartości:
+
+\begin{tabularx}{\textwidth}{lY}
+\toprule
+System & Przykład \\
+\midrule
+Windows & \code{C:/Users/you/playlink/backend} (ukośniki działają w JSON; przy odwrotnych ukośnikach należy je podwoić: \texttt{C:\textbackslash\textbackslash Users\textbackslash\textbackslash you\textbackslash\textbackslash...}) \\
+macOS & \code{/Users/you/playlink/backend} \\
+Linux & \code{/home/you/playlink/backend} \\
+\bottomrule
+\end{tabularx}
+
+\subsection{Gdzie dodać serwer}
+
+Wpisy JSON są takie same w każdym systemie; różni się tylko lokalizacja pliku i ścieżka do
+\code{backend}. Blok \code{env} zmienia się między dwoma przypadkami poniżej.
+
+\begin{tabularx}{\textwidth}{lY}
+\toprule
+Asystent & Gdzie dodać \\
+\midrule
+Claude Code & Jedno polecenie (patrz przypadki poniżej), takie samo we wszystkich systemach. \\
+Claude Desktop & Settings $\to$ Developer $\to$ Edit Config. Windows: \texttt{\%APPDATA\%\textbackslash Claude\textbackslash claude\_desktop\_config.json}; macOS: \code{~/Library/Application Support/Claude/claude_desktop_config.json}. Brak oficjalnej aplikacji na Linuksa: użyć Claude Code lub Cursora. \\
+Cursor & Settings $\to$ MCP lub \code{~/.cursor/mcp.json} (Windows: \texttt{\%USERPROFILE\%\textbackslash .cursor\textbackslash mcp.json}). \\
+Antigravity / Gemini & \code{~/.gemini/config/mcp_config.json}. \\
+\bottomrule
+\end{tabularx}
+
+Claude Desktop i Cursora należy po zapisaniu całkowicie zrestartować. Jeśli aplikacja nie znajduje
+\code{uv} (typowe dla aplikacji desktopowych na macOS/Linux, które nie czytają profilu powłoki), w polu
+\code{"command"} należy podać pełną ścieżkę: \code{which uv} (macOS/Linux) lub \code{where uv}
+(Windows), np. \code{/Users/you/.local/bin/uv}.
+
+\subsection{Przypadek 1: PlayLink uruchomiony lokalnie}
+
+Najpierw należy uruchomić regiony (\code{deploy/deploy.sh eu}, opcjonalnie \code{deploy/deploy.sh us}).
+Bez konfiguracji serwer używa \code{http://localhost:8000} (EU) i \code{http://localhost:8001} (US),
+więc wpis nie potrzebuje \code{env}:
+
+\begin{lstlisting}[language=bash]
+{
+  "mcpServers": {
+    "playlink": {
+      "command": "uv",
+      "args": ["run", "--directory", "/path/to/playlink/backend", "python", "-m", "mcp_server"]
+    }
+  }
+}
+\end{lstlisting}
+
+Claude Code:
+
+\begin{lstlisting}[language=bash]
+claude mcp add playlink -- uv run --directory /path/to/playlink/backend python -m mcp_server
+\end{lstlisting}
+
+Narzędzia można wypróbować bez asystenta, uruchamiając inspektora z katalogu głównego repozytorium
+(Windows: PowerShell, te same polecenia):
+
+\begin{lstlisting}[language=bash]
+npx @modelcontextprotocol/inspector uv run --directory backend python -m mcp_server
+npx @modelcontextprotocol/inspector --cli --method tools/list uv run --directory backend python -m mcp_server   # bez interfejsu przegladarkowego
+\end{lstlisting}
+
+Narzędzia \code{search_logs} i \code{query_metrics} działają lokalnie tylko wtedy, gdy uruchomiono także
+stos obserwowalności; w przeciwnym razie odpowiadają, że nie są skonfigurowane.
+
+\subsection{Przypadek 2: PlayLink uruchomiony zdalnie (produkcja)}
+
+Dostęp do serwerów nie jest potrzebny. Serwer MCP wskazuje się na wdrożone regiony przez
+\code{PLAYLINK_DOMAIN}; dla każdego regionu z \code{PLAYLINK_REGIONS} wyprowadza
+\code{https://playlink-<region>-api.<domena>}:
+
+\begin{lstlisting}[language=bash]
+{
+  "mcpServers": {
+    "playlink": {
+      "command": "uv",
+      "args": ["run", "--directory", "/path/to/playlink/backend", "python", "-m", "mcp_server"],
+      "env": {
+        "PLAYLINK_DOMAIN": "<domain>",
+        "PLAYLINK_REGIONS": "eu,us"
+      }
+    }
+  }
+}
+\end{lstlisting}
+
+Claude Code (Windows PowerShell, macOS i Linux jednakowo):
+
+\begin{lstlisting}[language=bash]
+claude mcp add playlink -e PLAYLINK_DOMAIN=<domain> -e PLAYLINK_REGIONS=eu,us -- uv run --directory /path/to/playlink/backend python -m mcp_server
+\end{lstlisting}
+
+Dla \code{search_logs} i \code{query_metrics} do \code{env} należy dodać poniższe zmienne (w Claude Code
+po jednym \code{-e NAME=value} na zmienną):
+
+\begin{lstlisting}[language=bash]
+"PLAYLINK_LOGS_URL": "https://playlink-logs.<domain>",
+"PLAYLINK_METRICS_URL": "https://playlink-metrics.<domain>",
+"PLAYLINK_OBS_USER": "playlink",
+"PLAYLINK_OBS_PASSWORD": "<OBS_PASSWORD>"
+\end{lstlisting}
+
+\subsection{Sprawdzenie połączenia}
+
+Po restarcie asystenta należy poprosić go o uruchomienie \code{check_platform_health}; każdy
+skonfigurowany region powinien zgłosić stan \code{reachable}.
+
+\begin{tabularx}{\textwidth}{lY}
+\toprule
+Objaw & Prawdopodobna przyczyna \\
+\midrule
+Brak narzędzi PlayLink w asystencie & Błędna bezwzględna ścieżka w \code{--directory}, nieznaleziony \code{uv} (podać jego pełną ścieżkę) lub aplikacja nie została całkowicie zrestartowana. \\
+Lokalnie: regiony nieosiągalne & Kontenery nie działają (\code{docker compose ls}). \\
+\bottomrule
+\end{tabularx}
+
+\section{Bezpieczeństwo}
+\label{sec:mcp-bezpieczenstwo}
+
+\begin{itemize}[nosep]
+  \item Serwer jest \textbf{tylko do odczytu}: wszystkie narzędzia i zasoby wykonują zapytania GET do publicznych endpointów API (\code{/games}, \code{/rooms}, \code{/rooms/{room_name}}, \code{/healthz}, \code{/readyz}) lub zapytania do logów i metryk; nie wymagają JWT i nie mają dostępu do kont ani do bazy danych.
+  \item Domyślny transport \code{stdio} nie otwiera żadnego portu sieciowego; tryby sieciowe (\code{sse}, \code{streamable-http}) domyślnie wiążą się z \code{127.0.0.1}.
+  \item Dostęp do logów i metryk wymaga hasła \code{PLAYLINK_OBS_PASSWORD} (basic auth, \code{OBS_PASSWORD} wdrożenia); należy je przechowywać poza repozytorium i przekazywać wyłącznie przez \code{env} konfiguracji klienta.
+  \item Punkt \code{/metrics} backendu nie jest dostępny z internetu (żądania przez Cloudflare dostają \code{404}), więc metryki są dostępne tylko przez stos obserwowalności chroniony hasłem.
+\end{itemize}
+
+% SPRZECZNOSC: docs/backend/api-reference.md i realtime.md wskazują jako źródło backend/main.py
+% (ConnectionManager, RoomChatManager, websocket_rooms, websocket_chat, _verify_chat_signature,
+% stałe WS). Po refaktorze kod mieszka w routers/*.py, ws/managers.py, serializers.py, security.py
+% i config.py; w tekście podano aktualne lokalizacje (zachowanie bez zmian).
+% SPRZECZNOSC: api-reference.md pomija GET /metrics (router observability.py, poza schematem OpenAPI);
+% dopisano go w rozdziale REST na podstawie kodu.
+% SPRZECZNOSC: realtime.md podaje, że walidacja odrzuca „zniekształcony JSON" i pustą/zbyt długą
+% treść; w kodzie routers/chat.py takie ramki są po cichu ignorowane (continue), bez ramki error i bez
+% zamykania gniazda. Zastosowano zachowanie z kodu.
+% SPRZECZNOSC: realtime.md opisuje pole verified jako „serwer odzyskał poprawnego sygnatariusza";
+% w serializers._msg_dict verified = (signature is not None) --- weryfikacja następuje przy zapisie,
+% niepoprawnie podpisane wiadomości nie są zapisywane.
+% SPRZECZNOSC: realtime.md przykład lobby_location „us-west" nie istnieje na liście kodów
+% (config.LOBBY_LOCATIONS: na-east, na-west, ...); użyto kodu eu-central.
+% SPRZECZNOSC: README MCP w backend/mcp_server/README.md (przykład konfiguracji) nie zawiera zmiennych
+% PLAYLINK_LOGS_URL itd. w JSON; pełny wariant (Przypadek 2) pochodzi z głównego README.md, nowszego.
+% SPRZECZNOSC: sekcja „Bezpieczeństwo" (read-only, brak JWT, domyślny 127.0.0.1) została wywnioskowana
+% z kodu server.py i opisu w README; backend/mcp_server/README.md nie ma osobnej sekcji o bezpieczeństwie.

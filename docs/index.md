@@ -38,6 +38,7 @@ This is the developer documentation set. Start with the [architecture overview](
 ### Project
 | Document | Contents |
 | -------- | -------- |
+| [Kompendium](kompendium/playlink-kompendium.pdf) | One PDF combining the vision document, the 18.11 report and this documentation set, in Polish (source in `kompendium/`, build with `kompendium/build.sh`). |
 | [Raport z prac](raport/raport.tex) | Report for 18.11: what was built per pillar F1-F7, results, screenshots, backlog (Polish). |
 | [Prezentacja](prezentacja/prezentacja.html) | Slides for 18.11 (Polish). Open in a browser; print to PDF at 1920x1080. |
 | [Diagrams](diagrams) | PlantUML sources and PNGs: regions, region choice, release flow, observability, MCP. |

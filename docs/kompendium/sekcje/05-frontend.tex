@@ -1,0 +1,1162 @@
+% ===================================================================
+% 05-frontend.tex — Frontend SvelteKit
+% Źródła: frontend/README.md, docs/frontend/{routes,library,components}.md
+% oraz kod frontend/src (regiony, urls, clientErrors, healthz, backend.ts).
+% ===================================================================
+
+\chapter{Frontend: struktura i trasy}\label{ch:fe-trasy}
+
+Frontend PlayLink to aplikacja SvelteKit realizująca logowanie fraza BIP39 oraz przeglądarkę
+pokoi (lobby). Komunikuje się z backendem FastAPI po REST i WebSocket. Pełny opis kontraktu API
+i protokołów czasu rzeczywistego znajduje się w rozdziałach o backendzie; tutaj opisano
+wyłącznie stronę klienta.
+
+\section{Stos technologiczny i uruchomienie}\label{sec:fe-stos}
+
+\begin{itemize}[nosep]
+  \item \textbf{Svelte} \code{^5.51.0} w trybie runes (\code{$state}, \code{$derived}, \code{$effect}, \code{$props}),
+  \item \textbf{SvelteKit} \code{^2.50.2} z \code{@sveltejs/adapter-node},
+  \item \textbf{TypeScript} (tryb strict),
+  \item \textbf{Bun} --- środowisko uruchomieniowe, menedżer pakietów i bundler (npm, pnpm i yarn nie są używane),
+  \item \textbf{ethers} + \textbf{viem} --- lokalna derywacja z mnemoniku i podpisy ECDSA,
+  \item \textbf{jwt-decode} --- dekodowanie ciasteczka sesji po stronie serwera.
+\end{itemize}
+
+Polecenia: \code{bun install}, \code{bun dev} (serwer deweloperski, domyślnie
+\code{http://localhost:5173/}), \code{bun run build} (wynik: serwer Node dla dołączonego
+\code{Dockerfile}), \code{bun run preview}. Kontrola jakości: \code{bun run check}
+(svelte-check + TypeScript), \code{bun run lint} (ESLint), \code{bun run format} (Prettier).
+Zalecane środowisko: VS Code z rozszerzeniem Svelte.
+
+\subsection{Zmienne środowiskowe}
+
+Plik \code{frontend/.env} powstaje z \code{frontend/.env.example}. Zmienne publiczne są
+odczytywane przez \code{$env/dynamic/public}, więc wartości można zmieniać w czasie działania
+kontenera, bez przebudowy (wdrożenie wieloregionowe --- patrz część o operacjach).
+
+\begin{longtable}{@{}p{0.34\textwidth}p{0.62\textwidth}@{}}
+\toprule
+\textbf{Zmienna} & \textbf{Znaczenie} \\
+\midrule
+\endhead
+\code{PUBLIC_BACKEND_URL} & Bazowy URL backendu HTTP (np. \code{http://localhost:8000}); używana w przeglądarce. \\
+\code{PUBLIC_WS_URL} & Bazowy URL WebSocket (\code{ws://} lub \code{wss://}), np. \code{ws://localhost:8000}. \\
+\code{BACKEND_INTERNAL_URL} & (prywatna) adres backendu widziany z kontenera frontendu, np. nazwa usługi w compose; używany przez loadery i form actions po stronie serwera. \\
+\code{PUBLIC_REGION} & Region obsługiwany przez daną instancję frontendu: \code{eu} lub \code{us} (każda inna wartość oznacza \code{eu}). \\
+\code{PUBLIC_ENTRY_HOST} & Host (opcjonalnie z portem), który zamiast aplikacji renderuje wybór regionu. Dla lokalnej uprzęży dwuregionowej \code{localhost:3000}; domyślnie w \code{.env.example} \code{localhost:9999}, aby zwykły serwer deweloperski nie ukrywał aplikacji za wyborem. \\
+\code{PUBLIC_REGION_EU_FRONTEND}, \code{PUBLIC_REGION_EU_API}, \code{PUBLIC_REGION_EU_WS} & Publiczne adresy frontendu, API i WebSocket regionu EU (lokalnie: \code{http://localhost:3000}, \code{http://localhost:8000}, \code{ws://localhost:8000}). \\
+\code{PUBLIC_REGION_US_FRONTEND}, \code{PUBLIC_REGION_US_API}, \code{PUBLIC_REGION_US_WS} & Odpowiedniki dla regionu US (lokalnie: porty 3001 i 8001). \\
+\bottomrule
+\end{longtable}
+
+W \code{.env.example} zaznaczono też, że adapter-node ma używać oryginalnego nagłówka
+\code{Host} i schematu z \code{X-Forwarded-Proto}; zmiennej \code{ORIGIN} nie ustawia się,
+gdy jeden kontener frontendu obsługuje zarówno host wejściowy, jak i hosty regionalne
+(ustawienie w \code{compose.yaml}).
+
+\section{Struktura katalogów}\label{sec:fe-struktura}
+
+\begin{lstlisting}
+frontend/src/
+  app.html, app.d.ts          # szablon HTML; typ App.Locals
+  hooks.server.ts             # handle (sesja) + handleError (log)
+  hooks.client.ts             # raportowanie bledow przegladarki
+  lib/
+    auth.ts, signing.ts, signingKey.ts       # tozsamosc i podpisy
+    roomsStore.ts, chatStore.ts              # store'y WebSocket
+    hintsContext.svelte.ts                   # kontekst podpowiedzi klawiszy
+    lobbyLocations.ts                        # lokalizacje lobby, Haversine
+    regions.ts, urls.ts, clientErrors.ts     # regiony, URL-e, bledy klienta
+    components/                              # komponenty domenowe
+      chrome/                                # UI kit w stylu Diablo II (18)
+    server/backend.ts, server/log.ts         # fetch SSR, log JSON
+    styles/tokens.css, styles/chrome.css, global.css
+  routes/
+    +layout.svelte, +layout.server.ts
+    +page.svelte  about/  auth/  profile/  rooms/  rooms/[name]/  test/
+    api/client-errors/+server.ts   healthz/+server.ts
+  test/                        # testy jednostkowe (Vitest)
+\end{lstlisting}
+
+\section{Model BFF i sesja}\label{sec:fe-bff}
+
+Frontend stosuje wzorzec Backend-for-Frontend. Token JWT wydany przez backend nigdy nie trafia
+do pamięci JavaScriptu w przeglądarce w trwały sposób: klient przesyła go jednorazowo do form
+action \code{?/login}, a serwer zapisuje wyłącznie w ciasteczku \code{session} o atrybutach
+\code{httpOnly}, \code{path=/}, \code{maxAge} 3600 s (1 godzina). Strony otrzymują tylko dane
+pochodne (adres, nazwa użytkownika, \code{isAdmin}).
+
+\begin{enumerate}[nosep]
+  \item Klient generuje albo wprowadza frazę BIP39.
+  \item \code{authenticate(mnemonic)} z \code{$lib/auth.ts} wykonuje trójfazowy handshake z backendem
+        (żądanie nonce, lokalny podpis, weryfikacja; szczegóły w rozdziale o bibliotece klienta).
+  \item Backend zwraca \code{{ token, username }}.
+  \item Klient wysyła \code{token} jako pole formularza do akcji \code{?/login}.
+  \item Akcja ustawia ciasteczko \code{session}; atrybut \code{secure} zależy od protokołu
+        żądania (\code{https:}).
+  \item Wszystkie loadery i akcje serwerowe czytają \code{cookies.get('session')} i dekodują je \code{jwtDecode}.
+  \item \code{hooks.server.ts} przy każdym żądaniu dekoduje JWT do \code{event.locals.user}
+        (\code{{ address, isAdmin }}); wygasłe lub nieprawidłowe ciasteczko jest usuwane.
+  \item Wylogowanie: akcja \code{?/logout} wykonuje \code{cookies.delete('session', { path: '/' })}.
+\end{enumerate}
+
+Klucz podpisujący (klucz prywatny z mnemoniku) jest przechowywany w \code{sessionStorage}
+(\code{saveSigningKey()}), aby podpisywać wiadomości czatu bez ponownego wpisywania frazy;
+znika po wylogowaniu lub zamknięciu karty.
+
+Ciasteczko sesji jest \emph{host-only}, więc nie jest współdzielone między frontendami
+regionalnymi: przełączenie regionu wymaga ponownego logowania tą samą frazą 12 słów
+(patrz rozdział o regionach w UI).
+
+\section{Mapa tras}\label{sec:fe-mapa}
+
+\begin{longtable}{@{}p{0.17\textwidth}p{0.45\textwidth}p{0.31\textwidth}@{}}
+\toprule
+\textbf{Trasa} & \textbf{Przeznaczenie} & \textbf{Dostęp} \\
+\midrule
+\endhead
+\code{/} & Ekran powitalny: herb, tytuł, przycisk „Enter Realm” & Brak ograniczeń \\
+\code{/about} & Statyczna strona informacyjna & Brak ograniczeń \\
+\code{/auth} & Logowanie fraza BIP39 (3 fazy), akcje login/logout & Brak; wygląd zależy od sesji \\
+\code{/profile} & Podgląd i zmiana nazwy użytkownika, sigil, adres, daty & Serwer przekierowuje na \code{/auth} bez sesji \\
+\code{/rooms} & Lista pokoi w czasie rzeczywistym, filtry, tworzenie/dołączanie/opuszczanie, administracja grami & Load publiczny (gry, lokalizacje); akcje wymagają sesji \\
+\code{/rooms/[name]} & Szczegóły pokoju: czat (\code{ChatStore}), lista członków, wydarzenia i RSVP, wyrzucanie/zamykanie & Wymagana sesja i członkostwo (lub administrator) \\
+\code{/test} & Obserwatorium deweloperskie: status backendu, opóźnienie, surowy JSON & Brak ograniczeń \\
+\code{/healthz} & Sonda żywotności frontendu (\code{{"status":"ok"}}) & Publiczna \\
+\code{/api/client-errors} & Odbiór błędów przeglądarki (POST) & Publiczna, z limitem \\
+\bottomrule
+\end{longtable}
+
+Trasy \code{/healthz} i \code{/api/client-errors} to endpointy serwerowe, nie strony; opisano je
+w rozdziale o bibliotece klienta.
+
+\section{Układ główny (layout)}\label{sec:fe-layout}
+
+\code{routes/+layout.server.ts} zwraca dla każdej strony: \code{isAuthenticated}
+(obecność ciasteczka \code{session}), \code{isEntryHost} (czy host żądania równa się
+\code{PUBLIC_ENTRY_HOST}), \code{region} (\code{PUBLIC_REGION}) oraz listę \code{regions}.
+\code{+layout.svelte} renderuje wtedy jeden z dwóch widoków:
+
+\begin{itemize}[nosep]
+  \item \textbf{Host wejściowy} (\code{isEntryHost}): w ramce \code{PageFrame} wyłącznie komponent
+        \code{RegionChooser} --- wybór regionu.
+  \item \textbf{Host regionalny}: pasek marki z odznaką aktywnego regionu (np. \code{EU}),
+        link „$\rightarrow$ druga strona” do tej samej ścieżki w drugim regionie
+        (z tytułem: osobna sesja, logowanie tą samą frazą), zakładki
+        (Identity, Rooms, Profile --- tylko po zalogowaniu, About), baner
+        \code{RegionProposalBanner}, treść strony oraz stopka \code{HintBar}
+        zasilana kontekstem podpowiedzi (domyślnie \code{Esc: Back}, \code{?: Help}).
+\end{itemize}
+
+\section{Trasy szczegółowo}\label{sec:fe-trasy-szczegoly}
+
+\subsection{\texttt{/} --- ekran powitalny}
+
+Strona w pełni statyczna (bez \code{+page.server.ts}): środkowy herb \code{Crest}
+(\code{size=104}, \code{tone="gold"}), tytuł „PLAYLINK”, podtytuł „Lobbies · Rooms · Kin”
+i przycisk \code{OrnateButton} prowadzący do \code{/auth}. Klawisz \code{Enter} także przechodzi
+do \code{/auth}; \code{HintBar} pokazuje \code{Enter: Enter Realm}.
+
+\subsection{\texttt{/about}}
+
+Statyczna strona wyjaśniająca model tożsamości (niekustodialny, oparty o BIP39) oraz „rytuał”
+w trzech krokach: (1) \emph{Forge a Lobby} --- wybór gry, liczby graczy i nazwy;
+(2) \emph{Watch the Hall} --- otwarte lobby spływają na listę w czasie rzeczywistym, z filtrami
+slotów, statusu i pingu; (3) \emph{Stand in the Room} --- dołączenie, czat, koordynacja,
+opuszczenie lub wygaśnięcie pokoju po czasie. \code{HintBar}: \code{Esc: Back}.
+
+\subsection{\texttt{/auth} --- tożsamość}
+
+\paragraph{Load} (\code{auth/+page.server.ts}) zwraca \code{{ user: { address, username } | null }}.
+Brak ciasteczka daje \code{null}; ciasteczko jest dekodowane (\code{sub}, \code{username},
+\code{exp}); nieprawidłowe lub wygasłe jest usuwane.
+
+\paragraph{Form actions.}
+
+\begin{longtable}{@{}p{0.12\textwidth}p{0.22\textwidth}p{0.55\textwidth}@{}}
+\toprule
+\textbf{Akcja} & \textbf{Wejście} & \textbf{Działanie} \\
+\midrule
+\endhead
+\code{login} & \code{token} (string) & Bez wywołania backendu (BFF tylko na ciasteczku). Ustawia ciasteczko \code{session}: \code{httpOnly}, \code{sameSite=lax}, \code{secure} dla \code{https:}, \code{maxAge} 3600 s, \code{path=/}. Pusty token daje \code{{ success: false, error }}; sukces: \code{{ success: true }}. \\
+\code{logout} & --- & Usuwa ciasteczko \code{session}; zwraca \code{{ success: true }}. \\
+\bottomrule
+\end{longtable}
+
+Wybór \code{lax} (zamiast \code{strict}) jest celowy: pozwala działać linkom
+przychodzącym z zewnątrz (np. z Discorda); ciasteczko jest host-only i nie jest współdzielone
+z drugim frontendem regionalnym.
+
+\paragraph{Interfejs} zależy od \code{data.user}.
+
+\emph{Niezalogowany (Vault Keeper).} Siatka \code{MnemonicInput} (3 kolumny) na 12 słów BIP39.
+Skróty: \code{G} --- wygeneruj nową frazę (\code{generateMnemonic()}), \code{C} --- kopiuj frazę
+(awaryjnie \code{document.execCommand('copy')}, gdy asynchroniczny schowek jest zablokowany
+w kontekście HTTP), \code{Enter} --- zatwierdź. Funkcja \code{startAuth()}:
+\begin{enumerate}[nosep]
+  \item woła \code{authenticate(mnemonic)} (faza 1: \code{POST /auth/request-nonce?address=...},
+        limit żądań: 429 daje komunikat „Rate limited”; faza 2: derywacja \code{HDNodeWallet},
+        zapis klucza w \code{sessionStorage}, podpis wiadomości
+        \code{"Sign in to Playlink\nNonce: <nonce>"}; faza 3: \code{POST /auth/verify}
+        z \code{{ address, nonce, signature }}),
+  \item wysyła JWT do \code{?/login},
+  \item po sukcesie wywołuje \code{invalidateAll()}, by przeładować aktywne loadery.
+\end{enumerate}
+Błędy są pokazywane w \code{SystemDialog}.
+
+\emph{Zalogowany (Active Covenant).} Sigil (88 px), nazwa użytkownika i adres. Przycisk
+„Sever Covenant” (klawisz \code{L}) wysyła \code{?/logout}; po wylogowaniu \code{invalidateAll()}
+przełącza stronę do widoku niezalogowanego.
+
+\subsection{\texttt{/profile} --- profil}
+
+\paragraph{Load.} Brak ciasteczka: \code{redirect(303, '/auth')}. W przeciwnym razie
+\code{GET /users/me} z nagłówkiem \code{Authorization: Bearer <session>} (przez
+\code{backendFetch}); odpowiedź inna niż OK także przekierowuje na \code{/auth}. Zwraca
+\code{{ identity_address, username, created_at, last_login }}.
+
+\paragraph{Akcja \texttt{update}.} Wejście: \code{username} (przycinany, 3--20 znaków,
+\code{[a-zA-Z0-9_-]}); wywołanie \code{PATCH /users/me} z JSON \code{{ username }}.
+Sukces: \code{{ success: true, username }}. Błędy: brak sesji \code{fail(401, 'Not authenticated')},
+pusta nazwa \code{fail(400, 'Username is required.')}, błąd serwera \code{fail(500, 'Server error')},
+pozostałe kody przekazywane z backendu.
+
+\paragraph{Interfejs.} Sigil (88 px), nazwa, \code{identity_address}, \code{created_at}
+i \code{last_login} (\code{toLocaleString()}, „---” dla \code{null}). Pole nazwy z walidacją
+kliencką \code{^[a-zA-Z0-9_-]{3,20}$}; przycisk zapisu jest wyłączony, gdy
+\code{!dirty || !clientValid || saving}. Formularz używa \code{use:enhance}; błędy serwera
+w \code{SystemDialog}. \code{HintBar}: \code{Enter: Save Name}.
+
+\subsection{\texttt{/rooms} --- lista gier (pokoi)}
+
+\paragraph{Load} (\code{rooms/+page.server.ts}) zwraca \code{isAuthenticated}, \code{user},
+\code{isAdmin}, \code{games} (\code{string[]}), \code{lobbyLocations} i \code{defaultLobbyLocation}.
+Ciasteczko jest dekodowane po cichu (błąd nie przerywa). Równolegle pobierane są
+\code{GET /games} (przy błędzie \code{[]}) i \code{GET /lobby-locations}
+(odpowiedź \code{{ default?, locations?: { code, label, lat, lon }[] }} jest parsowana
+przez \code{parseLobbyLocations()} z awaryjnym \code{FALLBACK_LOBBY_LOCATIONS}).
+Load nigdy nie przekierowuje --- strona renderuje się również bez sesji.
+
+\paragraph{Form actions} (wszystkie wymagają sesji, w przeciwnym razie \code{fail(401)};
+sukces zwraca \code{{ success: true, message }}, błąd \code{fail(status, { error })}):
+
+\begin{longtable}{@{}p{0.14\textwidth}p{0.36\textwidth}p{0.42\textwidth}@{}}
+\toprule
+\textbf{Akcja} & \textbf{Wejście} & \textbf{Wywołanie backendu} \\
+\midrule
+\endhead
+\code{create} & \code{name}, \code{game} (lub \code{__custom__} + \code{custom_game}), \code{lobby_location}, \code{players_max}, opcjonalnie \code{description}, \code{communicator_link}, \code{requirements} & \code{POST /rooms} (JSON) \\
+\code{join} & \code{room_name} & \code{POST /rooms/{name}/join} \\
+\code{leave} & \code{room_name} & \code{POST /rooms/{name}/leave} \\
+\code{deleteRoom} & \code{room_name} & \code{DELETE /rooms/{name}} \\
+\code{addGame} & \code{name} & \code{POST /games} (JSON \code{{ name }}) \\
+\code{deleteGame} & \code{name}, opcjonalnie \code{force="true"} & \code{DELETE /games/{name}?force=true} \\
+\bottomrule
+\end{longtable}
+
+Szczegóły: w \code{create} wartość \code{__custom__} powoduje użycie \code{custom_game} jako
+nazwy gry; \code{players_max} jest parsowane przez \code{parseInt(..., 10)}; pola opcjonalne są
+przycinane, a puste łańcuchy zamieniane na \code{null}. W \code{deleteGame} status 409
+(aktywne pokoje nadal grają w tę grę) zwraca \code{fail(409, { error, conflict: true, game })},
+co pozwala interfejsowi zaproponować wymuszone usunięcie. Wszystkie wywołania backendu idą
+przez \code{backendFetch} (rozdział o bibliotece klienta).
+
+\paragraph{Interfejs} (strona ok.\ 1,5 tys.\ linii).
+\begin{itemize}[nosep]
+  \item \textbf{Lista na żywo.} Singleton \code{roomsStore} łączy się z \code{WS $PUBLIC_WS_URL/ws/rooms}
+        (protokół w rozdziale o backendzie). Pokoje wygasłe są odfiltrowywane przy każdym „tyknięciu”.
+  \item \textbf{Ping.} Co 15 s strona odpytuje \code{$PUBLIC_BACKEND_URL/healthz} i mierzy czas
+        (błąd lub timeout wyświetlany jako \code{ERR}). Szacowane opóźnienie pokoju
+        łączy ping API z odległością Haversine między lokalizacją widza a lokalizacją lobby
+        (dzieloną przez 100). Trzy koszyki: LOW (do 80 ms, 3 pipsy), MID (do 160 ms, 2), HIGH
+        (powyżej 160 ms, 1).
+  \item \textbf{Licznik czasu pokoju.} Odliczanie \code{MM:SS} do \code{expires_at}; poniżej 60 s
+        ostrzeżenie wizualne.
+  \item \textbf{Filtry.} Tekst (nazwa pokoju, gra, etykieta lokalizacji), sloty (2, 4, 8, 16+),
+        status ANY/OPEN/FULL, ping ANY/LOW/MID/HIGH.
+  \item \textbf{Wybór i panel boczny.} Kliknięcie zaznacza pokój i pokazuje szczegóły; \code{Enter}
+        otwiera \code{/rooms/{name}} (wymaga członkostwa lub roli administratora); kliknięcie poza listą
+        odznacza.
+  \item \textbf{Dialog tworzenia.} Klawisz \code{N} (wymaga logowania). Lista gier lub własna nazwa;
+        lokalizacja lobby z listy oraz przycisk „Detect” (\code{navigator.geolocation},
+        \code{nearestLobbyLocation()} z \code{$lib/lobbyLocations}); zapisana lokalizacja w
+        \code{localStorage} pod kluczem \code{playlink.viewerLocation}.
+  \item \textbf{Administrator.} Komponent \code{GameManager} (dodawanie/usuwanie gier z obsługą konfliktu 409)
+        oraz bezpośrednie usuwanie dowolnego pokoju z listy.
+  \item \textbf{Toasty.} Wyniki akcji formularzy znikają po 4,5 s.
+\end{itemize}
+
+\begin{longtable}{@{}p{0.14\textwidth}p{0.75\textwidth}@{}}
+\toprule
+\textbf{Klawisz} & \textbf{Działanie} \\
+\midrule
+\endhead
+\code{/} & Fokus na polu wyszukiwania \\
+\code{R} & Przeładowanie strony \\
+\code{N} & Dialog tworzenia (zalogowany) \\
+\code{Enter} & Otwórz zaznaczony pokój (członek lub administrator) \\
+\code{Esc} & Zamknij dialog / odznacz / \code{history.back()} \\
+\bottomrule
+\end{longtable}
+
+\fig{d2-rooms-v1.png}{0.9}{Lista pokoi (\code{/rooms}) w stylu Diablo II: nagłówek kolumn Game Name / Game / Players / Ping / Timer, panel filtrów (sloty, status, ping), stan „Awaiting signals…” przy braku aktywnych pokoi oraz pasek podpowiedzi klawiszy. Zrzut z wczesnej wersji, przed dodaniem pozycji Profile w zakładkach.}
+
+\subsection{\texttt{/rooms/[name]} --- szczegóły pokoju}
+
+\paragraph{Load} zwraca: \code{roomName}, \code{roomGame}, \code{roomLocation},
+\code{roomLocationLabel}, \code{description}, \code{communicatorLink}, \code{requirements},
+\code{token} (surowy JWT, wyłącznie do uwierzytelnienia WebSocket), \code{address},
+\code{username}, \code{memberAddresses}, \code{members} (\code{RoomMember[]}), \code{event}
+(\code{RoomEventState | null}), \code{isAdmin}, \code{isMember}, \code{isPreview},
+\code{createdBy}, \code{isCreator}.
+\begin{itemize}[nosep]
+  \item Brak sesji lub nieprawidłowy token: \code{redirect(303, '/auth')}.
+  \item \code{GET /rooms/{name}} (publiczne); porażka lub \code{null}: przekierowanie na \code{/rooms}.
+  \item Użytkownik niebędący członkiem ani administratorem: przekierowanie na \code{/rooms}.
+  \item \code{isPreview} oznacza administratora oglądającego pokój, do którego nie należy
+        (bez WebSocketu, tylko odczyt).
+\end{itemize}
+
+\paragraph{Form actions} (wszystkie wymagają sesji, inaczej \code{fail(401)}):
+
+\begin{longtable}{@{}p{0.14\textwidth}p{0.22\textwidth}p{0.30\textwidth}p{0.26\textwidth}@{}}
+\toprule
+\textbf{Akcja} & \textbf{Wejście} & \textbf{Wywołanie backendu} & \textbf{Wynik} \\
+\midrule
+\endhead
+\code{closeRoom} & --- & \code{DELETE /rooms/{name}} & \code{{ success, closed: true }} \\
+\code{kickMember} & \code{member_address} & \code{POST /rooms/{name}/members/{address}/kick} & \code{{ success, kick }} \\
+\code{scheduleEvent} & \code{starts_at}, \code{ends_at} (czas lokalny) & \code{PUT /rooms/{name}/event} (ISO UTC) & \code{{ success, message }} \\
+\code{cancelEvent} & --- & \code{DELETE /rooms/{name}/event} & \code{{ success, message }} \\
+\code{setRsvp} & \code{status}: \code{present}, \code{absent} lub \code{maybe} & \code{PUT /rooms/{name}/event/rsvp} & \code{{ success, message }} \\
+\bottomrule
+\end{longtable}
+
+W \code{scheduleEvent} wartości \code{datetime-local} są konwertowane do ISO UTC przez
+\code{localInputToIsoUtc()}; nieprawidłowe daty dają \code{fail(400)}. W \code{setRsvp}
+status jest walidowany względem zbioru \{\code{present}, \code{absent}, \code{maybe}\}
+(inaczej \code{fail(400)}). Błędy backendu są zwracane jako \code{fail(status, { error })}.
+
+\paragraph{Interfejs} (strona ok.\ 1,2 tys.\ linii).
+\begin{itemize}[nosep]
+  \item \textbf{Czat WebSocket.} Członkowie łączą się przez \code{createChatStore(roomName, token, options)}
+        z \code{$lib/chatStore}. Store udostępnia \code{messages}, \code{event}, \code{members},
+        \code{owner}, \code{closed}, \code{kicked}. \code{Enter} wysyła, \code{Shift+Enter} wstawia nową
+        linię; widok przewija się do dołu przy nowych wiadomościach. Wiadomości są podpisywane kluczem
+        z \code{loadSigner()} (\code{sessionStorage}).
+  \item \textbf{Lista członków.} Tablica \code{partyMembers} z polami \code{address}, \code{username},
+        \code{isMe}, \code{isAdmin}, \code{isOwner}; każdy członek ma mały \code{Sigil}, nazwę (lub skrócony adres
+        \code{0x1234...5678}) i odznaki admin/owner.
+  \item \textbf{Tryb podglądu administratora.} Bez WebSocketu i pola czatu; stan synchronizowany
+        przy unieważnieniu danych (\code{$effect} obserwujący \code{data}).
+  \item \textbf{Komponent \code{RoomEvent}.} Planowanie, edycja i anulowanie wydarzenia
+        (\code{D2DatePicker} + \code{D2TimePicker}), przyciski RSVP (Present / Absent / Maybe)
+        i odliczanie do startu; lista RSVP dopasowuje się do zmian składu.
+  \item \textbf{Zamknięcie i wyrzucenie.} \code{closeRoom()} wysyła \code{?/closeRoom} i od razu
+        przechodzi do \code{/rooms} (\code{goto()}). \code{kickMember()} wysyła \code{?/kickMember};
+        po sukcesie usuwa członka z lokalnej listy i czyści jego RSVP, a przy przekazaniu własności
+        aktualizuje \code{ownerAddress}. Gdy WebSocket ogłosi \code{room_closed} lub \code{member_kicked},
+        pojawia się modalny \code{SystemDialog} (ton \code{blood}) z 5-sekundowym odliczaniem
+        (\code{CLOSE_REDIRECT_SECONDS}) i automatycznym powrotem do \code{/rooms}.
+  \item \textbf{Dialogi.} \code{SystemDialog} dla: powiadomienia o wyrzuceniu, o zamknięciu pokoju,
+        potwierdzenia wyrzucenia członka i potwierdzenia zamknięcia pokoju.
+  \item \textbf{HintBar.} Członkowie: \code{Enter: Transmit}, \code{Shift+Enter: Newline},
+        \code{Esc: Leave}; podgląd administratora: \code{Esc: Back to Rooms}.
+\end{itemize}
+
+\subsection{\texttt{/test} --- obserwatorium deweloperskie}
+
+Sonda zdrowia backendu na potrzeby rozwoju (bez \code{+page.server.ts}). Po zamontowaniu pobiera
+\code{GET $PUBLIC_BACKEND_URL/} i wyświetla surowy JSON, adres backendu, status HTTP i opóźnienie
+(ms) wraz z \code{PipMeter} (3 pipsy poniżej 80 ms, 2 poniżej 250 ms, 1 w pozostałych
+przypadkach, 0 przy błędzie). Klawisz \code{R} ponawia ping. \code{HintBar}: \code{R: Re-ping},
+\code{Esc: Back}; tytuł strony „PlayLink --- Observatory”.
+
+\section{Wczesny prototyp interfejsu (smoke test)}\label{sec:fe-smoke}
+
+Dwa poniższe zrzuty pochodzą z testu dymnego (ang.\ \emph{smoke test}) wcześniejszego prototypu
+interfejsu: formularz tworzenia lobby wypełnionymi danymi oraz widok szczegółów pokoju z metadanymi
+(opis, link do komunikatora, wymagania). Układ i teksty (np. „Configure Signal”, „Broadcast”)
+odbiegają od obecnego UI w stylu Diablo II; pokazują natomiast te same pola, które dziś obsługuje
+akcja \code{create} oraz strona \code{/rooms/[name]}: nazwa lobby, gra, liczba slotów,
+opis, \code{communicator_link} i \code{requirements}.
+
+\fig{smoke-form-filled.png}{0.62}{Prototyp: formularz tworzenia lobby z wypełnionymi danymi testowymi (nazwa, gra, sloty, opis, link do komunikatora, wymagania).}
+
+\fig{smoke-detail-with-metadata.png}{0.62}{Prototyp: widok szczegółów pokoju z metadanymi (opis, komunikator, wymagania) i pustym czatem.}
+
+%====================================================================
+\chapter{Biblioteka klienta i stan}\label{ch:fe-biblioteka}
+
+Rozdział opisuje moduły nie-UI z \code{frontend/src/lib/}: tożsamość i uwierzytelnianie, podpisy
+wiadomości czatu, przechowywanie klucza sesji, store'y WebSocket (lista pokoi i czat pokoju),
+kontekst podpowiedzi klawiszy, lokalizacje lobby, obsługę regionów, rozwiązywanie adresów URL,
+raportowanie błędów klienta oraz hooki serwera. Ramka protokołu WebSocket po stronie serwera jest
+opisana w rozdziale o realtime backendu.
+
+\section{Zmienne publiczne i adresy URL}\label{sec:fe-urls}
+
+\begin{longtable}{@{}p{0.27\textwidth}p{0.33\textwidth}p{0.32\textwidth}@{}}
+\toprule
+\textbf{Zmienna} & \textbf{Użycie} & \textbf{Zastosowanie} \\
+\midrule
+\endhead
+\code{PUBLIC_BACKEND_URL} & \code{urls.ts} (\code{getBackendUrl()}) & Bazowy URL REST w przeglądarce \\
+\code{PUBLIC_WS_URL} & \code{urls.ts} (\code{getWsUrl()}) & Bazowy URL WebSocket \\
+\bottomrule
+\end{longtable}
+
+Moduł \code{lib/urls.ts} normalizuje skonfigurowany adres (przycina białe znaki i końcowy ukośnik)
+i dostarcza dwie funkcje:
+\begin{itemize}[nosep]
+  \item \code{getBackendUrl()}: zwraca \code{PUBLIC_BACKEND_URL}; jeśli brak, a strona działa na
+        \code{localhost} lub \code{127.0.0.1}, używa \code{http://<host>:8000}; w innym wypadku loguje
+        błąd \code{PUBLIC_BACKEND_URL is not configured} i zwraca pusty łańcuch.
+  \item \code{getWsUrl()}: analogicznie dla \code{PUBLIC_WS_URL} (awaryjnie \code{ws://<host>:8000}).
+\end{itemize}
+Awaryjny adres lokalny istnieje wyłącznie dla zwykłego \code{bun dev} i nie może po cichu kierować
+ruchu produkcyjnego na komputer użytkownika, gdy zmienna nie jest ustawiona.
+\code{auth.ts} używa \code{getBackendUrl()}, a \code{roomsStore.ts} i \code{chatStore.ts}
+używają \code{getWsUrl()}.
+
+\section{Tożsamość i uwierzytelnianie (\texttt{auth.ts})}\label{sec:fe-auth}
+
+Trójfazowy przepływ oparty na mnemoniku BIP39 i podpisach EIP-191 (\code{personal_sign}), ethers v6.
+
+\begin{longtable}{@{}p{0.36\textwidth}p{0.58\textwidth}@{}}
+\toprule
+\textbf{Funkcja} & \textbf{Opis} \\
+\midrule
+\endhead
+\code{getIdentityFromMnemonic(phrase): HDNodeWallet} & Derywuje \code{HDNodeWallet} z 12-wyrazowej frazy BIP39; \code{wallet.address} (adres z sumą kontrolną) jest tożsamością użytkownika. Błąd: \code{Error('Invalid mnemonic phrase')}. \\
+\code{generateMnemonic(): string} & Nowa fraza 12 słów z 16 bajtów entropii (\code{Mnemonic.fromEntropy(ethers.randomBytes(16))}). \\
+\code{signMessage(identity, message): Promise<string>} & Podpis EIP-191; zwraca \code{0x}-hex (65 bajtów: \code{r || s || v}). \\
+\code{authenticate(phrase): Promise<{ token, address, username }>} & Pełny handshake z backendem (poniżej). \\
+\bottomrule
+\end{longtable}
+
+\paragraph{Faza 1 --- nonce.} \code{POST {PUBLIC_BACKEND_URL}/auth/request-nonce?address=<adres>}
+bez uwierzytelnienia (limit żądań wg IP/adresu). Odpowiedź 200: \code{{ nonce }} (UUID v4).
+Błędy: 429 czyta pole \code{error.error}, pozostałe \code{error.detail}.
+
+\paragraph{Faza 2 --- podpis lokalny.} Podpisywana wiadomość (pojedynczy znak \code{\n} U+000A,
+bez znaku końcowego): \code{Sign in to Playlink\nNonce: <nonce>}. Klucz prywatny jest
+zapisywany w \code{sessionStorage} przez \code{saveSigningKey(identity.privateKey)} zaraz po derywacji.
+
+\paragraph{Faza 3 --- weryfikacja.} \code{POST {PUBLIC_BACKEND_URL}/auth/verify},
+\code{Content-Type: application/json}, ciało \code{{ address, nonce, signature }}.
+Odpowiedź 200: \code{{ token, username }}; frontend przekazuje token do akcji \code{?/login}
+(sekcja o modelu BFF). Błędy: \code{error.detail}.
+
+\section{Podpisy wiadomości czatu (\texttt{signing.ts})}\label{sec:fe-signing}
+
+Każda wiadomość czatu jest podpisywana (EIP-191), aby backend mógł kryptograficznie udowodnić
+autorstwo (zgłoszenie \#59). Kanoniczny ciąg musi być zgodny co do bajta z funkcją backendu
+\code{_chat_signing_message}.
+
+\begin{itemize}[nosep]
+  \item \code{ChatSigner}: interfejs z metodą \code{signMessage(message): Promise<string>}; spełniają go
+        \code{ethers.HDNodeWallet} i \code{ethers.Wallet}.
+  \item \code{buildChatSigningMessage(room, content, sentAt)} składa tekst:
+\end{itemize}
+
+\begin{lstlisting}
+PlayLink signed chat message
+room=<room>
+sent_at=<sentAt>
+content=<content>
+\end{lstlisting}
+
+Podział linii to pojedynczy znak U+000A; \code{room} to nazwa pokoju widoczna dla użytkownika
+(nie zakodowana URL), \code{sentAt} to \code{new Date().toISOString()}, a \code{content} to
+przycięta treść. \code{signChatMessage(signer, room, content, sentAt)} buduje ciąg i podpisuje go,
+zwracając \code{0x}-hex.
+
+\section{Przechowywanie klucza (\texttt{signingKey.ts})}\label{sec:fe-signingkey}
+
+Klucz prywatny ECDSA wyprowadzony z BIP39 jest trzymany w \code{sessionStorage} (klucz
+\code{playlink.sk}) na czas życia karty; nigdy w ciasteczku ani \code{localStorage}. Model
+bezpieczeństwa: klucz jest narażony na XSS --- jak każdy sekret na stronie w aplikacji
+samodzielnie przechowującej klucze, bez rozszerzenia przeglądarki.
+
+\begin{itemize}[nosep]
+  \item \code{saveSigningKey(privateKey)}: zapis (no-op poza przeglądarką, błąd logowany).
+  \item \code{loadSigner(): Wallet | null}: zwraca \code{ethers.Wallet} lub \code{null}, gdy brak klucza
+        albo jest nieprawidłowy (nieprawidłowy klucz jest po cichu usuwany).
+  \item \code{clearSigningKey()}: usuwa klucz (przy wylogowaniu).
+\end{itemize}
+
+\section{Store listy pokoi (\texttt{roomsStore.ts})}\label{sec:fe-roomsstore}
+
+Store oparty o WebSocket, utrzymujący listę aktywnych pokoi.
+
+\paragraph{Typ \texttt{RoomSummary}:} \code{name}, \code{game}, \code{lobby_location},
+\code{players_active}, \code{players_max}, \code{member_addresses: string[]},
+\code{description}, \code{communicator_link}, \code{requirements} (trzy ostatnie
+\code{string | null}), \code{expires_at}. Funkcje \code{isNullableString} i \code{isRoomSummary}
+walidują nieufne dane; każda ramka z WebSocketu przechodzi przez tę walidację.
+
+\paragraph{\texttt{roomsStore}} (singleton \code{Readable<RoomSummary[]> & { destroy() }}):
+\begin{itemize}[nosep]
+  \item \textbf{Adres:} \code{{PUBLIC_WS_URL}/ws/rooms}, bez uwierzytelniania (lista publiczna).
+  \item \textbf{Format ramki:} goła tablica JSON obiektów \code{RoomSummary}, bez koperty
+        \code{{ type }}; walidacja \code{Array.isArray(data) && data.every(isRoomSummary)}, potem \code{set(data)}.
+  \item \textbf{Ponowne łączenie:} wykładniczy backoff z jitterem: baza 1000 ms, maksimum 30\,000 ms,
+        \code{delay = min(30000, 1000 * 2^attempts) + random * (0.5 * wykładniczy)}; licznik zerowany po
+        udanym otwarciu.
+  \item \textbf{\code{destroy()}:} zamyka gniazdo, kasuje zaplanowane ponowienia i ustawia
+        \code{isTornDown = true}.
+\end{itemize}
+
+\section{Store czatu pokoju (\texttt{chatStore.ts})}\label{sec:fe-chatstore}
+
+Fabryka \code{createChatStore(roomName, token, options?)} zwraca osobny \code{ChatStore}
+dla każdego pokoju.
+
+\subsection{Typy}
+
+\begin{longtable}{@{}p{0.22\textwidth}p{0.72\textwidth}@{}}
+\toprule
+\textbf{Typ} & \textbf{Pola} \\
+\midrule
+\endhead
+\code{ChatMessage} & \code{id}, \code{sender_address}, \code{sender_username}, \code{content}, \code{created_at}; opcjonalnie \code{kind} (\code{'user' | 'system'}), \code{signature} (EIP-191 lub \code{null} dla wiadomości historycznych), \code{sent_at} (dokładny podpisany znacznik klienta), \code{verified} (serwer odzyskał prawidłowego sygnatariusza) \\
+\code{RoomMember} & \code{address}, \code{username}, \code{is_admin} \\
+\code{RsvpStatus} & \code{'present' | 'absent' | 'maybe'} \\
+\code{RsvpEntry} & \code{address}, \code{username}, \code{status}, \code{updated_at} \\
+\code{RoomEventState} & \code{starts_at}, \code{ends_at}, \code{created_by}, \code{created_at}, \code{updated_at}, \code{rsvps: RsvpEntry[]} \\
+\bottomrule
+\end{longtable}
+
+Walidatory \code{isChatMessage}, \code{isRoomMember}, \code{isRsvpStatus}, \code{isRsvpEntry},
+\code{isRoomEventState} sprawdzają strukturę w czasie działania.
+
+\subsection{Ramki obsługiwane przez \texttt{parseFrame}}
+
+\code{parseFrame(raw): ChatFrame | null} parsuje i waliduje surowy komunikat; przy błędnym JSON-ie
+lub nieznanym typie zwraca \code{null}.
+
+\begin{longtable}{@{}p{0.17\textwidth}p{0.30\textwidth}p{0.42\textwidth}@{}}
+\toprule
+\textbf{\code{type}} & \textbf{Dodatkowe pola} & \textbf{Działanie store'a} \\
+\midrule
+\endhead
+\code{history} & \code{messages} & \code{messages.set(...)} --- zastępuje całość \\
+\code{message} & \code{message} & dopisuje wiadomość do \code{messages} \\
+\code{event_update} & \code{event} (lub \code{null}) & \code{event.set(...)} \\
+\code{rsvp_update} & \code{rsvp} & scala RSVP w \code{event} (dopasowanie adresu bez rozróżniania wielkości liter) \\
+\code{roster_update} & \code{members} & \code{members.set(...)} --- zastępuje całość \\
+\code{room_closed} & \code{room} & \code{closed.set(true)}, \code{isTornDown = true}, zamknięcie gniazda \\
+\code{member_kicked} & \code{member_address}, \code{member_username}, \code{created_by}, \code{ownership_transferred} & \code{owner.set(created_by)}; gdy \code{member_address} to \code{options.currentAddress}: \code{kicked.set(true)}, \code{isTornDown = true} \\
+\code{error} & \code{detail} & \code{console.warn('Chat message rejected:', detail)} \\
+\bottomrule
+\end{longtable}
+
+\subsection{Interfejs \texttt{ChatStore} i opcje}
+
+\begin{longtable}{@{}p{0.17\textwidth}p{0.20\textwidth}p{0.55\textwidth}@{}}
+\toprule
+\textbf{Pole} & \textbf{Wartość początkowa} & \textbf{Opis} \\
+\midrule
+\endhead
+\code{messages} & \code{[]} & Historia czatu pokoju na żywo \\
+\code{event} & \code{initialEvent ?? null} & Bieżące wydarzenie (lub \code{null}) \\
+\code{members} & \code{initialMembers ?? []} & Skład pokoju, aktualizowany przy dołączeniu/wyjściu \\
+\code{closed} & \code{false} & \code{true} po zamknięciu pokoju (\code{room_closed}) \\
+\code{owner} & \code{initialOwner ?? ''} & Adres właściciela; zmienia się po wyrzuceniu przez twórcę \\
+\code{kicked} & \code{false} & \code{true}, gdy ten klient został usunięty z pokoju \\
+\code{send(content)} & --- & Wysyła wiadomość (poniżej) \\
+\code{destroy()} & --- & Zamyka gniazdo i anuluje ponowienia \\
+\bottomrule
+\end{longtable}
+
+Opcje \code{CreateChatStoreOptions}: \code{initialEvent}, \code{initialMembers}, \code{initialOwner}
+(dane z SSR eliminujące migotanie pustej treści do czasu pierwszej ramki WebSocket),
+\code{currentAddress} (wykrywanie własnego wyrzucenia) oraz \code{signer}
+(\code{ChatSigner | null}; bez niego wiadomości idą niepodpisane).
+
+\subsection{Połączenie i wysyłanie}
+
+\begin{itemize}[nosep]
+  \item \textbf{URL:} \code{{PUBLIC_WS_URL}/ws/rooms/{encodeURIComponent(roomName)}/chat?token={encodeURIComponent(token)}}.
+        JWT idzie w parametrze zapytania, ponieważ przeglądarki nie pozwalają ustawiać nagłówków WebSocket.
+  \item \textbf{Ponowne łączenie:} jak w \code{roomsStore} (1000 ms, maks.\ 30\,000 ms, jitter 50\%);
+        wstrzymane po \code{closed}, \code{kicked} oraz kodach zamknięcia 4403 i 4409.
+  \item \textbf{\code{send(content)}:} (1) przycina treść; nic nie robi, gdy pusta lub gniazdo nie jest \code{OPEN};
+        (2) przy ustawionym \code{signer} generuje \code{sentAt}, wywołuje \code{signChatMessage} i wysyła
+        \code{{"content", "sent_at", "signature"}}; (3) przy błędzie podpisu wraca do wiadomości
+        niepodpisanej \code{{"content"}} i loguje \code{console.error}; (4) bez signera wysyła
+        \code{{"content"}}.
+\end{itemize}
+
+\begin{longtable}{@{}p{0.16\textwidth}p{0.75\textwidth}@{}}
+\toprule
+\textbf{Kod zamknięcia} & \textbf{Zachowanie} \\
+\midrule
+\endhead
+4403 & Nie jesteś członkiem pokoju: \code{kicked.set(true)}, bez ponowień \\
+4409 & Nieznany pokój: \code{kicked.set(true)}, bez ponowień \\
+pozostałe & Planowane jest ponowne połączenie (o ile store nie został zdemontowany) \\
+\bottomrule
+\end{longtable}
+
+\begin{lstlisting}
+const store = createChatStore(roomName, token, { signer, currentAddress });
+// ... store.messages, store.send(...) ...
+store.destroy();   // zamyka gniazdo, anuluje ponowienia
+\end{lstlisting}
+
+\section{Kontekst podpowiedzi klawiszy (\texttt{hintsContext.svelte.ts})}\label{sec:fe-hints}
+
+Reaktywny kontekst (runes \code{$state}) zasilający pasek podpowiedzi. Typ
+\code{HintTone}: \code{gold}, \code{green}, \code{amber}, \code{red}, \code{stone}, \code{blue}.
+\code{HintEntry}: \code{key}, \code{label}, opcjonalnie \code{tone} i \code{onclick}.
+Klasa \code{HintsState} ma reaktywne pole \code{hints} oraz metody \code{set(entries)} i \code{clear()}.
+\code{provideHints(initial?)} tworzy stan i rejestruje go w kontekście komponentu pod kluczem
+\code{Symbol('hints')} (wywoływane raz w layoucie lub stronie); \code{getHintsState()} odczytuje stan
+z kontekstu (\code{undefined} poza poddrzewem, które wywołało \code{provideHints}). Layout główny
+tworzy domyślny stan (\code{Esc: Back}, \code{?: Help}), a strony nadpisują go własnymi skrótami.
+
+\section{Lokalizacje lobby (\texttt{lobbyLocations.ts})}\label{sec:fe-lobby}
+
+Typ \code{LobbyLocation} to \code{{ code, label, lat, lon }}. Stała
+\code{FALLBACK_LOBBY_LOCATION = 'eu-central'}, a \code{FALLBACK_LOBBY_LOCATIONS} zawiera 10
+lokalizacji awaryjnych, używanych, gdy backend nie zwróci listy:
+
+\begin{longtable}{@{}p{0.2\textwidth}p{0.34\textwidth}p{0.12\textwidth}p{0.12\textwidth}@{}}
+\toprule
+\textbf{Kod} & \textbf{Etykieta} & \textbf{Szer.} & \textbf{Dł.} \\
+\midrule
+\endhead
+\code{na-east} & North America East & 39,0 & $-77,0$ \\
+\code{na-west} & North America West & 37,8 & $-122,4$ \\
+\code{eu-west} & Europe West & 51,5 & $-0,1$ \\
+\code{eu-central} & Europe Central & 50,1 & 8,7 \\
+\code{eu-north} & Europe North & 59,3 & 18,1 \\
+\code{sa-east} & South America East & $-23,6$ & $-46,6$ \\
+\code{asia-east} & Asia East & 35,7 & 139,7 \\
+\code{asia-south} & Asia South & 1,3 & 103,8 \\
+\code{oceania} & Oceania & $-33,9$ & 151,2 \\
+\code{africa-south} & Africa South & $-26,2$ & 28,0 \\
+\bottomrule
+\end{longtable}
+
+Funkcje pomocnicze: \code{isLobbyLocation(value)} (strażnik typu), \code{lobbyLocationLabel(locations, code)}
+(etykieta lub sam kod, gdy brak dopasowania), \code{distanceKm(a, b)} (odległość wielkokołowa wzorem
+Haversine'a, promień Ziemi 6371 km, wynik w km) oraz \code{nearestLobbyLocation(locations, coords)}
+(lokalizacja o najmniejszej odległości lub \code{null} dla pustej tablicy).
+
+\section{Hooki serwera i typy globalne}\label{sec:fe-hooks}
+
+\paragraph{\texttt{handle}} (\code{hooks.server.ts}) uruchamia się przy każdym żądaniu serwerowym:
+czyta ciasteczko \code{session}, dekoduje JWT (\code{sub}, \code{exp}, \code{is_admin}), sprawdza
+wygaśnięcie (\code{exp} w sekundach, porównywane w ms) i ustawia
+\code{event.locals.user = { address: sub, isAdmin: is_admin === true }}. Bez ciasteczka
+\code{locals.user} pozostaje \code{undefined}; wygasły lub uszkodzony token powoduje usunięcie
+ciasteczka (\code{path: '/'}).
+
+\paragraph{\texttt{handleError}} (serwer) zapisuje każdy nieobsłużony błąd jako wiersz logu
+\code{server_error} (poziom ERROR; pola \code{path}, \code{status}, \code{error}, \code{stack})
+i zwraca klientowi neutralny komunikat \code{{ message: 'Internal Error' }}.
+
+\paragraph{\texttt{app.d.ts}} rozszerza \code{App.Locals} o opcjonalne
+\code{user?: { address: string; isAdmin: boolean }}, co zapewnia typowanie \code{event.locals.user}
+w hookach, loaderach i akcjach.
+
+\section{Fetch po stronie serwera (\texttt{lib/server/backend.ts})}\label{sec:fe-backend}
+
+Loadery i form actions nie wołają \code{fetch} bezpośrednio, tylko przez dwie funkcje:
+
+\begin{itemize}[nosep]
+  \item \code{backendBase()}: wewnętrzny adres backendu: \code{BACKEND_INTERNAL_URL} (w compose nazwa
+        usługi), w przeciwnym razie \code{PUBLIC_BACKEND_URL}, ostatecznie \code{http://localhost:8000}
+        (żeby \code{bun dev} działał poza Dockerem).
+  \item \code{backendFetch(event, path, init)}: wywołuje \code{fetch(backendBase() + path)} i
+        \textbf{przekazuje prawdziwy adres IP gracza} w nagłówku \code{CF-Connecting-IP} (jeśli
+        żądanie go zawiera). Backend ufa temu nagłówkowi tylko od kontenera frontendu, więc bez
+        przekazania wszystkie wywołania SSR dzieliłyby jeden kubełek limitu żądań. Nagłówki są
+        trzymane jako zwykły obiekt, aby istniejące testy i miejsca wywołań zachowały dokładną
+        pisownię \code{Authorization}.
+\end{itemize}
+
+\section{Regiony w interfejsie}\label{sec:fe-regiony}
+
+Platforma działa w dwóch regionach, EU i US (architektura i wdrożenie --- patrz część o
+architekturze i operacjach). Interfejs odpowiada za: wybór regionu przy pierwszej wizycie,
+zapamiętanie wyboru, propozycję zmiany na szybszy region (Stay/Switch) i automatyczny failover,
+gdy zapisany region nie odpowiada. Zasada nadrzędna: \emph{szybszy region jest tylko
+propozycją; automatyczne przełączenie następuje wyłącznie wtedy, gdy zapisany region milczy}.
+
+\subsection{Konfiguracja regionów (\texttt{lib/regions.ts})}
+
+\code{REGIONS} zawiera dwa wpisy \code{RegionConfig} \code{{ id, label, frontend, api, ws, healthPath }}:
+\code{eu} (etykieta „Europa”) i \code{us} (etykieta „USA”), z \code{healthPath = '/healthz'}.
+Adresy pochodzą ze zmiennych \code{PUBLIC_REGION_{EU,US}_{FRONTEND,API,WS}} (przycięte, bez końcowego
+ukośnika). W trybie deweloperskim brakujące wartości mają awaryjne adresy lokalne
+(EU: 3000/8000, US: 3001/8001); w produkcji brak zmiennej daje pusty łańcuch, aby nie kierować
+ruchu na \code{localhost}. Dodatkowo:
+
+\begin{itemize}[nosep]
+  \item \code{ENTRY_HOST} (z \code{PUBLIC_ENTRY_HOST}) i \code{isEntryHost(host)}: czy dany host
+        serwuje wybór regionu;
+  \item \code{CURRENT_REGION}: region tej instancji (\code{PUBLIC_REGION === 'us'} daje \code{us},
+        w przeciwnym razie \code{eu});
+  \item \code{otherRegion(id)}: drugi region.
+\end{itemize}
+
+\subsection{Pomiar opóźnienia i decyzja o propozycji}
+
+\begin{itemize}[nosep]
+  \item \code{probeRegion(region, samples = 2)}: dwukrotnie wykonuje
+        \code{fetch({api}/healthz, { cache: 'no-store' })} z limitem czasu 2500 ms
+        (\code{AbortController}); zwraca najlepszy udany czas (\code{ProbeResult}: \code{ok}, \code{ms}).
+        Timeout, błąd sieci lub odpowiedź inna niż OK oznaczają „nie kandydat”. Region bez
+        skonfigurowanego \code{api} jest od razu nieosiągalny.
+  \item \code{probeAll(regions)}: sonduje wszystkie regiony równolegle.
+  \item \code{liveRegionsSorted(results)}: żywe regiony posortowane od najszybszego.
+  \item \code{isMeaningfullyFaster(candidateMs, baselineMs, { minDeltaMs, minRatio })}: czy kandydat
+        jest \emph{wyraźnie} szybszy od bazy. Domyślne progi: różnica co najmniej 25 ms \emph{lub}
+        czas nie większy niż 0,85 bazy. Dla \code{localhost} i \code{127.0.0.1} progi są łagodniejsze
+        (5 ms lub 0,98), aby propozycję dało się pokazać w demonstracjach laboratoryjnych. Brak
+        pomiaru po którejkolwiek stronie daje \code{false}.
+\end{itemize}
+
+\subsection{Ciasteczko wyboru i przekierowanie}
+
+\begin{itemize}[nosep]
+  \item \textbf{Ciasteczko \code{playlink.region}} (wartość \code{eu} lub \code{us}), ustawiane po stronie klienta
+        przez \code{saveRegion(id)}: \code{Path=/}, \code{Max-Age=31536000} (1 rok), \code{SameSite=Lax},
+        \code{Secure} na \code{https:}. \code{readSavedRegion()} odczytuje je i akceptuje wyłącznie
+        \code{eu} i \code{us}.
+  \item \textbf{\code{redirectToRegion(id, regions)}:} przekierowuje przez \code{window.location.replace}
+        na frontend regionu, \emph{zachowując ścieżkę i zapytanie}. Zwraca \code{false}, gdy cel jest tym
+        samym hostem (ochrona przed pętlą przekierowań). Origin jest „przypięty”: konstruowany z
+        konfiguracji regionu, a z bieżącego adresu przenoszone są tylko \code{pathname} (z początkowymi
+        ukośnikami zredukowanymi do jednego) i \code{search}, więc ścieżka typu \code{//evil.example}
+        nie może zmienić hosta.
+\end{itemize}
+
+\subsection{Wybór regionu (\texttt{RegionChooser.svelte})}
+
+Komponent renderowany na hoście wejściowym (\code{isEntryHost}). Pokazuje herb, tytuł, panel
+„REGION SELECT” ze statusem, listę regionów z opóźnieniem (\code{NN ms} lub \code{offline}) i
+przyciskiem „Open” oraz notatki dla użytkownika. Stan: \code{probing}, \code{redirecting},
+\code{propose}, \code{failed}. Logika przy zamontowaniu, w kolejności:
+
+\begin{enumerate}[nosep]
+  \item \textbf{Wymuszenie przez URL.} Parametr \code{?region=eu|us} od razu wybiera dany region
+        (zapis ciasteczka i przekierowanie).
+  \item \textbf{Pomiar.} \code{probeAll} mierzy oba regiony; wyniki żywe są sortowane.
+  \item \textbf{Zapisany region nie odpowiada} (jest w ciasteczku, ale sonda nieudana): failover do
+        najszybszego żywego regionu („Saved region \ldots is offline --- opening \ldots”). Gdy żaden nie
+        odpowiada: stan \code{failed}, komunikat „Saved region is offline and no fallback is responding.”
+  \item \textbf{Zapisany region żyje.} Pozostaje się na nim, chyba że drugi żywy region jest
+        wyraźnie szybszy (\code{isMeaningfullyFaster}); wtedy \emph{tylko proponuje się zmianę} (stan
+        \code{propose}) z komunikatem w rodzaju „Europa looks faster (NN ms vs MM ms). Stay on \ldots,
+        or switch?” i dwoma przyciskami: „Stay on \{zapisany\}” (\code{keepSaved}) i „Switch to
+        \{proponowany\}” (\code{acceptProposal}). Każdy wybór zapisuje ciasteczko i przekierowuje.
+  \item \textbf{Pierwsza wizyta} (brak ciasteczka): otwierany jest najszybszy żywy region; gdy żaden nie
+        odpowiada --- stan \code{failed} z komunikatem „Neither region is responding” i bezpośrednimi
+        linkami do obu frontendów.
+  \item \textbf{Pomocnik laboratoryjny} \code{?propose=1}: wymusza ekran Stay/Switch nawet, gdy oba
+        regiony są równie szybkie (przy braku ciasteczka zapisany region jest „udawany” jako wolniejszy
+        z dwóch), by dało się wykonać zrzuty ekranu do dziennika.
+\end{enumerate}
+
+Jeśli wybrany region ma ten sam host co bieżący, \code{select} kończy się stanem \code{failed}
+(„You are already on the \ldots host. Open the lobby manually.”). Notatki na ekranie przypominają, że:
+pierwsza wizyta otwiera szybszy region, wybór jest zapamiętywany, szybszy drugi region to tylko
+propozycja, automatyczne przełączenie następuje wyłącznie przy braku odpowiedzi zapisanego regionu, a
+\emph{każdy region ma osobną sesję} --- po przełączeniu trzeba zalogować się tą samą frazą 12 słów.
+
+Schemat całego procesu wyboru regionu jest w części II, w opisie filaru F2.
+
+\subsection{Baner propozycji (\texttt{RegionProposalBanner.svelte})}
+
+Na hoście regionalnym layout osadza baner, który \emph{po fakcie} proponuje zmianę regionu, gdy
+użytkownik już pracuje w jednym z nich. Propsy: \code{currentRegion} (\code{RegionId}) i \code{other}
+(\code{RegionConfig | undefined}). Przy zamontowaniu (jeśli drugi region ma skonfigurowane \code{api}
+i baner nie został wcześniej odrzucony) uruchamia \code{probeAll()}; baner pojawia się tylko, gdy
+\emph{oba} regiony odpowiedziały i drugi jest wyraźnie szybszy (\code{isMeaningfullyFaster}).
+Treść: „\{inny\} looks faster (NN ms vs MM ms). Saved region stays put unless you switch.” Akcje:
+„Keep current” (zapamiętuje odrzucenie w \code{sessionStorage} pod kluczem
+\code{playlink.regionProposalDismissed} wartością bieżącego regionu, więc baner nie wraca w tej karcie)
+oraz „Switch to \{inny\}” (link do tej samej ścieżki i zapytania w drugim regionie; kliknięcie wywołuje
+\code{saveRegion(other.id)}). Obok odznaki aktywnego regionu layout zawiera także stały link
+ręcznego przełączenia „$\rightarrow$ \{druga etykieta\}”.
+
+\subsection{Podsumowanie zachowań regionalnych}
+
+\begin{longtable}{@{}p{0.30\textwidth}p{0.62\textwidth}@{}}
+\toprule
+\textbf{Sytuacja} & \textbf{Zachowanie interfejsu} \\
+\midrule
+\endhead
+Pierwsza wizyta na hoście wejściowym & Pomiar obu regionów, otwarcie najszybszego żywego, zapis ciasteczka \\
+Zapisany region żyje, drugi wyraźnie szybszy & Propozycja Stay/Switch; domyślnie pozostaje zapisany \\
+Zapisany region milczy (sonda nieudana) & Failover do najszybszego żywego regionu (jedyny przypadek automatycznej zmiany) \\
+Żaden region nie odpowiada & Komunikat o błędzie i bezpośrednie linki do frontendów \\
+Użytkownik już w regionie, drugi szybszy & Baner z „Keep current” / „Switch to \ldots”; odrzucenie na czas karty \\
+Przełączenie regionu & Osobna sesja (ciasteczko host-only): ponowne logowanie tą samą frazą \\
+\bottomrule
+\end{longtable}
+
+\section{Sondy zdrowia i raportowanie błędów klienta}\label{sec:fe-bledy}
+
+\subsection{\texttt{GET /healthz}}
+
+Endpoint serwerowy frontendu (\code{routes/healthz/+server.ts}) zwraca
+\code{{"status":"ok"}} z nagłówkami \code{content-type: application/json} i
+\code{cache-control: no-store}. Służy sondom zdrowia infrastruktury. Uwaga: pomiary opóźnienia
+regionów (\code{probeRegion}) oraz ping na stronie \code{/rooms} wołają \code{/healthz}
+\emph{backendu} (API), nie frontendu.
+
+\subsection{Raportowanie błędów przeglądarki}
+
+\begin{itemize}[nosep]
+  \item \textbf{Zbieranie (\code{hooks.client.ts}).} Rejestruje nasłuch zdarzeń \code{error} i
+        \code{unhandledrejection} oraz \code{handleError} SvelteKit; wszystkie przekazują błąd do
+        \code{reportClientError()} (użytkownikowi pokazywany jest neutralny komunikat
+        \code{Something went wrong}).
+  \item \textbf{Wysyłka (\code{lib/clientErrors.ts}).} \code{reportClientError(error)} wysyła
+        \code{navigator.sendBeacon('/api/client-errors', ...)} z JSON-em \code{{ path, message, stack }};
+        działa „po najlepszych staraniach”, nie więcej niż \textbf{5 razy na jedno załadowanie strony}.
+  \item \textbf{Odbiór (\code{routes/api/client-errors/+server.ts}).} \code{POST} z limitem
+        \textbf{20 żądań na minutę} liczonym względem równorzędnego peera połączenia
+        (\code{getClientAddress()}), nigdy nagłówka, który klient mógłby sfałszować; za tunelem peerem
+        jest konektor, więc limit jest współdzielony przez wszystkich odwiedzających. Przekroczenie:
+        429. Ciało niebędące obiektem JSON: 400. Poprawne zgłoszenie jest zapisywane jako wiersz logu
+        \code{client_error} (poziom ERROR) z polami \code{path} (do 200 znaków), \code{error} (300),
+        \code{stack} (1500) i \code{user_agent} (200) i zwraca 204.
+  \item \textbf{Log (\code{lib/server/log.ts}).} \code{logLine(level, msg, fields)} zapisuje jedną linię
+        JSON na wpis (\code{_time}, \code{_msg}, \code{level}, \code{logger: "frontend"} oraz pola) na
+        stdout (ERROR na stderr). Agent regionu przesyła stdout do VictoriaLogs --- tak błędy
+        przeglądarki i serwera frontendu trafiają do wspólnej obserwowalności (szczegóły w części
+        o operacjach).
+\end{itemize}
+
+%====================================================================
+\chapter{Komponenty interfejsu}\label{ch:fe-komponenty}
+
+Frontend zawiera trzy komponenty domenowe (\code{GameManager}, \code{MnemonicInput},
+\code{RoomEvent}), dwa komponenty regionalne (\code{RegionChooser}, \code{RegionProposalBanner};
+opisane w rozdziale o bibliotece klienta) oraz zestaw 18 widżetów w stylu Diablo II (UI kit
+\code{chrome}). Wszystkie korzystają z konwencji Svelte 5 runes: \code{$props()} dla propsów,
+\code{$bindable()} dla stanu dwukierunkowego, \code{$state}/\code{$derived}/\code{$effect}
+dla stanu lokalnego oraz \code{{@render children?.()}} dla slotów (snippetów).
+
+Wspólne tokeny projektowe (zmienne CSS: kolory, typografia, odstępy) są w
+\code{frontend/src/lib/styles/tokens.css}, a atomowe klasy (fazowanie, wytrawianie, kapitaliki) w
+\code{styles/chrome.css}. \code{lib/global.css} zawiera reset CSS, deklaracje fontów (Exocet jako
+display, Cinzel jako mono) i kursory w stylu Diablo II. Pliki te importuje layout główny;
+poszczególne komponenty nie importują ich bezpośrednio.
+
+\section{Komponenty domenowe}\label{sec:fe-domenowe}
+
+\subsection{GameManager}
+
+Dialog dla administratora do tworzenia i usuwania kategorii gier. Wysyła akcje \code{?/addGame}
+i \code{?/deleteGame} przez \code{fetch} + \code{deserialize}.
+
+\begin{longtable}{@{}p{0.13\textwidth}p{0.17\textwidth}p{0.14\textwidth}p{0.50\textwidth}@{}}
+\toprule
+\textbf{Prop} & \textbf{Typ} & \textbf{Bindable} & \textbf{Opis} \\
+\midrule
+\endhead
+\code{open} & \code{boolean} & tak & Widoczność dialogu \\
+\code{games} & \code{string[]} & nie & Bieżąca lista kategorii gier \\
+\code{onclose} & \code{() => void} & nie & Wywoływane przy zamknięciu \\
+\bottomrule
+\end{longtable}
+
+Komponent opakowuje \code{SystemDialog} (\code{tone="gold"}, \code{modal}, \code{width="520px"}).
+Stan wewnętrzny: pole nazwy nowej gry, komunikat \code{feedback} (\code{'success' | 'error'}), flaga
+\code{busy} i obiekt \code{conflict}. Przepływ konfliktu przy usuwaniu: (1) \code{deleteGame(game)} wysyła
+\code{?/deleteGame} z \code{name}; (2) odpowiedź \code{{ type: 'failure', data: { conflict: true, error } }}
+pokazuje „Force Delete” i link „Cancel”; (3) „Force Delete” wywołuje \code{deleteGame(game, true)},
+dodając \code{force: 'true'}; (4) po sukcesie \code{invalidateAll()} odświeża dane trasy. Klawisz
+\code{Enter} w polu nazwy wywołuje \code{addGame()} (\code{onAddKey}). Implementacje akcji
+opisano w rozdziale o trasach (\code{rooms/+page.server.ts}).
+
+\subsection{MnemonicInput}
+
+Siatka wprowadzania 12 słów BIP39: trzy kolumny po cztery pola z numeracją i walidacją słowa
+względem słownika BIP39 (\code{ethers.wordlists.en.getWordIndex()}). Słowa są trzymane jako
+\code{string[]} (12 pozycji) i synchronizowane z bindowalnym \code{value} (łańcuch rozdzielany spacjami).
+
+\begin{longtable}{@{}p{0.13\textwidth}p{0.17\textwidth}p{0.14\textwidth}p{0.50\textwidth}@{}}
+\toprule
+\textbf{Prop} & \textbf{Typ} & \textbf{Bindable} & \textbf{Opis} \\
+\midrule
+\endhead
+\code{value} & \code{string} & tak & Fraza 12 słów rozdzielonych spacjami \\
+\bottomrule
+\end{longtable}
+
+\paragraph{Synchronizacja dwukierunkowa.} Rodzic $\rightarrow$ dziecko: \code{$effect} obserwuje
+\code{value}; gdy staje się 12-wyrazowym łańcuchem, aktualizuje \code{words} (tylko jeśli wartość
+zewnętrzna różni się od stanu wewnętrznego); wyczyszczenie \code{value} zeruje wszystkie pola.
+Dziecko $\rightarrow$ rodzic: \code{$effect} łączy \code{words} spacją i zapisuje do \code{value}.
+
+\paragraph{Nawigacja.} \code{Space}, \code{Enter}, \code{Tab} --- następne pole; \code{Backspace} w pustym
+polu --- poprzednie; wklejenie dzieli tekst po białych znakach, wypełnia do 12 pól, zamienia na małe litery
+i usuwa znaki niealfabetyczne.
+
+\paragraph{Walidacja pola.} Niepuste słowo spoza słownika dostaje klasę \code{invalid} (czerwony odcień);
+poprawne --- \code{valid-filled} (zielony odcień) i znacznik \code{▸}. Używany na trasie \code{/auth}.
+
+\subsection{RoomEvent}
+
+Panel planowania i RSVP wydarzenia pokoju: odliczanie, lista RSVP oraz (dla twórcy) sterowanie
+edycją i anulowaniem, a (dla członków) przyciski RSVP.
+
+\begin{longtable}{@{}p{0.17\textwidth}p{0.27\textwidth}p{0.10\textwidth}p{0.38\textwidth}@{}}
+\toprule
+\textbf{Prop} & \textbf{Typ} & \textbf{Domyśl.} & \textbf{Opis} \\
+\midrule
+\endhead
+\code{event} & \code{RoomEventState | null} & --- & Dane wydarzenia lub \code{null}, gdy niezaplanowane \\
+\code{isCreator} & \code{boolean} & --- & Widz jest właścicielem pokoju \\
+\code{isMember} & \code{boolean} & --- & Widz jest członkiem pokoju \\
+\code{viewerAddress} & \code{string} & --- & Adres Ethereum widza (wewnętrznie małymi literami) \\
+\code{members} & \code{{ address: string; username?: string }[]} & --- & Wszyscy członkowie pokoju \\
+\code{formError} & \code{string | null} & \code{null} & Błąd serwera z formularza rodzica \\
+\bottomrule
+\end{longtable}
+
+\paragraph{Stany.} (1) Brak wydarzenia, widz jest twórcą: przycisk „Schedule Event” przełącza tryb edycji.
+(2) Brak wydarzenia, widz nie jest twórcą: komunikat „No event scheduled yet”. (3) Wydarzenie zaplanowane,
+bez edycji: czas startu i końca (\code{Intl.DateTimeFormat}), odliczanie, sterowanie RSVP (dla członków)
+i lista. (4) Edycja: \code{D2DatePicker} + \code{D2TimePicker} dla startu i końca; po zatwierdzeniu walidacja
+lokalna i wysyłka do \code{?/scheduleEvent}.
+
+\paragraph{Odliczanie} (odświeżane co 1 s przez \code{setInterval}): przed startem
+\code{STARTS IN [d HH:MM:SS]}; w trakcie \code{IN PROGRESS --- [HH:MM:SS] LEFT}; po końcu \code{ENDED}.
+
+\paragraph{RSVP.} Trzy przyciski: Present, Absent, Maybe; każdy wysyła \code{?/setRsvp} z \code{status}.
+Lista scala \code{event.rsvps} z \code{members} (adresy bez wpisu w \code{rsvps} mają „No Response”).
+
+\paragraph{Walidacja edycji} (\code{validateDraft}): oba terminy muszą być ustawione, koniec musi być po
+starcie, a start w przyszłości. Typy \code{RoomEventState}, \code{RsvpEntry}, \code{RsvpStatus} pochodzą z
+\code{chatStore}; akcje \code{?/scheduleEvent}, \code{?/cancelEvent}, \code{?/setRsvp} opisano w rozdziale
+o trasach.
+
+\section{Komponenty regionalne}\label{sec:fe-komp-regiony}
+
+\begin{longtable}{@{}p{0.24\textwidth}p{0.30\textwidth}p{0.38\textwidth}@{}}
+\toprule
+\textbf{Komponent} & \textbf{Propsy} & \textbf{Rola} \\
+\midrule
+\endhead
+\code{RegionChooser} & \code{regions: RegionConfig[]} & Ekran wyboru regionu na hoście wejściowym (pomiar, failover, Stay/Switch) \\
+\code{RegionProposalBanner} & \code{currentRegion: RegionId}, \code{other: RegionConfig | undefined} & Baner „Keep current / Switch” na hoście regionalnym \\
+\bottomrule
+\end{longtable}
+
+Pełny opis logiki znajduje się w sekcji „Regiony w interfejsie” rozdziału o bibliotece klienta.
+Oba komponenty składają się z elementów UI kitu: \code{Crest}, \code{InnerPanel}, \code{OrnateButton},
+\code{SectionTitle}.
+
+\section{UI kit w stylu Diablo II (\texttt{chrome})}\label{sec:fe-chrome}
+
+Zestaw 18 widżetów w \code{frontend/src/lib/components/chrome/}. Komponenty przyjmują
+\code{children?: import('svelte').Snippet} tam, gdzie wskazano, i używają \code{$props()} z
+\code{interface Props}. Poniższa tabela zbiera propsy; kolumna „B” oznacza prop bindowalny
+(\code{$bindable}).
+
+\small
+\begin{longtable}{@{}p{0.15\textwidth}p{0.29\textwidth}p{0.11\textwidth}p{0.03\textwidth}p{0.32\textwidth}@{}}
+\toprule
+\textbf{Prop} & \textbf{Typ} & \textbf{Domyśl.} & \textbf{B} & \textbf{Opis} \\
+\midrule
+\endhead
+\multicolumn{5}{@{}l}{\textbf{Cycler} (generyczny \code{<T>}) --- przełączanie wartości z tablicy strzałkami, z zawijaniem na krańcach} \\
+\code{values} & \code{T[]} & --- & & Pula elementów \\
+\code{value} & \code{T} & --- & tak & Wybrana wartość \\
+\code{label} & \code{string | undefined} & --- & & Opcjonalna etykieta \\
+\code{format} & \code{(v: T) => string} & --- & & Własny formater wyświetlania \\
+\code{disabled} & \code{boolean} & \code{false} & & Wyłącza nawigację \\
+\code{onchange} & \code{(v: T) => void} & --- & & Wywołanie z nową wartością \\
+\midrule
+\multicolumn{5}{@{}l}{\textbf{Crest} --- tarcza SVG w stylu D2 (celtyckie sploty, gwiazda kompasu, nity)} \\
+\code{size} & \code{number} & \code{96} & & Szerokość/wysokość w px \\
+\code{tone} & \code{'gold' | 'bone' | 'iron'} & \code{'gold'} & & Wariant kolorystyczny \\
+\midrule
+\multicolumn{5}{@{}l}{\textbf{D2DatePicker} --- kalendarz w popoverze (siatka 6$\times$7 = 42 komórki)} \\
+\code{value} & \code{Date | null} & --- & & Wybrana data \\
+\code{onChange} & \code{(d: Date) => void} & --- & & Po wyborze daty (zachowuje porę dnia) \\
+\code{min} & \code{Date | null} & \code{null} & & Minimalna wybieralna data \\
+\code{placeholder} & \code{string} & \code{'Pick a date'} & & Tekst bez wybranej daty \\
+\code{ariaLabel} & \code{string} & \code{'Date'} & & \code{aria-label} przycisku \\
+\midrule
+\multicolumn{5}{@{}l}{\textbf{D2TimePicker} --- popover z dwiema przewijanymi kolumnami (godziny 00--23, minuty)} \\
+\code{value} & \code{string} & --- & & Czas \code{"HH:MM"} (24 h) \\
+\code{onChange} & \code{(value: string) => void} & --- & & Wywołanie z \code{"HH:MM"} \\
+\code{step} & \code{5 | 10 | 15 | 30} & \code{5} & & Granulacja minut \\
+\code{ariaLabel} & \code{string} & \code{'Time'} & & \code{aria-label} przycisku \\
+\midrule
+\multicolumn{5}{@{}l}{\textbf{Hint} --- plakietka podpowiedzi klawisza} \\
+\code{key} & \code{string} & --- & & Znak klawisza (np. \code{"E"}, \code{"M"}) \\
+\code{label} & \code{string} & --- & & Opis \\
+\code{tone} & \code{'gold' | 'green' | 'amber' | 'red' | 'stone' | 'blue'} & \code{'stone'} & & Akcent kolorystyczny \\
+\code{onclick} & \code{() => void} & --- & & Ustawiony: renderuje \code{<button>}, inaczej \code{<span>} \\
+\midrule
+\multicolumn{5}{@{}l}{\textbf{HintBar} --- stopka z podpowiedziami (ukryta na urządzeniach dotykowych)} \\
+\code{children} & \code{Snippet} & --- & & Elementy podpowiedzi (zwykle \code{Hint}) \\
+\midrule
+\multicolumn{5}{@{}l}{\textbf{InnerPanel} --- kamienna płyta z brązową ramą, czterema nitami i szumem ziarna} \\
+\code{title} & \code{string | undefined} & --- & & Nagłówek panelu \\
+\code{padded} & \code{boolean} & \code{true} & & Wewnętrzny margines \\
+\code{children} & \code{Snippet} & --- & & Treść panelu \\
+\code{actions} & \code{Snippet} & --- & & Akcje obok tytułu \\
+\midrule
+\multicolumn{5}{@{}l}{\textbf{ListRow} --- wiersz siatki list pokoi i członków} \\
+\code{selected} & \code{boolean} & \code{false} & & Zaznaczony (złoty pip) \\
+\code{header} & \code{boolean} & \code{false} & & Wiersz nagłówka (bez interakcji) \\
+\code{disabled} & \code{boolean} & \code{false} & & Wyłączony \\
+\code{member} & \code{boolean} & \code{false} & & Stan członka (przygaszony pip) \\
+\code{onclick} & \code{() => void} & --- & & Czyni wiersz interaktywnym \\
+\code{children} & \code{Snippet} & --- & & Treść \\
+\midrule
+\multicolumn{5}{@{}l}{\textbf{OrnateButton} --- przycisk lub link w wielu wariantach} \\
+\code{variant} & \code{'primary' | 'secondary' | 'danger' | 'ghost'} & \code{'secondary'} & & Styl \\
+\code{size} & \code{'sm' | 'md' | 'lg'} & \code{'md'} & & Rozmiar \\
+\code{type} & \code{'button' | 'submit' | 'reset'} & \code{'button'} & & Ignorowany przy \code{href} \\
+\code{disabled} & \code{boolean} & \code{false} & & Wyłączony \\
+\code{loading} & \code{boolean} & \code{false} & & Ładowanie (też wyłącza) \\
+\code{href} & \code{string | undefined} & --- & & Ustawiony: \code{<a role="button">} \\
+\code{fullWidth} & \code{boolean} & \code{false} & & Rozciąga na szerokość kontenera \\
+\code{onclick} & \code{(e: MouseEvent) => void} & --- & & Obsługa kliknięcia \\
+\code{children} & \code{Snippet} & --- & & Etykieta \\
+\midrule
+\multicolumn{5}{@{}l}{\textbf{PageFrame} --- ramka strony: kamienny mur z kwadrolistem, winieta, cztery rogi SVG, złote krawędzie} \\
+\code{children} & \code{Snippet} & --- & & Treść strony (wewnątrz \code{.frame-inner}) \\
+\midrule
+\multicolumn{5}{@{}l}{\textbf{PipMeter} --- rząd orbów pokazujący liczność} \\
+\code{value} & \code{number} & --- & & Wartość (zaokrąglana w dół do liczby zapalonych pipsów) \\
+\code{total} & \code{number} & \code{3} & & Łączna liczba pipsów \\
+\code{tone} & \code{'good' | 'mid' | 'bad' | 'auto'} & \code{'auto'} & & Schemat kolorów \\
+\code{size} & \code{'sm' | 'md'} & \code{'md'} & & Rozmiar pipsa \\
+\code{glow} & \code{boolean} & \code{true} & & Poświata zapalonych \\
+\code{label} & \code{string | undefined} & --- & & Etykieta pod pipsami \\
+\midrule
+\multicolumn{5}{@{}l}{\textbf{ProgressBar} --- pasek postępu z opcjonalnymi znacznikami} \\
+\code{value} & \code{number} & --- & & Wartość bieżąca \\
+\code{max} & \code{number} & \code{100} & & Maksimum \\
+\code{height} & \code{number} & \code{6} & & Wysokość wypełnienia (px) \\
+\code{ticks} & \code{boolean} & \code{false} & & Znaczniki 25/50/75\% \\
+\code{variant} & \code{'gold' | 'blood' | 'green'} & \code{'gold'} & & Kolor wypełnienia \\
+\code{label} & \code{string | undefined} & --- & & Etykieta i licznik \\
+\midrule
+\multicolumn{5}{@{}l}{\textbf{SectionTitle} --- nagłówek sekcji ze złotą linią i slotem z prawej} \\
+\code{title} & \code{string} & --- & & Tekst nagłówka \\
+\code{size} & \code{'small' | 'normal' | 'large'} & \code{'normal'} & & Stopień wielkości \\
+\code{tone} & \code{'gold' | 'bone' | 'blood'} & \code{'gold'} & & Kolor tytułu \\
+\code{children} & \code{Snippet} & --- & & Zawartość slotu za linią \\
+\midrule
+\multicolumn{5}{@{}l}{\textbf{Sigil} --- deterministyczny sigil SVG z adresu Ethereum} \\
+\code{address} & \code{string} & --- & & Adres z prefiksem \code{0x} \\
+\code{size} & \code{number} & \code{56} & & Szerokość/wysokość w px \\
+\midrule
+\multicolumn{5}{@{}l}{\textbf{StoneCheckbox} --- pole wyboru ze „kamiennym” polem i animowanym znaczkiem} \\
+\code{checked} & \code{boolean} & \code{false} & tak & Stan zaznaczenia \\
+\code{label} & \code{string | undefined} & --- & & Etykieta (kapitaliki) \\
+\code{disabled} & \code{boolean} & \code{false} & & Wyłączone \\
+\code{size} & \code{'sm' | 'md'} & \code{'md'} & & Rozmiar \\
+\code{onchange} & \code{(checked: boolean) => void} & --- & & Wywołanie przy zmianie \\
+\midrule
+\multicolumn{5}{@{}l}{\textbf{SystemDialog} --- okno modalne, wbudowane lub pływające} \\
+\code{open} & \code{boolean} & \code{false} & tak & Widoczność \\
+\code{title} & \code{string} & --- & & Tytuł \\
+\code{tone} & \code{'gold' | 'blood' | 'green' | 'iron'} & \code{'iron'} & & Akcent kolorystyczny \\
+\code{modal} & \code{boolean} & \code{false} & & Ciemna nakładka, Escape zamyka, blokada przewijania \\
+\code{inline} & \code{boolean} & \code{false} & & Render w przepływie dokumentu \\
+\code{position} & \code{'bottom-right' | 'top-center' | 'center'} & \code{'bottom-right'} & & Położenie okna pływającego \\
+\code{width} & \code{string} & \code{'420px'} & & Szerokość (CSS) \\
+\code{closeable} & \code{boolean} & \code{true} & & \code{false} ukrywa przycisk zamknięcia i blokuje zamykanie \\
+\code{onclose} & \code{() => void} & --- & & Wywołanie przy zamknięciu \\
+\code{children} & \code{Snippet} & --- & & Treść \\
+\code{footer} & \code{Snippet} & --- & & Stopka pod treścią \\
+\midrule
+\multicolumn{5}{@{}l}{\textbf{Tab} --- zakładka górnego paska nawigacji (aktywność z \code{$app/state})} \\
+\code{href} & \code{string} & --- & & Ścieżka trasy \\
+\code{match} & \code{'exact' | 'prefix'} & \code{'prefix'} & & Strategia dopasowania \\
+\code{label} & \code{string | undefined} & --- & & Tekst zakładki \\
+\code{children} & \code{Snippet} & --- & & Alternatywa dla \code{label} \\
+\midrule
+\multicolumn{5}{@{}l}{\textbf{Tabs} --- kontener paska zakładek (\code{grid-auto-flow: column}, złote linie u góry i u dołu)} \\
+\code{children} & \code{Snippet} & --- & & Elementy \code{Tab} \\
+\bottomrule
+\end{longtable}
+\normalsize
+
+\subsection{Zachowanie widżetów}
+
+\begin{itemize}[nosep]
+  \item \textbf{Cycler:} \code{$effect} inicjuje \code{value} wartością \code{values[0]}, jeśli \code{undefined};
+        strzałki pulsują 120 ms po kliknięciu.
+  \item \textbf{Crest:} renderowany jako \code{<span aria-hidden="true" role="presentation">} z wbudowanym SVG.
+  \item \textbf{D2DatePicker:} tydzień zaczyna się od poniedziałku; popover odwraca się nad pole, gdy pod nim
+        jest mniej niż 320 px; kliknięcie komórki spoza bieżącego miesiąca przechodzi do tego miesiąca;
+        przycisk „Today” (\code{jumpToday()}); zamyka się po kliknięciu poza oknem i klawiszem Escape; cztery
+        brązowe nity w rogach (zgodnie z estetyką \code{InnerPanel}).
+  \item \textbf{D2TimePicker:} parsuje \code{HH:MM}, a przy błędzie przyjmuje \code{18:00}; wybrana godzina i
+        minuta przewijają się do widoku po otwarciu; zamyka się po kliknięciu poza oknem i Escape.
+  \item \textbf{Hint / HintBar:} typ \code{HintTone} jest wspólny z \code{hintsContext}; większość tras
+        przekazuje \code{HintEntry[]} przez \code{provideHints()} / \code{getHintsState()}.
+        \code{HintBar} renderuje się jako \code{<footer aria-label="Keyboard hints">} i jest ukryty regułą
+        \code{@media (hover: none) and (pointer: coarse)}.
+  \item \textbf{InnerPanel:} gdy podano \code{title} lub \code{actions}, nad treścią powstaje nagłówek ze
+        złotą linią; ziarno kamienia to pseudoelement CSS z warstwowym szumem.
+  \item \textbf{ListRow:} gdy \code{!header && !disabled && typeof onclick === 'function'}, wiersz dostaje
+        \code{role="button"}, \code{tabindex="0"} i reaguje na Enter/Spację; kliknięcie wywołuje animację
+        pulsu 180 ms; \code{aria-selected} i \code{aria-disabled} ustawiane są automatycznie.
+  \item \textbf{OrnateButton:} przy \code{loading} wewnętrzny \code{ornate__inner} pulsuje animacją CSS;
+        \code{fullWidth} dodaje klasę z \code{width: 100\%}.
+  \item \textbf{PageFrame:} renderowany jako \code{<div class="page-frame anim-frame-in">}; warstwa tła to
+        ciepły ciemnobrązowy mur z powtarzalnym wzorem kwadrolistu i radialną winietą; cztery rogi SVG
+        w warstwie chrome używają złotego gradientu obrysu, a cztery \code{<span>} tworzą włosowe krawędzie.
+  \item \textbf{PipMeter, ton automatyczny:} 3 zapalone lub więcej $\rightarrow$ \code{good} (zielony); 2
+        $\rightarrow$ \code{mid} (bursztynowy); 1 $\rightarrow$ \code{bad} (czerwony); 0 $\rightarrow$
+        \code{good} (domyślnie). Zapalające się pipsy mają animację \code{orbPop} 300 ms.
+  \item \textbf{ProgressBar:} szerokość wypełnienia to \code{clamped / safeMax * 100\%} z
+        \code{transition: width 0.35s ease}; \code{safeMax} zamienia \code{max <= 0} na 1; ustawiane są rola
+        \code{progressbar} oraz \code{aria-valuenow}/\code{aria-valuemax}.
+  \item \textbf{SectionTitle:} renderuje \code{<h3 class="title small-caps">}; linia to elastyczna włosowa kreska
+        o grubości 1 px.
+  \item \textbf{Sigil:} algorytm \code{parseSpec}: (1) adres małymi literami bez \code{0x}; (2) wymagane co
+        najmniej 12 znaków hex, uzupełnienie deterministyczne do 16 bajtów; (3) \code{bytes[0] \% 6} to indeks
+        kształtu (0--5); (4) \code{bytes[1] \% 3} to typ symetrii: 0 --- odbicie pionowe, 1 --- obrót
+        4-krotny, 2 --- obrót 3-krotny; (5) \code{bytes[10] \% 2 === 1} włącza złoty akcent; (6)
+        \code{bytes[11] & 0x0f} wybiera pierścień akcentu; (7) 25 komórek (siatka 5$\times$5) z
+        \code{(bytes[2 + i*4] >> (i \% 8)) & 1}, następnie składanych według symetrii. Wynik to
+        \code{<div class="sigil-frame bevel-out" aria-hidden="true">} z SVG; nieprawidłowy adres daje awaryjną
+        ikonę skrzyżowanych mieczy (wzór \code{X}).
+  \item \textbf{StoneCheckbox:} dla dostępności używany jest prawdziwy \code{<input type="checkbox" class="sr-only">};
+        wizualne pole to \code{<span>} z animowanym SVG; całość opakowuje \code{<label>}.
+  \item \textbf{SystemDialog:} cztery tryby: modalny (nakładka, centrowanie, \code{overflow: hidden} na body,
+        Escape zamyka), wbudowany (\code{inline}), pływający (domyślny, pozycjonowany według \code{position}),
+        ukryty (\code{open: false}, nic nie renderuje). Ton steruje kolorem linii nagłówka, przycisku zamknięcia
+        i odcieniem nakładki; zamknięcie ustawia \code{open = false} i wywołuje \code{onclose}.
+  \item \textbf{Tab:} dla \code{match = 'prefix'} jest aktywna, gdy \code{page.url.pathname === href} lub zaczyna się
+        od \code{href + '/'}; dla \code{'exact'} liczy się tylko równość. Aktywna zakładka ma złotą strzałkę pod
+        tekstem; używa \code{data-sveltekit-preload-data="hover"}.
+  \item \textbf{Tabs:} przy szerokości widoku $\le$ 600 px wiersz ma \code{overflow-x: auto} z ukrytym paskiem
+        przewijania; górna i dolna linia to gradienty przezroczysty $\rightarrow$ złoty $\rightarrow$ przezroczysty.
+\end{itemize}
+
+\section{Odnośniki między warstwami}\label{sec:fe-odnosniki}
+
+\begin{itemize}[nosep]
+  \item Endpointy REST wołane z form actions oraz ramki WebSocket (\code{/ws/rooms}, czat pokoju) opisują
+        rozdziały o backendzie (REST API i protokoły realtime).
+  \item Encje \code{Room}, \code{RoomEvent}, \code{RoomMember} opisuje rozdział o modelu danych.
+  \item Wdrożenie wieloregionowe, zmienne \code{PUBLIC_REGION*}, sondy \code{/healthz} i log VictoriaLogs ---
+        część o operacjach i architekturze.
+\end{itemize}
+
+% SPRZECZNOSC: docs/frontend/routes.md i frontend/README.md opisują ciasteczko sesji jako
+% sameSite=strict; kod (routes/auth/+page.server.ts) ustawia sameSite=lax (komentarz: linki z Discorda).
+% Przyjęto kod (nowsze). Pozostałe różnice względem docs: ping na /rooms woła /healthz (docs: GET /);
+% trasa /test nadal woła GET /; loadery/akcje używają backendFetch (docs: bezpośredni $BACKEND_BASE);
+% README.md nie wymienia tras /about, /profile, /rooms/[name] ani regionów.
